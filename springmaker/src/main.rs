@@ -1,5 +1,6 @@
 mod app;
 mod form;
+mod plot;
 mod view;
 
 use app::App;

@@ -406,6 +406,7 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                 col = col.push(lr);
             }
             col = col.push(fatigue_section);
+            col = col.push(crate::plot::results_chart(d, us));
             col
         }
     };
