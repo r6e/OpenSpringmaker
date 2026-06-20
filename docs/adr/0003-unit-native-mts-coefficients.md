@@ -43,8 +43,8 @@ the coefficient values and the source citation.
 **Benefits:**
 - Coefficient values in source files match published tables exactly, making citation
   verification straightforward.
-- No risk of coefficient mis-transformation; only a single scalar value (the result) is
-  converted.
+- No risk of converting coefficients into the wrong unit; only a single scalar value
+  (the result) is converted.
 - Shigley Table 10-4 notes unit-dependence explicitly; this design honours that note
   rather than hiding it.
 

@@ -428,7 +428,7 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                     Some(fat) => {
                         let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
                         let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
-                        let (endur_val, endur_lbl) =
+                        let (endurance_val, endurance_lbl) =
                             display_stress(fat.fully_reversed_endurance, us);
                         let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
                         column![
@@ -436,7 +436,7 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                             text(format!("Alternating stress: {alt_val:.2} {alt_lbl}")),
                             text(format!("Mean stress: {mean_val:.2} {mean_lbl}")),
                             text(format!(
-                                "Fully-reversed endurance (S\u{2032}\u{2032}se): {endur_val:.2} {endur_lbl}"
+                                "Fully-reversed endurance (S\u{2032}\u{2032}se): {endurance_val:.2} {endurance_lbl}"
                             )),
                             text(format!("Ultimate shear strength (Ssu): {ssu_val:.2} {ssu_lbl}")),
                             text(format!(
