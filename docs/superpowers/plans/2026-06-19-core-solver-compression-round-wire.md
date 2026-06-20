@@ -71,7 +71,8 @@ OpenSpringmaker/
 │   ├── 0002-si-internal-newtype-units.md
 │   ├── 0003-unit-native-mts-coefficients.md
 │   ├── 0004-two-crate-workspace.md
-│   └── 0005-absolute-stability-buckling.md
+│   ├── 0005-absolute-stability-buckling.md
+│   └── 0006-allowable-stress-simplification.md
 ├── springcore/
 │   ├── Cargo.toml
 │   ├── data/materials.toml         # curated, versioned material set
@@ -116,7 +117,8 @@ OpenSpringmaker/
   `docs/adr/0002-si-internal-newtype-units.md`,
   `docs/adr/0003-unit-native-mts-coefficients.md`,
   `docs/adr/0004-two-crate-workspace.md`,
-  `docs/adr/0005-absolute-stability-buckling.md`
+  `docs/adr/0005-absolute-stability-buckling.md`,
+  `docs/adr/0006-allowable-stress-simplification.md`
 
 **Interfaces:**
 - Produces: a compiling two-crate workspace. `springcore` exposes an empty public API
@@ -255,6 +257,11 @@ Write them from the approved spec:
 - `0005-absolute-stability-buckling.md` — v1 implements the absolute-stability
   criterion (Shigley Eq. 10-10); the deflection-ratio curve (Eq. 10-11) is deferred to
   avoid edition-dependent constants. Conservative and cited.
+- `0006-allowable-stress-simplification.md` — the per-material allowable-stress
+  percentages (`allowable_pct_torsion/bending/set`) are single scalars approximating
+  SMI's diameter- and set-dependent design-stress curves. Documents this as a known v1
+  simplification, notes it gates both status warnings and the Min Weight feasibility
+  boundary, and records that diameter-dependent design-stress curves are a later cycle.
 
 - [ ] **Step 8: Create CI workflow**
 
@@ -1487,7 +1494,7 @@ impl MtsEquation {
         let raw = match self.form {
             MtsForm::Constant => c[0],
             MtsForm::PowerLaw => c[0] / dn.powf(c[1]),
-            MtsForm::Polynomial => c.iter().enumerate().map(|(i, ci)| ci * dn.powi(i as i32)).sum(),
+            MtsForm::Polynomial => c.iter().enumerate().map(|(i, ci)| ci * dn.powi(i as i32)).sum::<f64>(),
         };
         Ok(self.units.stress_from_native(raw))
     }
@@ -1646,6 +1653,11 @@ design-stress guidance.
 # (MPa·mm^m) per Shigley Table 10-4 and are evaluated in those units.
 # Sources: Shigley's Mechanical Engineering Design (10th ed.) Tables 10-4, 10-5,
 # §10-9 (Zimmerli endurance); SMI Handbook of Spring Design (design stresses).
+#
+# KNOWN SIMPLIFICATION (see ADR 0006): allowable_pct_torsion / _bending / _set are
+# single scalars. Real SMI design stresses are diameter- and set-dependent curves.
+# These scalars gate the status warnings and the Min Weight feasibility boundary;
+# diameter-dependent design-stress curves are a later sub-project.
 
 [[material]]
 name = "Music Wire"
@@ -2467,6 +2479,13 @@ mod tests {
     }
 
     #[test]
+    fn solution_does_not_buckle() {
+        let m = music_wire();
+        let sol = solve_min_weight(&m, &base_request(vec![1.5, 2.0, 2.5, 3.0])).unwrap();
+        assert!(sol.design.buckling_stable);
+    }
+
+    #[test]
     fn infeasible_when_outer_diameter_too_small() {
         let m = music_wire();
         let mut req = base_request(vec![1.5, 2.0, 2.5]);
@@ -2493,7 +2512,7 @@ At the top of `springcore/src/optimize.rs`:
 use crate::design::{solve_forward, SpringDesign};
 use crate::end_type::EndType;
 use crate::material::Material;
-use crate::mechanics::{active_coils_for_rate, corrected_shear_stress, wahl_factor, EndFixity};
+use crate::mechanics::{active_coils_for_rate, corrected_shear_stress, is_buckling_stable, wahl_factor, EndFixity};
 use crate::numeric::{find_root_bracketed, SolveConfig};
 use crate::units::{Force, Length, SpringRate};
 use crate::{Result, SpringError};
@@ -2588,6 +2607,12 @@ pub fn solve_min_weight(material: &Material, req: &MinWeightRequest) -> Result<M
         let solid = req.end_type.solid_length(d, active);
         let travel = req.max_force.newtons() / req.required_rate.newtons_per_meter();
         let free_length = Length::from_meters(solid.meters() + travel * (1.0 + req.clash_allowance));
+        // Reject buckling-prone geometry (spec §5 constraint; Shigley Eq. 10-10).
+        // The optimizer is biased toward large mean diameters, which is exactly the
+        // slender regime most likely to buckle, so this check is load-bearing.
+        if !is_buckling_stable(free_length, mean, material.youngs_modulus, material.shear_modulus, req.fixity) {
+            continue;
+        }
         let design = solve_forward(
             material,
             req.end_type,
@@ -2620,7 +2645,7 @@ pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWei
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test -p springcore optimize`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 Run: `cargo clippy -p springcore --all-targets -- -D warnings` → clean.
 
@@ -2649,6 +2674,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     fully_reversed_endurance: Stress, ultimate_shear: Stress, goodman_factor_of_safety: f64 }`
   - `analyze_fatigue(material: &Material, wire_dia: Length, mean_dia: Length, force_min: Force, force_max: Force) -> Result<FatigueResult>`
     returns `Err(SpringError::NoFatigueData(name))` when the material has no endurance data.
+
+**Note on correction factor:** static stress (Task 5/8) uses the Wahl factor; fatigue
+uses the Bergsträsser factor `Kb`. Both are cited and standard — Shigley applies `Kb` in
+the fatigue treatment (§10-9). This intentional difference should be called out for
+reviewers.
 
 **Method (Shigley §10-9):** Bergsträsser-corrected alternating/mean shear stresses;
 ultimate shear `Ssu = 0.67·Sut` (Eq. 10-30); fully-reversed endurance from Zimmerli data
@@ -4069,14 +4099,253 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
+## Task 17: Min Weight as a selectable GUI mode
+
+**Files:**
+- Modify: `springcore/src/persistence.rs` (add `ScenarioSpec::MinWeight` + solve arm)
+- Modify: `springmaker/src/form.rs` (add `ScenarioKind::MinWeight`, fields, extras, branch)
+- Modify: `springmaker/src/view.rs` (render Min Weight inputs and outputs)
+
+**Rationale:** Task 10's `solve_min_weight` is engine-only; this task makes Min Weight a
+fifth selectable mode in the GUI and persistable, fulfilling the v1 decision to include
+it. Its inputs differ from the determined scenarios (required rate, max force, index
+bounds, optional OD cap, candidate diameters, clash allowance) and its outputs add wire
+mass and the binding constraint.
+
+**Interfaces:**
+- Adds `ScenarioSpec::MinWeight { end_type, fixity, required_rate_n_per_m, max_force_n,
+  index_min, index_max, max_outer_dia_mm: Option<f64>, candidate_diameters_mm: Vec<f64>,
+  clash_allowance }` (serde) with a `SavedDesign::solve` arm returning the optimized design.
+- Adds `ScenarioKind::MinWeight`; `FormState` fields `max_force`, `index_min`, `index_max`,
+  `max_outer_dia`, `candidate_diameters`, `clash_allowance`; `FormOutcome.min_weight: Option<MinWeightExtra>`
+  where `struct MinWeightExtra { binding: BindingConstraint, mass_kg: f64 }`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `springcore/src/persistence.rs` tests:
+
+```rust
+    #[test]
+    fn min_weight_spec_roundtrips_and_solves() {
+        let s = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            scenario: ScenarioSpec::MinWeight {
+                end_type: "squared_ground".into(),
+                fixity: "fixed_fixed".into(),
+                required_rate_n_per_m: 2000.0,
+                max_force_n: 50.0,
+                index_min: 4.0,
+                index_max: 12.0,
+                max_outer_dia_mm: None,
+                candidate_diameters_mm: vec![1.5, 2.0, 2.5, 3.0],
+                clash_allowance: 0.15,
+            },
+        };
+        let parsed = SavedDesign::from_toml(&s.to_toml().unwrap()).unwrap();
+        assert_eq!(s, parsed);
+        let design = s.solve(&MaterialSet::load_default()).unwrap();
+        assert!(design.buckling_stable);
+    }
+```
+
+Add to `springmaker/src/form.rs` tests:
+
+```rust
+    #[test]
+    fn solves_min_weight_with_extras() {
+        let set = MaterialSet::load_default();
+        let form = FormState {
+            material: "Music Wire".into(),
+            unit_system: springcore::UnitSystem::Metric,
+            scenario: ScenarioKind::MinWeight,
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            rate: "2000".into(),
+            max_force: "50".into(),
+            index_min: "4".into(),
+            index_max: "12".into(),
+            candidate_diameters: "1.5, 2.0, 2.5, 3.0".into(),
+            clash_allowance: "0.15".into(),
+            ..Default::default()
+        };
+        let out = parse_and_solve(&form, &set).unwrap();
+        assert!(out.min_weight.is_some());
+        assert!(out.min_weight.unwrap().mass_kg > 0.0);
+        assert!(out.design.buckling_stable);
+    }
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cargo test -p springcore persistence::tests::min_weight_spec_roundtrips_and_solves`
+then `cargo test -p springmaker form` — both FAIL (variant/fields missing).
+
+- [ ] **Step 3: Extend persistence**
+
+In `springcore/src/persistence.rs`, add the imports and variant + solve arm:
+
+```rust
+// add to existing `use` for springcore items:
+use crate::optimize::{solve_min_weight, MinWeightRequest};
+```
+
+Add to `enum ScenarioSpec` (a new variant):
+
+```rust
+    MinWeight {
+        end_type: String,
+        fixity: String,
+        required_rate_n_per_m: f64,
+        max_force_n: f64,
+        index_min: f64,
+        index_max: f64,
+        max_outer_dia_mm: Option<f64>,
+        candidate_diameters_mm: Vec<f64>,
+        clash_allowance: f64,
+    },
+```
+
+Add to the `match &self.scenario` in `solve`:
+
+```rust
+            ScenarioSpec::MinWeight {
+                end_type,
+                fixity,
+                required_rate_n_per_m,
+                max_force_n,
+                index_min,
+                index_max,
+                max_outer_dia_mm,
+                candidate_diameters_mm,
+                clash_allowance,
+            } => {
+                let req = MinWeightRequest {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    required_rate: SpringRate::from_newtons_per_meter(*required_rate_n_per_m),
+                    max_force: Force::from_newtons(*max_force_n),
+                    index_bounds: (*index_min, *index_max),
+                    max_outer_dia: max_outer_dia_mm.map(Length::from_millimeters),
+                    candidate_diameters: candidate_diameters_mm
+                        .iter()
+                        .map(|&d| Length::from_millimeters(d))
+                        .collect(),
+                    clash_allowance: *clash_allowance,
+                };
+                solve_min_weight(material, &req).map(|s| s.design)
+            }
+```
+
+- [ ] **Step 4: Extend the form module**
+
+In `springmaker/src/form.rs`:
+- Add `MinWeight` to `enum ScenarioKind`.
+- Add fields to `FormState` (and `Default`): `max_force`, `index_min`, `index_max`,
+  `max_outer_dia`, `candidate_diameters`, `clash_allowance` (all `String`, default empty
+  except sensible defaults `index_min="4"`, `index_max="12"`, `clash_allowance="0.15"`).
+- Add `struct MinWeightExtra { pub binding: springcore::BindingConstraint, pub mass_kg: f64 }`
+  and field `pub min_weight: Option<MinWeightExtra>` to `FormOutcome`. Set it to `None` in
+  the determined-scenario return.
+- Add a branch at the top of `parse_and_solve`:
+
+```rust
+    if form.scenario == ScenarioKind::MinWeight {
+        let material = materials.get(&form.material)?;
+        let req = build_min_weight_request(form)?;
+        let sol = springcore::solve_min_weight(material, &req)?;
+        let status = evaluate_status(&sol.design, material);
+        let fatigue = compute_fatigue(form, material, &sol.design)?;
+        return Ok(FormOutcome {
+            design: sol.design,
+            status,
+            fatigue,
+            min_weight: Some(MinWeightExtra { binding: sol.binding, mass_kg: sol.mass_kg }),
+        });
+    }
+```
+
+- Factor the existing fatigue block into `fn compute_fatigue(form, material, design) -> Result<Option<FatigueResult>>`
+  and reuse it in both paths (DRY).
+- Add `build_min_weight_request`:
+
+```rust
+fn build_min_weight_request(form: &FormState) -> Result<springcore::MinWeightRequest> {
+    use springcore::units::{Force, Length, SpringRate};
+    let us = form.unit_system;
+    let diameters: Vec<Length> = form
+        .candidate_diameters
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| length_mm("candidate diameter", s, us).map(Length::from_millimeters))
+        .collect::<Result<_>>()?;
+    if diameters.is_empty() {
+        return Err(springcore::SpringError::InconsistentInputs(
+            "provide at least one candidate wire diameter".into(),
+        ));
+    }
+    let max_outer_dia = if form.max_outer_dia.trim().is_empty() {
+        None
+    } else {
+        Some(Length::from_millimeters(length_mm("max outer diameter", &form.max_outer_dia, us)?))
+    };
+    Ok(springcore::MinWeightRequest {
+        end_type: springcore::persistence_parse_end_type(&form.end_type)?,
+        fixity: springcore::persistence_parse_fixity(&form.fixity)?,
+        required_rate: SpringRate::from_newtons_per_meter(rate_npm("rate", &form.rate, us)?),
+        max_force: Force::from_newtons(force_n("max force", &form.max_force, us)?),
+        index_bounds: (num("index min", &form.index_min)?, num("index max", &form.index_max)?),
+        max_outer_dia,
+        candidate_diameters: diameters,
+        clash_allowance: num("clash allowance", &form.clash_allowance)?,
+    })
+}
+```
+
+  To reuse the end-type/fixity string parsers without duplicating them, make
+  `parse_end_type`/`parse_fixity` in `persistence.rs` `pub` and re-export them from the
+  crate root as `persistence_parse_end_type` / `persistence_parse_fixity` (add to
+  `springcore/src/lib.rs`), or move both into a small public `parse` module. Pick one and
+  apply consistently. Also extend `build_spec`/`populate_from_spec` (Task 15) to cover the
+  `MinWeight` variant for save/load.
+
+- [ ] **Step 5: Extend the view**
+
+In `springmaker/src/view.rs`, when the active scenario is `MinWeight`, render the Min
+Weight input fields (required rate, max force, index min/max, optional max OD, candidate
+diameters, clash allowance) instead of the determined-scenario fields, and add to the
+output column the optimized wire mass and binding constraint from `outcome.min_weight`.
+
+- [ ] **Step 6: Run tests and the app**
+
+Run: `cargo test --workspace` → new tests PASS.
+Run: `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+Run: `cargo run -p springmaker` → select Min Weight, enter the example inputs, confirm an
+optimized design plus mass/binding appear and update live. Screenshot for the PR.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add springcore/src/persistence.rs springcore/src/lib.rs springmaker/src/
+git commit -m "feat(gui): Min Weight as a selectable, persistable optimization mode
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
 ## Final verification
 
 - [ ] **Step 1: Full workspace gate**
 
 Run: `cargo fmt --all -- --check` → no diff.
 Run: `cargo clippy --workspace --all-targets -- -D warnings` → clean.
-Run: `cargo test --workspace` → all tests pass (note any `#[ignore]`d golden source
-tests and why in the PR body).
+Run: `cargo test --workspace` → all tests pass. The Part B golden tests are the only
+independent oracle (every other test is self-consistent against the same formulas). If
+both Shigley/EN source tests end up `#[ignore]`d for lack of the references, treat that
+as a **release blocker** and call it out loudly in the PR body — do not let it pass
+quietly as "all green."
 Run: `cargo build --workspace --release` → builds.
 
 - [ ] **Step 2: Update docs and run the mandatory review panel**
