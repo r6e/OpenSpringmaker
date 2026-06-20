@@ -30,7 +30,8 @@ Implement the absolute stability criterion (Shigley Eq. 10-10) for v1. Defer the
 deflection-ratio curve (Eq. 10-11) to a later cycle.
 
 The critical ratio `α_cr ≈ 2.63` applies to steel springs with fixed-parallel end
-conditions and is cited from Shigley's Mechanical Engineering Design, Chapter 10.
+conditions and is taken from Shigley's Mechanical Engineering Design, 10th ed., Eq. 10-10
+(absolute-stability criterion); the α end-condition constant per Table 10-2.
 
 ## Consequences
 
