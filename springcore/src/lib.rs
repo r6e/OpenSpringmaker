@@ -5,8 +5,10 @@
 
 pub mod end_type;
 pub mod error;
+pub mod mechanics;
 pub mod units;
 
 pub use end_type::EndType;
 pub use error::{Result, SpringError};
+pub use mechanics::EndFixity;
 pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress};
