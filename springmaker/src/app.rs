@@ -2,7 +2,82 @@
 
 use crate::form::{parse_and_solve, FormOutcome, FormState, ScenarioKind};
 use crate::view;
+use iced::theme::Palette;
+use iced::{Color, Theme};
 use springcore::{MaterialSet, SavedDesign, UnitSystem};
+
+// --------------------------------------------------------------------------
+// Design tokens — single source of truth for colours used in view.rs
+// --------------------------------------------------------------------------
+
+/// Global colour constants for the engineering-instrument palette.
+pub struct C;
+
+impl C {
+    /// App background — near-black ink.
+    pub const INK: Color = Color {
+        r: 0.055,
+        g: 0.067,
+        b: 0.086,
+        a: 1.0,
+    };
+    /// Card/panel surface.
+    pub const PANEL: Color = Color {
+        r: 0.090,
+        g: 0.110,
+        b: 0.141,
+        a: 1.0,
+    };
+    /// Raised input field surface.
+    pub const RAISED: Color = Color {
+        r: 0.122,
+        g: 0.149,
+        b: 0.188,
+        a: 1.0,
+    };
+    /// Hairline border / divider.
+    pub const LINE: Color = Color {
+        r: 0.165,
+        g: 0.196,
+        b: 0.239,
+        a: 1.0,
+    };
+    /// Primary text.
+    pub const TEXT: Color = Color {
+        r: 0.902,
+        g: 0.918,
+        b: 0.941,
+        a: 1.0,
+    };
+    /// Muted / secondary labels.
+    pub const MUTED: Color = Color {
+        r: 0.541,
+        g: 0.592,
+        b: 0.651,
+        a: 1.0,
+    };
+    /// Accent — active controls, focus, governing result.
+    pub const ACCENT: Color = Color {
+        r: 0.298,
+        g: 0.761,
+        b: 1.0,
+        a: 1.0,
+    };
+    /// Caution / warning indicator.
+    pub const WARN: Color = Color {
+        r: 0.949,
+        g: 0.710,
+        b: 0.227,
+        a: 1.0,
+    };
+    /// Danger / error indicator.
+    pub const DANGER: Color = Color {
+        r: 1.0,
+        g: 0.420,
+        b: 0.420,
+        a: 1.0,
+    };
+}
 
 /// Which text field a [`Message::Field`] targets.
 #[derive(Debug, Clone, Copy)]
@@ -119,6 +194,25 @@ impl App {
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
         view::view(self)
+    }
+
+    /// Supply the custom dark theme to the iced application builder.
+    pub fn theme(&self) -> Theme {
+        Theme::custom(
+            "OpenSpringmaker".to_string(),
+            Palette {
+                background: C::INK,
+                text: C::TEXT,
+                primary: C::ACCENT,
+                success: Color {
+                    r: 0.31,
+                    g: 0.78,
+                    b: 0.47,
+                    a: 1.0,
+                },
+                danger: C::DANGER,
+            },
+        )
     }
 
     fn set_field(&mut self, field: Field, value: String) {
