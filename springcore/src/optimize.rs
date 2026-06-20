@@ -60,7 +60,12 @@ fn best_mean_dia(
     let (c_min, c_max) = bounds;
     let allowable =
         material.allowable_pct_torsion * material.min_tensile_strength(d).ok()?.pascals();
-    // Shear stress at max force as a function of mean diameter (monotonic increasing).
+    // τ(C) = Kw(C)·C with Kw = (4C−1)/(4C−4) + 0.615/C is NOT globally monotonic.
+    // Solving dτ/dC = 0 gives 4C²−8C+1 = 0 → C* = 1 + √3/2 ≈ 1.866; τ is
+    // U-shaped with a minimum at C* and is monotonic increasing only for C ≥ 1.866.
+    // The single-endpoint feasibility test below (`stress_at(dm_lo) > allowable → None`)
+    // is therefore only valid when c_min ≥ 1.866, which Fix 2 (min_weight_request_from_spec)
+    // enforces at the entry point.
     let stress_at = |dm_m: f64| {
         let dm = Length::from_meters(dm_m);
         let c = dm_m / d.meters();
@@ -110,8 +115,8 @@ pub fn solve_min_weight(material: &Material, req: &MinWeightRequest) -> Result<M
             }
         }
         let active = active_coils_for_rate(material.shear_modulus, d, mean, req.required_rate);
-        if active < 1.0 {
-            continue; // fewer than one active coil is unphysical
+        if !active.is_finite() || active < 1.0 {
+            continue; // non-finite or fewer than one active coil is unphysical
         }
         let solid = req.end_type.solid_length(d, active);
         let travel = req.max_force.newtons() / req.required_rate.newtons_per_meter();

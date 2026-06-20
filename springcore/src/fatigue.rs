@@ -46,7 +46,21 @@ pub fn analyze_fatigue(
 
     let sut = material.min_tensile_strength(wire_dia)?.pascals();
     let ssu = SHEAR_TO_TENSILE * sut;
-    // Convert Zimmerli pulsating data to a fully-reversed endurance (Shigley Eq. 10-31).
+    // Convert Zimmerli pulsating data to a fully-reversed endurance (Shigley Eq. 10-31):
+    //   Sse = Ssa / (1 - Ssm/Ssu)
+    // If Ssm ≥ Ssu the denominator is ≤ 0, producing ∞ or a negative Sse, which makes
+    // the Goodman safety factor meaningless. Guard against this latent trap: with
+    // bundled material data this should not occur (Ssm ≪ Ssu), but it would be a silent
+    // trap for any future material whose endurance mean-stress meets/exceeds 0.67·Sut.
+    if endurance.ssm.pascals() >= ssu {
+        return Err(SpringError::InconsistentInputs(format!(
+            "material '{}': endurance mean shear stress ({:.3} MPa) meets or exceeds \
+             0.67·Sut = {:.3} MPa; cannot compute a valid fully-reversed endurance limit",
+            material.name,
+            endurance.ssm.pascals() / 1e6,
+            ssu / 1e6,
+        )));
+    }
     let sse = endurance.ssa.pascals() / (1.0 - endurance.ssm.pascals() / ssu);
     // Goodman factor of safety: 1/nf = tau_a/Sse + tau_m/Ssu.
     let nf = 1.0 / (tau_a.pascals() / sse + tau_m.pascals() / ssu);

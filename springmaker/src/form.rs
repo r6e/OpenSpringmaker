@@ -116,10 +116,15 @@ pub struct FormOutcome {
 }
 
 fn num(field: &str, value: &str) -> Result<f64> {
-    value
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| SpringError::InconsistentInputs(format!("{field} is not a number: '{value}'")))
+    let v = value.trim().parse::<f64>().map_err(|_| {
+        SpringError::InconsistentInputs(format!("{field} is not a number: '{value}'"))
+    })?;
+    if !v.is_finite() {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )));
+    }
+    Ok(v)
 }
 
 fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
@@ -507,6 +512,26 @@ mod tests {
         let mut form = rate_based_metric();
         form.wire_dia = "abc".into();
         assert!(parse_and_solve(&form, &set).is_err());
+    }
+
+    #[test]
+    fn nan_in_field_is_an_error() {
+        // Rust's f64 parse accepts "nan"; the form layer must reject it.
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.wire_dia = "nan".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn inf_in_field_is_an_error() {
+        // Rust's f64 parse accepts "inf"; the form layer must reject it.
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.wire_dia = "inf".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
     #[test]
