@@ -1,8 +1,5 @@
 //! Pure form-to-design logic. No iced dependency, so it is unit-testable.
 
-// Items are consumed by the GUI (a later task); suppress premature dead-code warnings.
-#![allow(dead_code)]
-
 use springcore::units::{Force, Length, SpringRate};
 use springcore::{
     analyze_fatigue, evaluate_status, DesignStatus, FatigueResult, MaterialSet, Result,
@@ -18,6 +15,25 @@ pub enum ScenarioKind {
     RateBased,
     Dimensional,
 }
+
+impl std::fmt::Display for ScenarioKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScenarioKind::PowerUser => write!(f, "Power User"),
+            ScenarioKind::TwoLoad => write!(f, "Two Load"),
+            ScenarioKind::RateBased => write!(f, "Rate Based"),
+            ScenarioKind::Dimensional => write!(f, "Dimensional"),
+        }
+    }
+}
+
+/// All `ScenarioKind` variants in display order.
+pub const ALL_SCENARIOS: &[ScenarioKind] = &[
+    ScenarioKind::PowerUser,
+    ScenarioKind::TwoLoad,
+    ScenarioKind::RateBased,
+    ScenarioKind::Dimensional,
+];
 
 /// All editable form fields (as raw strings, mirroring the UI).
 #[derive(Debug, Clone)]
@@ -158,6 +174,142 @@ fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
     })
 }
 
+/// Public wrapper around `build_spec` used by `app.rs` for save dialogs.
+pub fn build_spec_public(form: &FormState) -> Result<ScenarioSpec> {
+    build_spec(form)
+}
+
+/// Write a `ScenarioSpec`'s fields back into `form`, converting SI-stored
+/// mm/N values to display units per `form.unit_system`.
+///
+/// After calling this, `build_spec_public(form)` should reproduce a spec
+/// equal to `spec` (round-trip invariant).
+pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec) {
+    let us = form.unit_system;
+
+    /// Convert mm (SI internal) → display string.
+    fn fmt_len(mm: f64, us: UnitSystem) -> String {
+        match us {
+            UnitSystem::Metric => format!("{mm}"),
+            UnitSystem::Us => {
+                use springcore::units::Length;
+                format!("{}", Length::from_millimeters(mm).inches())
+            }
+        }
+    }
+
+    /// Convert N → display string.
+    fn fmt_force(n: f64, us: UnitSystem) -> String {
+        match us {
+            UnitSystem::Metric => format!("{n}"),
+            UnitSystem::Us => {
+                use springcore::units::Force;
+                format!("{}", Force::from_newtons(n).pounds_force())
+            }
+        }
+    }
+
+    /// Convert N/m → display string.
+    fn fmt_rate(npm: f64, us: UnitSystem) -> String {
+        match us {
+            UnitSystem::Metric => format!("{npm}"),
+            UnitSystem::Us => {
+                use springcore::units::SpringRate;
+                format!(
+                    "{}",
+                    SpringRate::from_newtons_per_meter(npm).pounds_per_inch()
+                )
+            }
+        }
+    }
+
+    /// Join a slice of newtons values → comma-separated display string.
+    fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
+        loads
+            .iter()
+            .map(|&n| fmt_force(n, us))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    match spec {
+        ScenarioSpec::PowerUser {
+            end_type,
+            fixity,
+            wire_dia_mm,
+            mean_dia_mm,
+            active,
+            free_length_mm,
+            loads_n,
+        } => {
+            form.scenario = ScenarioKind::PowerUser;
+            form.end_type = end_type.clone();
+            form.fixity = fixity.clone();
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.active = format!("{active}");
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.loads = fmt_loads(loads_n, us);
+        }
+        ScenarioSpec::TwoLoad {
+            end_type,
+            fixity,
+            wire_dia_mm,
+            mean_dia_mm,
+            force1_n,
+            length1_mm,
+            force2_n,
+            length2_mm,
+        } => {
+            form.scenario = ScenarioKind::TwoLoad;
+            form.end_type = end_type.clone();
+            form.fixity = fixity.clone();
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.force1 = fmt_force(*force1_n, us);
+            form.length1 = fmt_len(*length1_mm, us);
+            form.force2 = fmt_force(*force2_n, us);
+            form.length2 = fmt_len(*length2_mm, us);
+        }
+        ScenarioSpec::RateBased {
+            end_type,
+            fixity,
+            wire_dia_mm,
+            mean_dia_mm,
+            rate_n_per_m,
+            free_length_mm,
+            loads_n,
+        } => {
+            form.scenario = ScenarioKind::RateBased;
+            form.end_type = end_type.clone();
+            form.fixity = fixity.clone();
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.rate = fmt_rate(*rate_n_per_m, us);
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.loads = fmt_loads(loads_n, us);
+        }
+        ScenarioSpec::Dimensional {
+            end_type,
+            fixity,
+            wire_dia_mm,
+            outer_dia_mm,
+            active,
+            free_length_mm,
+            loads_n,
+        } => {
+            form.scenario = ScenarioKind::Dimensional;
+            form.end_type = end_type.clone();
+            form.fixity = fixity.clone();
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.outer_dia = fmt_len(*outer_dia_mm, us);
+            form.active = format!("{active}");
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.loads = fmt_loads(loads_n, us);
+        }
+    }
+}
+
 /// Parse the form, solve the design, evaluate status, and (if a cycle and endurance
 /// data are present) compute fatigue. Missing endurance data degrades to `None`.
 pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<FormOutcome> {
@@ -259,5 +411,22 @@ mod tests {
         form.material = "Stainless 302".into();
         let out = parse_and_solve(&form, &set).unwrap();
         assert!(out.fatigue.is_none());
+    }
+
+    #[test]
+    fn build_spec_public_populate_round_trip_metric() {
+        // A metric form produces spec1; populate_from_spec writes it back into
+        // another form; building that second form gives spec2 == spec1.
+        let form = rate_based_metric();
+        let spec1 = build_spec_public(&form).unwrap();
+
+        let mut form2 = FormState {
+            unit_system: springcore::UnitSystem::Metric,
+            ..FormState::default()
+        };
+        populate_from_spec(&mut form2, &spec1);
+
+        let spec2 = build_spec_public(&form2).unwrap();
+        assert_eq!(spec1, spec2);
     }
 }

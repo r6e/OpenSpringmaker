@@ -1,5 +1,9 @@
+mod app;
 mod form;
+mod view;
 
-fn main() {
-    println!("springmaker GUI is implemented in a later task.");
+use app::App;
+
+fn main() -> iced::Result {
+    iced::run("OpenSpringmaker", App::update, App::view)
 }

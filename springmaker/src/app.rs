@@ -1,0 +1,185 @@
+//! Application state, messages, and update/view glue for the iced GUI.
+
+use crate::form::{parse_and_solve, FormOutcome, FormState, ScenarioKind};
+use crate::view;
+use springcore::{MaterialSet, SavedDesign, UnitSystem};
+
+/// Which text field a [`Message::Field`] targets.
+#[derive(Debug, Clone, Copy)]
+pub enum Field {
+    WireDia,
+    MeanDia,
+    OuterDia,
+    Active,
+    FreeLength,
+    Rate,
+    Loads,
+    Force1,
+    Length1,
+    Force2,
+    Length2,
+    FatigueMin,
+    FatigueMax,
+}
+
+/// All UI events.
+#[derive(Debug, Clone)]
+pub enum Message {
+    Field(Field, String),
+    Material(String),
+    Scenario(ScenarioKind),
+    Units(UnitSystem),
+    EndType(String),
+    Fixity(String),
+    Save,
+    Load,
+}
+
+/// Top-level application state.
+pub struct App {
+    pub form: FormState,
+    pub materials: MaterialSet,
+    pub outcome: Option<FormOutcome>,
+    pub error: Option<String>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            form: FormState::default(),
+            materials: MaterialSet::load_default(),
+            outcome: None,
+            error: None,
+        }
+    }
+}
+
+impl App {
+    /// Re-solve from the current form, storing either an outcome or an error string.
+    pub fn recompute(&mut self) {
+        match parse_and_solve(&self.form, &self.materials) {
+            Ok(out) => {
+                self.outcome = Some(out);
+                self.error = None;
+            }
+            Err(e) => {
+                self.outcome = None;
+                self.error = Some(e.to_string());
+            }
+        }
+    }
+
+    pub fn update(&mut self, message: Message) {
+        match message {
+            Message::Field(field, value) => self.set_field(field, value),
+            Message::Material(m) => self.form.material = m,
+            Message::Scenario(s) => self.form.scenario = s,
+            Message::Units(u) => self.form.unit_system = u,
+            Message::EndType(e) => self.form.end_type = e,
+            Message::Fixity(f) => self.form.fixity = f,
+            Message::Save => self.save_dialog(),
+            Message::Load => self.load_dialog(),
+        }
+        self.recompute();
+    }
+
+    pub fn view(&self) -> iced::Element<'_, Message> {
+        view::view(self)
+    }
+
+    fn set_field(&mut self, field: Field, value: String) {
+        let f = &mut self.form;
+        match field {
+            Field::WireDia => f.wire_dia = value,
+            Field::MeanDia => f.mean_dia = value,
+            Field::OuterDia => f.outer_dia = value,
+            Field::Active => f.active = value,
+            Field::FreeLength => f.free_length = value,
+            Field::Rate => f.rate = value,
+            Field::Loads => f.loads = value,
+            Field::Force1 => f.force1 = value,
+            Field::Length1 => f.length1 = value,
+            Field::Force2 => f.force2 = value,
+            Field::Length2 => f.length2 = value,
+            Field::FatigueMin => f.fatigue_min = value,
+            Field::FatigueMax => f.fatigue_max = value,
+        }
+    }
+
+    fn save_dialog(&mut self) {
+        let spec = match crate::form::build_spec_public(&self.form) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return;
+            }
+        };
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("design", &["toml"])
+            .save_file()
+        {
+            let saved = SavedDesign {
+                material: self.form.material.clone(),
+                unit_system: self.form.unit_system,
+                scenario: spec,
+            };
+            if let Err(e) = saved.save(&path) {
+                self.error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn load_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("design", &["toml"])
+            .pick_file()
+        {
+            match SavedDesign::load(&path) {
+                Ok(saved) => self.apply_saved(saved),
+                Err(e) => self.error = Some(e.to_string()),
+            }
+        }
+    }
+
+    fn apply_saved(&mut self, saved: SavedDesign) {
+        self.form.material = saved.material;
+        self.form.unit_system = saved.unit_system;
+        crate::form::populate_from_spec(&mut self.form, &saved.scenario);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_app_has_no_outcome_until_filled() {
+        let app = App::default();
+        assert!(app.outcome.is_none());
+        assert_eq!(app.form.material, "Music Wire");
+    }
+
+    #[test]
+    fn recompute_produces_outcome_for_valid_form() {
+        let mut app = App::default();
+        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.rate = "2000".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.recompute();
+        assert!(app.error.is_none());
+        assert!(app.outcome.is_some());
+    }
+
+    #[test]
+    fn recompute_sets_error_for_invalid_form() {
+        let mut app = App::default();
+        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.wire_dia = "oops".into();
+        app.recompute();
+        assert!(app.outcome.is_none());
+        assert!(app.error.is_some());
+    }
+}
