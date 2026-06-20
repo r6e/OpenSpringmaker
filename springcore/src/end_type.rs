@@ -144,4 +144,82 @@ mod tests {
             max_relative = 1e-12
         );
     }
+
+    // --- Squared free_length (line 56): p * active + 3.0 * d ---
+    // Use p=2 mm, Na=5, d=7 mm → 2*5 + 3*7 = 10 + 21 = 31 mm.
+    // Every operator mutation (+→-, +→*, *→+, *→/, 3*d→3+d, 3*d→3/d) produces
+    // a value clearly distinct from 31, so a single exact assertion kills all six.
+    #[test]
+    fn squared_free_length_distinguishes_all_operators() {
+        let e = EndType::Squared;
+        let d = Length::from_millimeters(7.0);
+        let p = Length::from_millimeters(2.0);
+        let na = 5.0;
+        // p*Na + 3*d = 2*5 + 3*7 = 31
+        assert_relative_eq!(
+            e.free_length(d, na, p).millimeters(),
+            31.0,
+            max_relative = 1e-12
+        );
+        // Also verify solid length for Squared (non-ground: Ls = d*(Nt+1)).
+        // Nt = Na + end_coils = 5 + 2 = 7; Ls = 7*(7+1) = 56 mm.
+        assert_relative_eq!(
+            e.solid_length(d, na).millimeters(),
+            56.0,
+            max_relative = 1e-12
+        );
+    }
+
+    // --- pitch_from_free_length: all three untested arms ---
+
+    // Plain arm (line 72): (l0 - d) / active
+    // l0=16 mm, d=1 mm, Na=5 → (16-1)/5 = 3 mm.
+    // -→+: 17/5=3.4; -→/: (16/1)/5=3.2; /→*: 15*5=75; /→%: 15%5=0.
+    // Also ensures plain_relations pitch inverse is covered.
+    #[test]
+    fn plain_pitch_from_free_length() {
+        let e = EndType::Plain;
+        let d = Length::from_millimeters(1.0);
+        let na = 5.0;
+        let l0 = Length::from_millimeters(16.0);
+        assert_relative_eq!(
+            e.pitch_from_free_length(d, na, l0).millimeters(),
+            3.0,
+            max_relative = 1e-12
+        );
+    }
+
+    // PlainGround arm (line 73): l0 / (active + 1.0)
+    // l0=20 mm, Na=9 → 20/10 = 2 mm.
+    // /→%: 20%10=0; /→*: 20*10=200; +→-: 20/8=2.5; +→*: 20/(9*1)≈2.22.
+    #[test]
+    fn plain_ground_pitch_from_free_length() {
+        let e = EndType::PlainGround;
+        let d = Length::from_millimeters(1.0); // unused in PlainGround formula but required
+        let na = 9.0;
+        let l0 = Length::from_millimeters(20.0);
+        assert_relative_eq!(
+            e.pitch_from_free_length(d, na, l0).millimeters(),
+            2.0,
+            max_relative = 1e-12
+        );
+    }
+
+    // Squared arm (line 74): (l0 - 3.0 * d) / active
+    // l0=31 mm, d=7 mm, Na=5 → (31-21)/5 = 2 mm.
+    // -→+: 52/5=10.4; -→/: (31/21)/5≈0.295; 3*d→3+d: (31-10)/5=4.2;
+    // 3*d→3/d: (31-3/7)/5≈6.11; /→*: 10*5=50; /→%: 10%5=0.
+    // Also round-trips with squared_free_length_distinguishes_all_operators.
+    #[test]
+    fn squared_pitch_from_free_length() {
+        let e = EndType::Squared;
+        let d = Length::from_millimeters(7.0);
+        let na = 5.0;
+        let l0 = Length::from_millimeters(31.0);
+        assert_relative_eq!(
+            e.pitch_from_free_length(d, na, l0).millimeters(),
+            2.0,
+            max_relative = 1e-12
+        );
+    }
 }
