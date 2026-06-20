@@ -1,3 +1,6 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
+
+# Subagent-driven-development scratch (briefs, reports, diffs, progress ledger)
+/.superpowers/
