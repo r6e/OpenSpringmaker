@@ -240,6 +240,90 @@ mod tests {
     use crate::units::{Force, Length};
     use approx::assert_relative_eq;
 
+    /// Build a clean, warning-free baseline design.
+    /// d=2mm, D=20mm -> C=10, Na=10. G=80 GPa -> k=2000 N/m.
+    /// Solid: Nt=12, Ls=24mm. Free=60mm. load=[10N].
+    fn baseline_design() -> (SpringDesign, crate::material::Material) {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        )
+        .unwrap();
+        (design, m)
+    }
+
+    fn has_message(status: &DesignStatus, needle: &str) -> bool {
+        status.messages.iter().any(|m| m.message.contains(needle))
+    }
+
+    // ── Arithmetic: load_point (line 56) ─────────────────────────────────────
+
+    #[test]
+    fn load_point_deflection_and_length_are_exact() {
+        // y = F/k = 10/2000 = 0.005 m = 5 mm.
+        // length = free_length - y = 60 - 5 = 55 mm.
+        // Kills: `- → +` (y=0 → length=65), `- → /` (y=0 → length=12000).
+        let (design, _) = baseline_design();
+        let lp = &design.load_points[0];
+        assert_relative_eq!(lp.deflection.millimeters(), 5.0, max_relative = 1e-9);
+        assert_relative_eq!(lp.length.millimeters(), 55.0, max_relative = 1e-9);
+    }
+
+    // ── Arithmetic: solve_forward solid_force (lines 107) ────────────────────
+
+    #[test]
+    fn at_solid_force_is_exact() {
+        // solid_force = k * (L0 - Ls) = 2000 * (0.060 - 0.024) = 2000 * 0.036 = 72 N.
+        // Kills `* → +` (2000.036), `* → /` (55555), `- → +` (168 N), `- → /` (5000 N).
+        let (design, _) = baseline_design();
+        assert_relative_eq!(design.at_solid.force.newtons(), 72.0, max_relative = 1e-9);
+        // at_solid is itself a load_point, so deflection and length must also be consistent.
+        // deflection = 72/2000 = 36 mm; length = 60 - 36 = 24 mm (== solid_length).
+        assert_relative_eq!(
+            design.at_solid.deflection.millimeters(),
+            36.0,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            design.at_solid.length.millimeters(),
+            24.0,
+            max_relative = 1e-9
+        );
+    }
+
+    // ── Arithmetic: outer_dia and inner_dia (lines 129-130) ──────────────────
+
+    #[test]
+    fn outer_and_inner_dia_are_exact() {
+        // OD = D + d = 20 + 2 = 22 mm. Kills `+ → -` (18), `+ → *` (40).
+        // ID = D - d = 20 - 2 = 18 mm. Kills `- → +` (22), `- → /` (10).
+        let (design, _) = baseline_design();
+        assert_relative_eq!(design.outer_dia.millimeters(), 22.0, max_relative = 1e-9);
+        assert_relative_eq!(design.inner_dia.millimeters(), 18.0, max_relative = 1e-9);
+    }
+
+    // ── has_warnings on clean design (line 164) ───────────────────────────────
+
+    #[test]
+    fn has_warnings_is_false_on_clean_design() {
+        // Kills: `has_warnings → true`.
+        let (design, m) = baseline_design();
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !status.has_warnings(),
+            "clean design should have no warnings"
+        );
+    }
+
+    // ── evaluate_status: index boundaries (line 179) ─────────────────────────
+
     #[test]
     fn forward_solve_clean_case() {
         let m = crate::test_support::music_wire();
@@ -268,6 +352,206 @@ mod tests {
         let expected = kw * 8.0 * 10.0 * 0.020 / (std::f64::consts::PI * 0.002_f64.powi(3));
         assert_relative_eq!(lp.shear_stress.pascals(), expected, max_relative = 1e-9);
     }
+
+    #[test]
+    fn index_at_min_boundary_produces_no_index_message() {
+        // index == INDEX_MIN (4.0) → no message. Kills `< → <=` and `< → ==`.
+        let (mut design, m) = baseline_design();
+        design.index = INDEX_MIN; // exactly 4.0
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "index"),
+            "index at exact minimum should not trigger caution"
+        );
+    }
+
+    #[test]
+    fn index_at_max_boundary_produces_no_index_message() {
+        // index == INDEX_MAX (12.0) → no message. Kills `> → >=` and `> → ==`.
+        let (mut design, m) = baseline_design();
+        design.index = INDEX_MAX; // exactly 12.0
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "index"),
+            "index at exact maximum should not trigger caution"
+        );
+    }
+
+    #[test]
+    fn index_below_min_produces_index_message() {
+        // index < INDEX_MIN → message present. Kills `< → >`.
+        let (mut design, m) = baseline_design();
+        design.index = INDEX_MIN - 0.01;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "index"),
+            "index below minimum should trigger caution"
+        );
+    }
+
+    #[test]
+    fn index_above_max_produces_index_message() {
+        // index > INDEX_MAX → message present.
+        let (mut design, m) = baseline_design();
+        design.index = INDEX_MAX + 0.01;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "index"),
+            "index above maximum should trigger caution"
+        );
+    }
+
+    // ── evaluate_status: load pct_mts boundary (line 192) ────────────────────
+
+    #[test]
+    fn load_stress_exactly_at_allowable_produces_no_stress_message() {
+        // pct_mts == allowable → no "load point" warning. Kills `> → >=` and `> → ==`.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_torsion = 0.50;
+        design.load_points[0].pct_mts = 0.50; // exactly equal
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "load point"),
+            "stress exactly at allowable should not trigger warning"
+        );
+    }
+
+    #[test]
+    fn load_stress_above_allowable_produces_stress_message() {
+        // pct_mts > allowable → warning present. Kills `> → <` and `> → ==`.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_torsion = 0.50;
+        design.load_points[0].pct_mts = 0.51;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "load point"),
+            "stress above allowable should trigger warning"
+        );
+    }
+
+    #[test]
+    fn load_stress_below_allowable_produces_no_stress_message() {
+        // pct_mts < allowable → no warning. Sanity check.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_torsion = 0.50;
+        design.load_points[0].pct_mts = 0.49;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "load point"),
+            "stress below allowable should not trigger warning"
+        );
+    }
+
+    // ── evaluate_status: at_solid boundary (line 206) ────────────────────────
+
+    #[test]
+    fn at_solid_stress_exactly_at_set_allowable_produces_no_solid_message() {
+        // at_solid.pct_mts == allowable_pct_set → no "stress at solid" warning.
+        // Kills `> → >=` and `> → ==`.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_set = 0.60;
+        design.at_solid.pct_mts = 0.60; // exactly equal
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "stress at solid"),
+            "at-solid stress exactly at set allowable should not trigger warning"
+        );
+    }
+
+    #[test]
+    fn at_solid_stress_above_set_allowable_produces_solid_message() {
+        // at_solid.pct_mts > allowable_pct_set → warning present.
+        // Kills `> → <` and `> → ==`.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_set = 0.60;
+        design.at_solid.pct_mts = 0.61;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "stress at solid"),
+            "at-solid stress above set allowable should trigger warning"
+        );
+    }
+
+    #[test]
+    fn at_solid_stress_below_set_allowable_produces_no_solid_message() {
+        // Sanity check.
+        let (mut design, mut m) = baseline_design();
+        m.allowable_pct_set = 0.60;
+        design.at_solid.pct_mts = 0.59;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "stress at solid"),
+            "at-solid stress below set allowable should not trigger warning"
+        );
+    }
+
+    // ── evaluate_status: buckling (line 218) ─────────────────────────────────
+
+    #[test]
+    fn buckling_unstable_produces_buckling_message() {
+        // !stable == true → message. Kills `delete !` (would require stable=true to trigger).
+        let (mut design, m) = baseline_design();
+        design.buckling_stable = false;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "buckling"),
+            "unstable design should trigger buckling warning"
+        );
+    }
+
+    #[test]
+    fn buckling_stable_produces_no_buckling_message() {
+        // stable=true → no message. Complements the above to fully pin the `!`.
+        let (mut design, m) = baseline_design();
+        design.buckling_stable = true;
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "buckling"),
+            "stable design should not trigger buckling warning"
+        );
+    }
+
+    // ── evaluate_status: free_length < solid_length (line 226) ───────────────
+
+    #[test]
+    fn free_length_equal_to_solid_length_produces_no_length_message() {
+        // free_length == solid_length → no "less than solid" warning.
+        // Kills `< → <=` and `< → ==`.
+        let (mut design, m) = baseline_design();
+        design.free_length = design.solid_length; // exact bit-copy
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "less than solid"),
+            "free == solid should not trigger length warning"
+        );
+    }
+
+    #[test]
+    fn free_length_below_solid_length_produces_length_message() {
+        // free_length < solid_length → warning present. Kills `< → >` and `< → ==`.
+        let (mut design, m) = baseline_design();
+        // Subtract 1 mm from free_length so it's below solid_length (24 mm baseline).
+        design.free_length = Length::from_meters(design.solid_length.meters() - 0.001);
+        let status = evaluate_status(&design, &m);
+        assert!(
+            has_message(&status, "less than solid"),
+            "free < solid should trigger length warning"
+        );
+    }
+
+    #[test]
+    fn free_length_above_solid_length_produces_no_length_message() {
+        // Sanity check.
+        let (mut design, m) = baseline_design();
+        design.free_length = Length::from_meters(design.solid_length.meters() + 0.001);
+        let status = evaluate_status(&design, &m);
+        assert!(
+            !has_message(&status, "less than solid"),
+            "free > solid should not trigger length warning"
+        );
+    }
+
+    // ── Legacy tests kept for coverage breadth ────────────────────────────────
 
     #[test]
     fn status_flags_low_index() {
