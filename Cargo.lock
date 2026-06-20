@@ -3490,6 +3490,7 @@ dependencies = [
 name = "springmaker"
 version = "0.1.0"
 dependencies = [
+ "approx",
  "iced",
  "plotters",
  "plotters-iced",
