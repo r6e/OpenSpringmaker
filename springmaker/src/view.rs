@@ -301,8 +301,9 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
                     Field::Loads,
                 ));
         }
-        // Handled by the early-return guard above; unreachable in practice.
-        ScenarioKind::MinWeight => {}
+        ScenarioKind::MinWeight => {
+            unreachable!("MinWeight handled by early-return guard")
+        }
     }
 
     // Fatigue inputs — always visible (leave blank to skip)
@@ -404,32 +405,6 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                 load_rows.push(row_text.into());
             }
 
-            // Fatigue
-            let fatigue_section: Element<'_, Message> = match &out.fatigue {
-                Some(fat) => {
-                    let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
-                    let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
-                    let (endur_val, endur_lbl) = display_stress(fat.fully_reversed_endurance, us);
-                    let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
-                    column![
-                        text("--- Fatigue Analysis ---"),
-                        text(format!("Alternating stress: {alt_val:.2} {alt_lbl}")),
-                        text(format!("Mean stress: {mean_val:.2} {mean_lbl}")),
-                        text(format!(
-                            "Fully-reversed endurance (S\u{2032}\u{2032}se): {endur_val:.2} {endur_lbl}"
-                        )),
-                        text(format!("Ultimate shear strength (Ssu): {ssu_val:.2} {ssu_lbl}")),
-                        text(format!(
-                            "Goodman factor of safety: {:.3}",
-                            fat.goodman_factor_of_safety
-                        )),
-                    ]
-                    .spacing(4)
-                    .into()
-                }
-                None => text("No fatigue data for this material.").into(),
-            };
-
             let mut col = column![
                 index_row,
                 rate_row,
@@ -445,7 +420,37 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
             for lr in load_rows {
                 col = col.push(lr);
             }
-            col = col.push(fatigue_section);
+
+            // Fatigue — only shown for determined scenarios (MinWeight has no
+            // fatigue inputs, so the section is always misleading there).
+            if out.min_weight.is_none() {
+                let fatigue_section: Element<'_, Message> = match &out.fatigue {
+                    Some(fat) => {
+                        let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
+                        let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
+                        let (endur_val, endur_lbl) =
+                            display_stress(fat.fully_reversed_endurance, us);
+                        let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
+                        column![
+                            text("--- Fatigue Analysis ---"),
+                            text(format!("Alternating stress: {alt_val:.2} {alt_lbl}")),
+                            text(format!("Mean stress: {mean_val:.2} {mean_lbl}")),
+                            text(format!(
+                                "Fully-reversed endurance (S\u{2032}\u{2032}se): {endur_val:.2} {endur_lbl}"
+                            )),
+                            text(format!("Ultimate shear strength (Ssu): {ssu_val:.2} {ssu_lbl}")),
+                            text(format!(
+                                "Goodman factor of safety: {:.3}",
+                                fat.goodman_factor_of_safety
+                            )),
+                        ]
+                        .spacing(4)
+                        .into()
+                    }
+                    None => text("No fatigue data for this material.").into(),
+                };
+                col = col.push(fatigue_section);
+            }
 
             if let Some(mw) = &out.min_weight {
                 let binding_label = match mw.binding {

@@ -105,6 +105,40 @@ fn forces(v: &[f64]) -> Vec<Force> {
     v.iter().map(|&n| Force::from_newtons(n)).collect()
 }
 
+/// Build a [`MinWeightRequest`] from a [`ScenarioSpec::MinWeight`] variant.
+///
+/// Returns an error if `spec` is not the `MinWeight` variant.
+pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequest> {
+    match spec {
+        ScenarioSpec::MinWeight {
+            end_type,
+            fixity,
+            required_rate_n_per_m,
+            max_force_n,
+            index_min,
+            index_max,
+            max_outer_dia_mm,
+            candidate_diameters_mm,
+            clash_allowance,
+        } => Ok(MinWeightRequest {
+            end_type: parse_end_type(end_type)?,
+            fixity: parse_fixity(fixity)?,
+            required_rate: SpringRate::from_newtons_per_meter(*required_rate_n_per_m),
+            max_force: Force::from_newtons(*max_force_n),
+            index_bounds: (*index_min, *index_max),
+            max_outer_dia: max_outer_dia_mm.map(Length::from_millimeters),
+            candidate_diameters: candidate_diameters_mm
+                .iter()
+                .map(|&d| Length::from_millimeters(d))
+                .collect(),
+            clash_allowance: *clash_allowance,
+        }),
+        _ => Err(SpringError::InconsistentInputs(
+            "min_weight_request_from_spec requires a MinWeight ScenarioSpec".into(),
+        )),
+    }
+}
+
 impl SavedDesign {
     pub fn to_toml(&self) -> Result<String> {
         toml::to_string_pretty(self).map_err(|e| SpringError::DataFile(e.to_string()))
@@ -205,30 +239,8 @@ impl SavedDesign {
                 loads: forces(loads_n),
             }
             .solve(material),
-            ScenarioSpec::MinWeight {
-                end_type,
-                fixity,
-                required_rate_n_per_m,
-                max_force_n,
-                index_min,
-                index_max,
-                max_outer_dia_mm,
-                candidate_diameters_mm,
-                clash_allowance,
-            } => {
-                let req = MinWeightRequest {
-                    end_type: parse_end_type(end_type)?,
-                    fixity: parse_fixity(fixity)?,
-                    required_rate: SpringRate::from_newtons_per_meter(*required_rate_n_per_m),
-                    max_force: Force::from_newtons(*max_force_n),
-                    index_bounds: (*index_min, *index_max),
-                    max_outer_dia: max_outer_dia_mm.map(Length::from_millimeters),
-                    candidate_diameters: candidate_diameters_mm
-                        .iter()
-                        .map(|&d| Length::from_millimeters(d))
-                        .collect(),
-                    clash_allowance: *clash_allowance,
-                };
+            ScenarioSpec::MinWeight { .. } => {
+                let req = min_weight_request_from_spec(&self.scenario)?;
                 solve_min_weight(material, &req).map(|s| s.design)
             }
         }

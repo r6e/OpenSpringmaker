@@ -196,7 +196,6 @@ fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
             loads_n: loads_n(&form.loads, us)?,
         },
         ScenarioKind::MinWeight => {
-            let us = form.unit_system;
             let diameters_mm: Vec<f64> = form
                 .candidate_diameters
                 .split(',')
@@ -410,50 +409,13 @@ fn compute_fatigue(
     }
 }
 
-fn build_min_weight_request(form: &FormState) -> Result<springcore::MinWeightRequest> {
-    let us = form.unit_system;
-    let diameters: Vec<Length> = form
-        .candidate_diameters
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| length_mm("candidate diameter", s, us).map(Length::from_millimeters))
-        .collect::<Result<_>>()?;
-    if diameters.is_empty() {
-        return Err(SpringError::InconsistentInputs(
-            "provide at least one candidate wire diameter".into(),
-        ));
-    }
-    let max_outer_dia = if form.max_outer_dia.trim().is_empty() {
-        None
-    } else {
-        Some(Length::from_millimeters(length_mm(
-            "max outer diameter",
-            &form.max_outer_dia,
-            us,
-        )?))
-    };
-    Ok(springcore::MinWeightRequest {
-        end_type: springcore::persistence_parse_end_type(&form.end_type)?,
-        fixity: springcore::persistence_parse_fixity(&form.fixity)?,
-        required_rate: SpringRate::from_newtons_per_meter(rate_npm("rate", &form.rate, us)?),
-        max_force: Force::from_newtons(force_n("max force", &form.max_force, us)?),
-        index_bounds: (
-            num("index min", &form.index_min)?,
-            num("index max", &form.index_max)?,
-        ),
-        max_outer_dia,
-        candidate_diameters: diameters,
-        clash_allowance: num("clash allowance", &form.clash_allowance)?,
-    })
-}
-
 /// Parse the form, solve the design, evaluate status, and (if a cycle and endurance
 /// data are present) compute fatigue. Missing endurance data degrades to `None`.
 pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<FormOutcome> {
     if form.scenario == ScenarioKind::MinWeight {
         let material = materials.get(&form.material)?;
-        let req = build_min_weight_request(form)?;
+        let spec = build_spec(form)?;
+        let req = springcore::min_weight_request_from_spec(&spec)?;
         let sol = springcore::solve_min_weight(material, &req)?;
         let status = evaluate_status(&sol.design, material);
         let fatigue = compute_fatigue(form, material, &sol.design)?;
@@ -594,5 +556,59 @@ mod tests {
 
         let spec2 = build_spec_public(&form2).unwrap();
         assert_eq!(spec1, spec2);
+    }
+
+    fn min_weight_metric() -> FormState {
+        FormState {
+            material: "Music Wire".into(),
+            unit_system: springcore::UnitSystem::Metric,
+            scenario: ScenarioKind::MinWeight,
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            rate: "2000".into(),
+            max_force: "50".into(),
+            index_min: "4".into(),
+            index_max: "12".into(),
+            max_outer_dia: "25".into(),
+            candidate_diameters: "1.5, 2.5, 3".into(),
+            clash_allowance: "0.15".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn build_spec_public_populate_round_trip_min_weight_metric() {
+        // MinWeight round-trip: spec1 → populate_from_spec → spec2 must equal spec1.
+        let form = min_weight_metric();
+        let spec1 = build_spec_public(&form).unwrap();
+
+        let mut form2 = FormState {
+            unit_system: springcore::UnitSystem::Metric,
+            ..FormState::default()
+        };
+        populate_from_spec(&mut form2, &spec1);
+
+        let spec2 = build_spec_public(&form2).unwrap();
+        assert_eq!(spec1, spec2);
+    }
+
+    #[test]
+    fn empty_candidate_diameters_is_an_error() {
+        let set = MaterialSet::load_default();
+        let mut form = min_weight_metric();
+        form.candidate_diameters = String::new();
+        assert!(parse_and_solve(&form, &set).is_err());
+    }
+
+    #[test]
+    fn min_weight_binding_constraint_is_valid() {
+        use springcore::BindingConstraint;
+        let set = MaterialSet::load_default();
+        let out = parse_and_solve(&min_weight_metric(), &set).unwrap();
+        let mw = out.min_weight.unwrap();
+        assert!(matches!(
+            mw.binding,
+            BindingConstraint::Stress | BindingConstraint::Index | BindingConstraint::OuterDiameter
+        ));
     }
 }
