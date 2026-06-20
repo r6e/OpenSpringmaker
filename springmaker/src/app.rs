@@ -76,6 +76,7 @@ impl App {
         }
     }
 
+    /// Process a UI event, updating state and re-solving the design where needed.
     pub fn update(&mut self, message: Message) {
         let should_recompute = match message {
             Message::Field(field, value) => {
@@ -115,6 +116,7 @@ impl App {
         }
     }
 
+    /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
         view::view(self)
     }
@@ -145,7 +147,7 @@ impl App {
     }
 
     fn save_dialog(&mut self) {
-        let spec = match crate::form::build_spec_public(&self.form) {
+        let spec = match crate::form::build_spec(&self.form) {
             Ok(s) => s,
             Err(e) => {
                 self.error = Some(e.to_string());

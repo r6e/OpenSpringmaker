@@ -97,11 +97,13 @@ pub struct Endurance {
 pub struct Material {
     pub name: String,
     pub specification: String,
-    pub mts: MtsEquation,
+    pub(crate) mts: MtsEquation,
     pub youngs_modulus: Stress,
     pub shear_modulus: Stress,
     pub density: MassDensity,
     pub allowable_pct_torsion: f64,
+    /// Allowable bending stress as a fraction of MTS; applies to bending-loaded
+    /// spring types (e.g. torsion, flat). Retained here for future sub-projects.
     pub allowable_pct_bending: f64,
     pub allowable_pct_set: f64,
     pub endurance: Option<Endurance>,
@@ -109,6 +111,7 @@ pub struct Material {
 }
 
 impl Material {
+    /// Minimum tensile strength at wire diameter `d`, in SI (pascals).
     pub fn min_tensile_strength(&self, d: Length) -> Result<Stress> {
         self.mts.evaluate(d)
     }
@@ -140,6 +143,7 @@ impl MaterialSet {
             .expect("bundled materials.toml is valid")
     }
 
+    /// Look up a material by name; returns an error if not found.
     pub fn get(&self, name: &str) -> Result<&Material> {
         self.materials
             .iter()
@@ -147,6 +151,7 @@ impl MaterialSet {
             .ok_or_else(|| SpringError::MaterialNotFound(name.to_string()))
     }
 
+    /// Return the names of all materials in insertion order.
     pub fn names(&self) -> Vec<&str> {
         self.materials.iter().map(|m| m.name.as_str()).collect()
     }

@@ -3,17 +3,20 @@
 //! All public quantities are stored internally in SI units. See the crate
 //! `ARCHITECTURE.md` and `docs/adr/` for design rationale.
 
-pub mod design;
-pub mod end_type;
+pub(crate) mod design;
+pub(crate) mod end_type;
 pub mod error;
-pub mod fatigue;
-pub mod material;
-pub mod mechanics;
-pub mod numeric;
-pub mod optimize;
-pub mod persistence;
-pub mod scenario;
+pub(crate) mod fatigue;
+pub(crate) mod material;
+pub(crate) mod mechanics;
+pub(crate) mod numeric;
+pub(crate) mod optimize;
+pub(crate) mod persistence;
+pub(crate) mod scenario;
 pub mod units;
+
+#[cfg(test)]
+pub(crate) mod test_support;
 
 pub use design::{
     evaluate_status, solve_forward, DesignStatus, LoadPoint, Severity, SpringDesign, StatusMessage,
@@ -21,9 +24,8 @@ pub use design::{
 pub use end_type::EndType;
 pub use error::{Result, SpringError};
 pub use fatigue::{analyze_fatigue, FatigueResult};
-pub use material::{Endurance, Material, MaterialSet, MtsEquation, MtsForm, StrengthUnits};
+pub use material::{Endurance, Material, MaterialSet};
 pub use mechanics::EndFixity;
-pub use numeric::{find_root_bracketed, SolveConfig};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};

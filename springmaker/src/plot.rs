@@ -8,7 +8,8 @@ use springcore::{SpringDesign, UnitSystem};
 /// Force–deflection points (deflection x, force y) in the display unit system.
 ///
 /// The spring rate is constant, so the line is linear; two endpoints suffice.
-/// The maximum operating load (or solid load, whichever is larger) sets the extent.
+/// The maximum operating load sets the extent; if no operating loads are present,
+/// the solid load is used as a fallback.
 pub fn force_deflection_series(design: &SpringDesign, units: UnitSystem) -> Vec<(f64, f64)> {
     let max_force_n = if design.load_points.is_empty() {
         design.at_solid.force.newtons()
@@ -104,8 +105,8 @@ pub fn results_chart(design: &SpringDesign, units: UnitSystem) -> iced::Element<
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use springcore::mechanics::EndFixity;
     use springcore::units::{Force, Length};
+    use springcore::EndFixity;
     use springcore::{EndType, MaterialSet, PowerUser, Scenario, UnitSystem};
 
     fn design() -> springcore::SpringDesign {

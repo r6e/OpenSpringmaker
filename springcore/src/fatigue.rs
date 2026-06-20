@@ -77,18 +77,13 @@ pub fn analyze_fatigue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{Material, MaterialSet};
     use crate::units::{Force, Length};
     use approx::assert_relative_eq;
     use std::f64::consts::PI;
 
-    fn mat(name: &str) -> Material {
-        MaterialSet::load_default().get(name).unwrap().clone()
-    }
-
     #[test]
     fn goodman_safety_factor_music_wire() {
-        let m = mat("Music Wire");
+        let m = crate::test_support::music_wire();
         let r = analyze_fatigue(
             &m,
             Length::from_millimeters(2.0),
@@ -113,7 +108,7 @@ mod tests {
 
     #[test]
     fn missing_endurance_degrades_gracefully() {
-        let m = mat("Stainless 302");
+        let m = crate::test_support::material("Stainless 302");
         let err = analyze_fatigue(
             &m,
             Length::from_millimeters(2.0),
@@ -127,7 +122,7 @@ mod tests {
 
     #[test]
     fn rejects_reversed_force_order() {
-        let m = mat("Music Wire");
+        let m = crate::test_support::music_wire();
         let err = analyze_fatigue(
             &m,
             Length::from_millimeters(2.0),

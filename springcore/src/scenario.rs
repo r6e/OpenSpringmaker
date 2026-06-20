@@ -11,6 +11,7 @@ use crate::{Result, SpringError};
 
 /// A solve scenario: a particular fixed assignment of which quantities are inputs.
 pub trait Scenario {
+    /// Compute a complete spring design given this scenario's inputs and the specified material.
     fn solve(&self, material: &Material) -> Result<SpringDesign>;
 }
 
@@ -143,17 +144,9 @@ impl Scenario for Dimensional {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::MaterialSet;
     use crate::mechanics::EndFixity;
     use crate::units::{Force, Length, SpringRate};
     use approx::assert_relative_eq;
-
-    fn music_wire() -> crate::material::Material {
-        MaterialSet::load_default()
-            .get("Music Wire")
-            .unwrap()
-            .clone()
-    }
 
     #[test]
     fn power_user_passes_through() {
@@ -166,7 +159,7 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&music_wire()).unwrap();
+        let d = s.solve(&crate::test_support::music_wire()).unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
     }
 
@@ -181,7 +174,7 @@ mod tests {
             point1: (Force::from_newtons(10.0), Length::from_millimeters(55.0)),
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
         };
-        let d = s.solve(&music_wire()).unwrap();
+        let d = s.solve(&crate::test_support::music_wire()).unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
         assert_relative_eq!(d.free_length.millimeters(), 60.0, max_relative = 1e-9);
         assert_relative_eq!(d.active_coils, 10.0, max_relative = 1e-6);
@@ -199,7 +192,7 @@ mod tests {
             point2: (Force::from_newtons(10.0), Length::from_millimeters(50.0)),
         };
         assert!(matches!(
-            s.solve(&music_wire()),
+            s.solve(&crate::test_support::music_wire()),
             Err(crate::SpringError::InconsistentInputs(_))
         ));
     }
@@ -215,7 +208,7 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&music_wire()).unwrap();
+        let d = s.solve(&crate::test_support::music_wire()).unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
         assert_relative_eq!(d.active_coils, 10.0, max_relative = 1e-6);
     }
@@ -232,7 +225,7 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&music_wire()).unwrap();
+        let d = s.solve(&crate::test_support::music_wire()).unwrap();
         assert_relative_eq!(d.index, 10.0, max_relative = 1e-9);
         assert_relative_eq!(d.mean_dia.millimeters(), 20.0, max_relative = 1e-9);
     }

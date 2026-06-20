@@ -159,6 +159,7 @@ pub struct DesignStatus {
 }
 
 impl DesignStatus {
+    /// Returns `true` if any message has [`Severity::Warning`] severity.
     pub fn has_warnings(&self) -> bool {
         self.messages
             .iter()
@@ -235,21 +236,13 @@ pub fn evaluate_status(design: &SpringDesign, material: &Material) -> DesignStat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::MaterialSet;
     use crate::mechanics::EndFixity;
     use crate::units::{Force, Length};
     use approx::assert_relative_eq;
 
-    fn music_wire() -> crate::material::Material {
-        MaterialSet::load_default()
-            .get("Music Wire")
-            .unwrap()
-            .clone()
-    }
-
     #[test]
     fn forward_solve_clean_case() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         // d=2mm, D=20mm -> C=10, Na=10. G=80 GPa -> k = 2000 N/m.
         let design = solve_forward(
             &m,
@@ -278,7 +271,7 @@ mod tests {
 
     #[test]
     fn status_flags_low_index() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         // C = 16/2 = 8 is fine; make C=3 (D=6mm,d=2mm) to trigger low-index caution.
         let design = solve_forward(
             &m,
@@ -300,7 +293,7 @@ mod tests {
 
     #[test]
     fn status_flags_overstress_at_solid() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         // Very stiff, large deflection to solid -> overstress.
         let design = solve_forward(
             &m,

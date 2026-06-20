@@ -45,93 +45,118 @@ si_quantity!(
 );
 
 impl Length {
+    /// Construct from metres (SI base unit).
     pub fn from_meters(v: f64) -> Self {
         Self(v)
     }
+    /// Construct from millimetres (1 mm = 0.001 m).
     pub fn from_millimeters(v: f64) -> Self {
         Self(v / 1000.0)
     }
+    /// Construct from inches (1 in = 0.0254 m, NIST SP 811).
     pub fn from_inches(v: f64) -> Self {
         Self(v * METERS_PER_INCH)
     }
+    /// Return value in metres.
     pub fn meters(self) -> f64 {
         self.0
     }
+    /// Return value in millimetres.
     pub fn millimeters(self) -> f64 {
         self.0 * 1000.0
     }
+    /// Return value in inches.
     pub fn inches(self) -> f64 {
         self.0 / METERS_PER_INCH
     }
 }
 
 impl Force {
+    /// Construct from newtons (SI base unit).
     pub fn from_newtons(v: f64) -> Self {
         Self(v)
     }
+    /// Construct from pounds-force (1 lbf = 4.4482216152605 N, NIST SP 811).
     pub fn from_pounds_force(v: f64) -> Self {
         Self(v * NEWTONS_PER_LBF)
     }
+    /// Return value in newtons.
     pub fn newtons(self) -> f64 {
         self.0
     }
+    /// Return value in pounds-force.
     pub fn pounds_force(self) -> f64 {
         self.0 / NEWTONS_PER_LBF
     }
 }
 
 impl Stress {
+    /// Construct from pascals (SI base unit).
     pub fn from_pascals(v: f64) -> Self {
         Self(v)
     }
+    /// Construct from megapascals (1 MPa = 1e6 Pa).
     pub fn from_megapascals(v: f64) -> Self {
         Self(v * 1.0e6)
     }
+    /// Construct from pounds per square inch (1 psi = 6894.757293168 Pa, NIST SP 811).
     pub fn from_psi(v: f64) -> Self {
         Self(v * PASCALS_PER_PSI)
     }
+    /// Return value in pascals.
     pub fn pascals(self) -> f64 {
         self.0
     }
+    /// Return value in megapascals.
     pub fn megapascals(self) -> f64 {
         self.0 / 1.0e6
     }
+    /// Return value in pounds per square inch.
     pub fn psi(self) -> f64 {
         self.0 / PASCALS_PER_PSI
     }
 }
 
 impl SpringRate {
+    /// Construct from newtons per metre (SI base unit).
     pub fn from_newtons_per_meter(v: f64) -> Self {
         Self(v)
     }
+    /// Construct from pounds-force per inch (1 lbf/in = 4.4482216152605/0.0254 N/m).
     pub fn from_pounds_per_inch(v: f64) -> Self {
         Self(v * NEWTONS_PER_LBF / METERS_PER_INCH)
     }
+    /// Return value in newtons per metre.
     pub fn newtons_per_meter(self) -> f64 {
         self.0
     }
+    /// Return value in pounds-force per inch.
     pub fn pounds_per_inch(self) -> f64 {
         self.0 * METERS_PER_INCH / NEWTONS_PER_LBF
     }
 }
 
 impl Frequency {
+    /// Construct from hertz (SI base unit).
     pub fn from_hertz(v: f64) -> Self {
         Self(v)
     }
+    /// Return value in hertz.
     pub fn hertz(self) -> f64 {
         self.0
     }
 }
 
 impl MassDensity {
+    /// Construct from kilograms per cubic metre (SI base unit).
     pub fn from_kg_per_m3(v: f64) -> Self {
         Self(v)
     }
+    /// Construct from pounds-mass per cubic inch (1 lb/in³ = 27679.905 kg/m³).
     pub fn from_pounds_per_in3(v: f64) -> Self {
         Self(v * KG_PER_M3_PER_LB_PER_IN3)
     }
+    /// Return value in kilograms per cubic metre.
     pub fn kg_per_m3(self) -> f64 {
         self.0
     }

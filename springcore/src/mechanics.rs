@@ -91,6 +91,7 @@ pub enum EndFixity {
 }
 
 impl EndFixity {
+    /// End-condition constant α used in buckling calculations (Shigley Table 10-2).
     pub fn alpha(self) -> f64 {
         match self {
             Self::FixedFixed => 0.5,

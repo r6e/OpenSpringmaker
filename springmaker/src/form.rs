@@ -1,9 +1,10 @@
 //! Pure form-to-design logic. No iced dependency, so it is unit-testable.
 
 use springcore::units::{Force, Length, SpringRate};
+use springcore::UnitSystem;
 use springcore::{
     analyze_fatigue, evaluate_status, DesignStatus, FatigueResult, MaterialSet, Result,
-    SavedDesign, ScenarioSpec, SpringDesign, SpringError, UnitSystem,
+    SavedDesign, ScenarioSpec, SpringDesign, SpringError,
 };
 
 /// Which scenario the form is editing.
@@ -131,7 +132,7 @@ fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = num(field, value)?;
     Ok(match us {
         UnitSystem::Us => Length::from_inches(v).millimeters(),
-        UnitSystem::Metric => Length::from_millimeters(v).millimeters(),
+        UnitSystem::Metric => v,
     })
 }
 
@@ -139,7 +140,7 @@ fn force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = num(field, value)?;
     Ok(match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
-        UnitSystem::Metric => Force::from_newtons(v).newtons(),
+        UnitSystem::Metric => v,
     })
 }
 
@@ -147,7 +148,7 @@ fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = num(field, value)?;
     Ok(match us {
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
-        UnitSystem::Metric => SpringRate::from_newtons_per_meter(v).newtons_per_meter(),
+        UnitSystem::Metric => v,
     })
 }
 
@@ -160,7 +161,7 @@ fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
         .collect()
 }
 
-fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
+pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
     let us = form.unit_system;
     Ok(match form.scenario {
         ScenarioKind::PowerUser => ScenarioSpec::PowerUser {
@@ -233,63 +234,49 @@ fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
     })
 }
 
-/// Public wrapper around `build_spec` used by `app.rs` for save dialogs.
-pub fn build_spec_public(form: &FormState) -> Result<ScenarioSpec> {
-    build_spec(form)
+/// Convert mm (SI internal) → display string.
+fn fmt_len(mm: f64, us: UnitSystem) -> String {
+    match us {
+        UnitSystem::Metric => format!("{mm}"),
+        UnitSystem::Us => format!("{}", Length::from_millimeters(mm).inches()),
+    }
+}
+
+/// Convert N → display string.
+fn fmt_force(n: f64, us: UnitSystem) -> String {
+    match us {
+        UnitSystem::Metric => format!("{n}"),
+        UnitSystem::Us => format!("{}", Force::from_newtons(n).pounds_force()),
+    }
+}
+
+/// Convert N/m → display string.
+fn fmt_rate(npm: f64, us: UnitSystem) -> String {
+    match us {
+        UnitSystem::Metric => format!("{npm}"),
+        UnitSystem::Us => format!(
+            "{}",
+            SpringRate::from_newtons_per_meter(npm).pounds_per_inch()
+        ),
+    }
+}
+
+/// Join a slice of newtons values → comma-separated display string.
+fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
+    loads
+        .iter()
+        .map(|&n| fmt_force(n, us))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Write a `ScenarioSpec`'s fields back into `form`, converting SI-stored
 /// mm/N values to display units per `form.unit_system`.
 ///
-/// After calling this, `build_spec_public(form)` should reproduce a spec
+/// After calling this, `build_spec(form)` should reproduce a spec
 /// equal to `spec` (round-trip invariant).
 pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec) {
     let us = form.unit_system;
-
-    /// Convert mm (SI internal) → display string.
-    fn fmt_len(mm: f64, us: UnitSystem) -> String {
-        match us {
-            UnitSystem::Metric => format!("{mm}"),
-            UnitSystem::Us => {
-                use springcore::units::Length;
-                format!("{}", Length::from_millimeters(mm).inches())
-            }
-        }
-    }
-
-    /// Convert N → display string.
-    fn fmt_force(n: f64, us: UnitSystem) -> String {
-        match us {
-            UnitSystem::Metric => format!("{n}"),
-            UnitSystem::Us => {
-                use springcore::units::Force;
-                format!("{}", Force::from_newtons(n).pounds_force())
-            }
-        }
-    }
-
-    /// Convert N/m → display string.
-    fn fmt_rate(npm: f64, us: UnitSystem) -> String {
-        match us {
-            UnitSystem::Metric => format!("{npm}"),
-            UnitSystem::Us => {
-                use springcore::units::SpringRate;
-                format!(
-                    "{}",
-                    SpringRate::from_newtons_per_meter(npm).pounds_per_inch()
-                )
-            }
-        }
-    }
-
-    /// Join a slice of newtons values → comma-separated display string.
-    fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
-        loads
-            .iter()
-            .map(|&n| fmt_force(n, us))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
 
     match spec {
         ScenarioSpec::PowerUser {
@@ -567,11 +554,11 @@ mod tests {
     }
 
     #[test]
-    fn build_spec_public_populate_round_trip_metric() {
+    fn build_spec_populate_round_trip_metric() {
         // A metric form produces spec1; populate_from_spec writes it back into
         // another form; building that second form gives spec2 == spec1.
         let form = rate_based_metric();
-        let spec1 = build_spec_public(&form).unwrap();
+        let spec1 = build_spec(&form).unwrap();
 
         let mut form2 = FormState {
             unit_system: springcore::UnitSystem::Metric,
@@ -579,7 +566,7 @@ mod tests {
         };
         populate_from_spec(&mut form2, &spec1);
 
-        let spec2 = build_spec_public(&form2).unwrap();
+        let spec2 = build_spec(&form2).unwrap();
         assert_eq!(spec1, spec2);
     }
 
@@ -602,10 +589,10 @@ mod tests {
     }
 
     #[test]
-    fn build_spec_public_populate_round_trip_min_weight_metric() {
+    fn build_spec_populate_round_trip_min_weight_metric() {
         // MinWeight round-trip: spec1 → populate_from_spec → spec2 must equal spec1.
         let form = min_weight_metric();
-        let spec1 = build_spec_public(&form).unwrap();
+        let spec1 = build_spec(&form).unwrap();
 
         let mut form2 = FormState {
             unit_system: springcore::UnitSystem::Metric,
@@ -613,7 +600,7 @@ mod tests {
         };
         populate_from_spec(&mut form2, &spec1);
 
-        let spec2 = build_spec_public(&form2).unwrap();
+        let spec2 = build_spec(&form2).unwrap();
         assert_eq!(spec1, spec2);
     }
 

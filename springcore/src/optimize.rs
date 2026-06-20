@@ -47,7 +47,7 @@ pub struct MinWeightSolution {
 fn wire_mass(material: &Material, wire_dia: Length, mean_dia: Length, total_coils: f64) -> f64 {
     let d = wire_dia.meters();
     let dm = mean_dia.meters();
-    material.density.kg_per_m3() * (PI * PI / 4.0) * d * d * dm * total_coils
+    material.density.kg_per_m3() * (PI * PI / 4.0) * d.powi(2) * dm * total_coils
 }
 
 /// Largest feasible mean diameter for a wire size, and which limit binds.
@@ -162,17 +162,9 @@ pub fn solve_min_weight(material: &Material, req: &MinWeightRequest) -> Result<M
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::material::{Material, MaterialSet};
     use crate::mechanics::EndFixity;
     use crate::units::{Force, Length, SpringRate};
     use approx::assert_relative_eq;
-
-    fn music_wire() -> Material {
-        MaterialSet::load_default()
-            .get("Music Wire")
-            .unwrap()
-            .clone()
-    }
 
     fn base_request(candidates: Vec<f64>) -> MinWeightRequest {
         MinWeightRequest {
@@ -192,7 +184,7 @@ mod tests {
 
     #[test]
     fn solution_is_feasible() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         let sol = solve_min_weight(&m, &base_request(vec![1.5, 2.0, 2.5, 3.0])).unwrap();
         // Rate met.
         assert_relative_eq!(
@@ -210,7 +202,7 @@ mod tests {
 
     #[test]
     fn picks_global_minimum_over_candidates() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         let candidates = vec![1.5, 2.0, 2.5, 3.0];
         // Per-candidate mass via the same function restricted to one diameter.
         let per: Vec<f64> = candidates
@@ -228,14 +220,14 @@ mod tests {
 
     #[test]
     fn solution_does_not_buckle() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         let sol = solve_min_weight(&m, &base_request(vec![1.5, 2.0, 2.5, 3.0])).unwrap();
         assert!(sol.design.buckling_stable);
     }
 
     #[test]
     fn infeasible_when_outer_diameter_too_small() {
-        let m = music_wire();
+        let m = crate::test_support::music_wire();
         let mut req = base_request(vec![1.5, 2.0, 2.5]);
         req.max_outer_dia = Some(Length::from_millimeters(3.0)); // forces index < 4
         assert!(matches!(

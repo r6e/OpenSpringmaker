@@ -168,24 +168,29 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
 }
 
 impl SavedDesign {
+    /// Serialize this design to a TOML string.
     pub fn to_toml(&self) -> Result<String> {
         toml::to_string_pretty(self).map_err(|e| SpringError::DataFile(e.to_string()))
     }
 
+    /// Deserialize a design from a TOML string.
     pub fn from_toml(s: &str) -> Result<Self> {
         toml::from_str(s).map_err(|e| SpringError::DataFile(e.to_string()))
     }
 
+    /// Write this design to a TOML file at `path`.
     pub fn save(&self, path: &Path) -> Result<()> {
         std::fs::write(path, self.to_toml()?).map_err(|e| SpringError::DataFile(e.to_string()))
     }
 
+    /// Load and deserialize a design from the TOML file at `path`.
     pub fn load(path: &Path) -> Result<Self> {
         let text =
             std::fs::read_to_string(path).map_err(|e| SpringError::DataFile(e.to_string()))?;
         Self::from_toml(&text)
     }
 
+    /// Re-compute the spring design from the stored scenario inputs and the given material set.
     pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
         let material = materials.get(&self.material)?;
         match &self.scenario {
