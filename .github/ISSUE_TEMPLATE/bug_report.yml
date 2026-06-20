@@ -1,0 +1,78 @@
+name: Bug report
+description: Report incorrect behavior, calculation results, GUI issues, persistence problems, or build failures.
+title: "bug: <one-line summary>"
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: OpenSpringmaker version
+      placeholder: "0.1.0 / commit SHA / branch name"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other / not platform-specific
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Core solver library (springcore)
+        - Desktop calculator GUI (springmaker)
+        - Materials data
+        - Design save/load
+        - Build / tooling
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Inputs or design file
+      description: Include the spring inputs, selected material, unit system, scenario, or TOML design file needed to reproduce the issue.
+      render: text
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Include the source or worked example if this is a calculation mismatch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error messages or backtraces. Run with `RUST_BACKTRACE=1` for panics.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched existing issues for duplicates.
+          required: true

@@ -103,7 +103,7 @@ modulus, `E` = Young's modulus, `F` = axial force, `τ` = shear stress.
 | End condition | End coils `Ne` | Total coils `Nt` | Free length `L0` | Solid length `Ls` |
 |---|---|---|---|---|
 | Plain | 0 | `Na` | `p·Na + d` | `d·(Nt+1)` |
-| Plain, ground | 1 | `Na + 1` | `p·Na` | `d·Nt` |
+| Plain, ground | 1 | `Na + 1` | `p·(Na + 1)` | `d·Nt` |
 | Squared (closed) | 2 | `Na + 2` | `p·Na + 3d` | `d·(Nt+1)` |
 | Squared & ground | 2 | `Na + 2` | `p·Na + 2d` | `d·Nt` |
 

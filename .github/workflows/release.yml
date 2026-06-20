@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: build-release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - id: workspace
+        shell: bash
+        run: |
+          if [[ -f Cargo.toml ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/setup-rust
+        if: steps.workspace.outputs.exists == 'true'
+      - name: Build springmaker release binary
+        if: steps.workspace.outputs.exists == 'true'
+        run: cargo build --release --locked -p springmaker
+      - name: Ad-hoc codesign binary (macOS)
+        if: steps.workspace.outputs.exists == 'true' && runner.os == 'macOS'
+        run: |
+          codesign --force --sign - target/release/springmaker
+          codesign --verify --strict target/release/springmaker
+      - name: Stage archive contents (Unix)
+        if: steps.workspace.outputs.exists == 'true' && runner.os != 'Windows'
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          staging="openspringmaker-${TAG}-${TARGET}"
+          mkdir -p "${staging}"
+          cp target/release/springmaker "${staging}/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "${staging}/"
+          tar czf "${staging}.tar.gz" "${staging}"
+          shasum -a 256 "${staging}.tar.gz" > "SHA256SUMS-${TARGET}.txt"
+      - name: Stage archive contents (Windows)
+        if: steps.workspace.outputs.exists == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $staging = "openspringmaker-${env:TAG}-${env:TARGET}"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item target/release/springmaker.exe -Destination $staging
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md -Destination $staging
+          Compress-Archive -Path $staging -DestinationPath "${staging}.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "${staging}.zip").Hash.ToLower()
+          [System.IO.File]::WriteAllText("$pwd/SHA256SUMS-${env:TARGET}.txt", "${hash}  ${staging}.zip`n")
+      - name: Upload artifacts to release
+        if: steps.workspace.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+        shell: bash
+        run: |
+          archive="openspringmaker-${TAG}-${TARGET}.${ARCHIVE_EXT}"
+          checksums="SHA256SUMS-${TARGET}.txt"
+          gh release view "${TAG}" >/dev/null 2>&1 || gh release create "${TAG}" --title "${TAG}" --notes "Release ${TAG}"
+          gh release upload "${TAG}" "${archive}" "${checksums}" --clobber
