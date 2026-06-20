@@ -563,7 +563,7 @@ fn build_governing_rate<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Ele
         C::ACCENT,
         SZ_HERO,
     );
-    column![rate_label, rate_value].spacing(4).into()
+    column![rate_label, rate_value].spacing(6).into()
 }
 
 fn build_geometry_section<'a>(

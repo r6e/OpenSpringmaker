@@ -195,7 +195,8 @@ fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64>
     })
 }
 
-/// Like `force_n` but requires the value to be strictly positive (e.g. max_force).
+/// Like `non_negative_force_n` but requires the value to be strictly positive
+/// (e.g. max force, which must be greater than zero).
 fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = positive_num(field, value)?;
     Ok(match us {
