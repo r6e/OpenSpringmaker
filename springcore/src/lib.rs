@@ -9,6 +9,7 @@ pub mod error;
 pub mod material;
 pub mod mechanics;
 pub mod numeric;
+pub mod scenario;
 pub mod units;
 
 pub use design::{
@@ -19,4 +20,5 @@ pub use error::{Result, SpringError};
 pub use material::{Endurance, Material, MaterialSet, MtsEquation, MtsForm, StrengthUnits};
 pub use mechanics::EndFixity;
 pub use numeric::{find_root_bracketed, SolveConfig};
+pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress};
