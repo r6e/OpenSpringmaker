@@ -10,6 +10,7 @@ use iced::{Element, Length};
 
 use crate::app::{App, Field, Message};
 use crate::form::{ScenarioKind, ALL_SCENARIOS};
+use springcore::BindingConstraint;
 use springcore::UnitSystem;
 
 // --------------------------------------------------------------------------
@@ -159,7 +160,44 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
     let us_force = unit_force_label(app.form.unit_system);
     let us_rate = unit_rate_label(app.form.unit_system);
 
-    // Wire diameter is shared by all scenarios.
+    // Min Weight has a completely different input set — return its own column early.
+    if s == ScenarioKind::MinWeight {
+        let col = column![
+            labeled_input(
+                &format!("Required rate ({us_rate})"),
+                &app.form.rate,
+                Field::Rate,
+            ),
+            labeled_input(
+                &format!("Max force ({us_force})"),
+                &app.form.max_force,
+                Field::MaxForce,
+            ),
+            labeled_input("Index min", &app.form.index_min, Field::IndexMin),
+            labeled_input("Index max", &app.form.index_max, Field::IndexMax),
+            labeled_input(
+                &format!("Max outer dia ({us_label}, optional)"),
+                &app.form.max_outer_dia,
+                Field::MaxOuterDia,
+            ),
+            labeled_input(
+                &format!("Candidate wire diameters ({us_label}), comma-separated"),
+                &app.form.candidate_diameters,
+                Field::CandidateDiameters,
+            ),
+            labeled_input(
+                "Clash allowance (fraction)",
+                &app.form.clash_allowance,
+                Field::ClashAllowance,
+            ),
+        ]
+        .spacing(8);
+        return container(col.width(Length::Fill))
+            .width(Length::FillPortion(1))
+            .into();
+    }
+
+    // Wire diameter is shared by all determined scenarios.
     let wire_field = labeled_input(
         &format!("Wire diameter ({us_label})"),
         &app.form.wire_dia,
@@ -263,6 +301,8 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
                     Field::Loads,
                 ));
         }
+        // Handled by the early-return guard above; unreachable in practice.
+        ScenarioKind::MinWeight => {}
     }
 
     // Fatigue inputs — always visible (leave blank to skip)
@@ -406,6 +446,18 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                 col = col.push(lr);
             }
             col = col.push(fatigue_section);
+
+            if let Some(mw) = &out.min_weight {
+                let binding_label = match mw.binding {
+                    BindingConstraint::Stress => "stress",
+                    BindingConstraint::Index => "index",
+                    BindingConstraint::OuterDiameter => "outer diameter",
+                };
+                col = col.push(text("--- Min Weight Optimisation ---"));
+                col = col.push(text(format!("Optimised wire mass: {:.4} kg", mw.mass_kg)));
+                col = col.push(text(format!("Binding constraint: {binding_label}")));
+            }
+
             col = col.push(crate::plot::results_chart(d, us));
             col
         }

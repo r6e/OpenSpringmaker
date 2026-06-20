@@ -5,6 +5,7 @@ use crate::design::SpringDesign;
 use crate::end_type::EndType;
 use crate::material::MaterialSet;
 use crate::mechanics::EndFixity;
+use crate::optimize::{solve_min_weight, MinWeightRequest};
 use crate::scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 use crate::units::{Force, Length, SpringRate};
 use crate::{Result, SpringError};
@@ -59,6 +60,17 @@ pub enum ScenarioSpec {
         free_length_mm: f64,
         loads_n: Vec<f64>,
     },
+    MinWeight {
+        end_type: String,
+        fixity: String,
+        required_rate_n_per_m: f64,
+        max_force_n: f64,
+        index_min: f64,
+        index_max: f64,
+        max_outer_dia_mm: Option<f64>,
+        candidate_diameters_mm: Vec<f64>,
+        clash_allowance: f64,
+    },
 }
 
 /// A persisted design: material, display units, and scenario inputs.
@@ -69,7 +81,7 @@ pub struct SavedDesign {
     pub scenario: ScenarioSpec,
 }
 
-fn parse_end_type(s: &str) -> Result<EndType> {
+pub fn parse_end_type(s: &str) -> Result<EndType> {
     Ok(match s {
         "plain" => EndType::Plain,
         "plain_ground" => EndType::PlainGround,
@@ -79,7 +91,7 @@ fn parse_end_type(s: &str) -> Result<EndType> {
     })
 }
 
-fn parse_fixity(s: &str) -> Result<EndFixity> {
+pub fn parse_fixity(s: &str) -> Result<EndFixity> {
     Ok(match s {
         "fixed_fixed" => EndFixity::FixedFixed,
         "fixed_pinned" => EndFixity::FixedPinned,
@@ -193,6 +205,32 @@ impl SavedDesign {
                 loads: forces(loads_n),
             }
             .solve(material),
+            ScenarioSpec::MinWeight {
+                end_type,
+                fixity,
+                required_rate_n_per_m,
+                max_force_n,
+                index_min,
+                index_max,
+                max_outer_dia_mm,
+                candidate_diameters_mm,
+                clash_allowance,
+            } => {
+                let req = MinWeightRequest {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    required_rate: SpringRate::from_newtons_per_meter(*required_rate_n_per_m),
+                    max_force: Force::from_newtons(*max_force_n),
+                    index_bounds: (*index_min, *index_max),
+                    max_outer_dia: max_outer_dia_mm.map(Length::from_millimeters),
+                    candidate_diameters: candidate_diameters_mm
+                        .iter()
+                        .map(|&d| Length::from_millimeters(d))
+                        .collect(),
+                    clash_allowance: *clash_allowance,
+                };
+                solve_min_weight(material, &req).map(|s| s.design)
+            }
         }
     }
 }
@@ -202,6 +240,29 @@ mod tests {
     use super::*;
     use crate::material::MaterialSet;
     use approx::assert_relative_eq;
+
+    #[test]
+    fn min_weight_spec_roundtrips_and_solves() {
+        let s = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            scenario: ScenarioSpec::MinWeight {
+                end_type: "squared_ground".into(),
+                fixity: "fixed_fixed".into(),
+                required_rate_n_per_m: 2000.0,
+                max_force_n: 50.0,
+                index_min: 4.0,
+                index_max: 12.0,
+                max_outer_dia_mm: None,
+                candidate_diameters_mm: vec![1.5, 2.0, 2.5, 3.0],
+                clash_allowance: 0.15,
+            },
+        };
+        let parsed = SavedDesign::from_toml(&s.to_toml().unwrap()).unwrap();
+        assert_eq!(s, parsed);
+        let design = s.solve(&MaterialSet::load_default()).unwrap();
+        assert!(design.buckling_stable);
+    }
 
     fn sample() -> SavedDesign {
         SavedDesign {

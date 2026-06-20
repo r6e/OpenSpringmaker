@@ -20,6 +20,13 @@ pub enum Field {
     Length2,
     FatigueMin,
     FatigueMax,
+    // Min Weight fields
+    MaxForce,
+    IndexMin,
+    IndexMax,
+    MaxOuterDia,
+    CandidateDiameters,
+    ClashAllowance,
 }
 
 /// All UI events.
@@ -128,6 +135,12 @@ impl App {
             Field::Length2 => f.length2 = value,
             Field::FatigueMin => f.fatigue_min = value,
             Field::FatigueMax => f.fatigue_max = value,
+            Field::MaxForce => f.max_force = value,
+            Field::IndexMin => f.index_min = value,
+            Field::IndexMax => f.index_max = value,
+            Field::MaxOuterDia => f.max_outer_dia = value,
+            Field::CandidateDiameters => f.candidate_diameters = value,
+            Field::ClashAllowance => f.clash_allowance = value,
         }
     }
 
