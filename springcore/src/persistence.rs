@@ -368,6 +368,80 @@ mod tests {
         assert!(min_weight_request_from_spec(&spec).is_ok());
     }
 
+    // Pins `index_min > 0.0` (strict): zero must be rejected by the bounds guard
+    // (not the c_star guard). Under a `> 0.0` → `>= 0.0` mutant, index_min=0.0
+    // would pass the bounds check and fall through to the c_star check, producing
+    // a different error message.  Asserting the exact message pins the guard.
+    #[test]
+    fn min_weight_index_min_zero_is_rejected() {
+        let spec = min_weight_spec(2000.0, 0.0);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("0 < index_min < index_max"),
+            "error should name the bounds constraint, got: {msg}"
+        );
+    }
+
+    // Pins `index_min < index_max` (strict): equal bounds must be rejected.
+    // A `<` → `<=` mutant would accept index_min == index_max.
+    #[test]
+    fn min_weight_index_min_eq_max_is_rejected() {
+        let spec = ScenarioSpec::MinWeight {
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            required_rate_n_per_m: 2000.0,
+            max_force_n: 50.0,
+            index_min: 8.0,
+            index_max: 8.0,
+            max_outer_dia_mm: None,
+            candidate_diameters_mm: vec![2.0],
+            clash_allowance: 0.15,
+        };
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    // Pins both the c_star computation (`/ 2.0` must not become `% 2.0`) and the
+    // strict `< c_star` comparison (`<` must not become `<=`).
+    //
+    // c_star = 1 + √3/2 ≈ 1.8660. A `% 2.0` mutant gives √3 % 2 = √3 ≈ 1.7321,
+    // making mutant c_star ≈ 2.7321. An index_min between the two (e.g. 2.0) is
+    // accepted by the real code but rejected by the `%` mutant.
+    #[test]
+    fn min_weight_index_min_above_c_star_is_accepted() {
+        // 2.0 > real c_star (≈1.866) so real code accepts; mutant c_star ≈ 2.732
+        // would reject this, killing that mutant.
+        let spec = min_weight_spec(2000.0, 2.0);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "index_min=2.0 should be accepted (above C* ≈ 1.866)"
+        );
+    }
+
+    // c_star exactly: pins `<` vs `<=`. index_min == c_star must be accepted by the
+    // real `<` guard (since c_star < c_star is false → no error) but rejected by a
+    // `<=` mutant (c_star <= c_star is true → error).
+    #[test]
+    fn min_weight_index_min_exactly_c_star_is_accepted() {
+        let c_star = 1.0 + 3.0_f64.sqrt() / 2.0; // ≈ 1.8660
+        let spec = ScenarioSpec::MinWeight {
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            required_rate_n_per_m: 2000.0,
+            max_force_n: 50.0,
+            index_min: c_star,
+            index_max: 12.0,
+            max_outer_dia_mm: None,
+            candidate_diameters_mm: vec![2.0],
+            clash_allowance: 0.15,
+        };
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "index_min exactly at C* ≈ {c_star:.4} must be accepted"
+        );
+    }
+
     #[test]
     fn min_weight_spec_roundtrips_and_solves() {
         let s = SavedDesign {

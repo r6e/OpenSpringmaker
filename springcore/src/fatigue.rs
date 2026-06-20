@@ -133,4 +133,31 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, crate::SpringError::InconsistentInputs(_)));
     }
+
+    // Pins the `<` (strict) in the force guard: equal forces (zero alternating load)
+    // must be accepted — the spring cycles at a single load point, which is a degenerate
+    // but valid fatigue case (infinite safety factor). A `<=` mutant would reject this.
+    #[test]
+    fn equal_forces_min_eq_max_is_accepted() {
+        let m = crate::test_support::music_wire();
+        let result = analyze_fatigue(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(20.0),
+            Force::from_newtons(20.0),
+        );
+        assert!(
+            result.is_ok(),
+            "equal forces should be accepted: {result:?}"
+        );
+        // Alternating stress is zero → safety factor is infinite (or very large).
+        let r = result.unwrap();
+        assert_relative_eq!(
+            r.alternating_stress.pascals(),
+            0.0,
+            max_relative = 1e-9,
+            epsilon = 1e-6
+        );
+    }
 }

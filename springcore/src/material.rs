@@ -319,6 +319,87 @@ allowable_pct_set = 0.60
         assert!(matches!(err, SpringError::DiameterOutOfRange { .. }));
     }
 
+    // Pins the strict `<`/`>` boundary checks. The min and max boundary diameters
+    // themselves must be accepted (i.e., `d < min` and `d > max` rejects, not
+    // `d <= min` or `d >= max`). A `<`→`<=` mutant would reject d=min_dia; a
+    // `>`→`>=` mutant would reject d=max_dia.
+    #[test]
+    fn boundary_diameters_are_accepted() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        // valid_dia_min_mm = 0.10 — must be Ok
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(0.10))
+                .is_ok(),
+            "min boundary diameter must be accepted"
+        );
+        // valid_dia_max_mm = 6.5 — must be Ok
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(6.5))
+                .is_ok(),
+            "max boundary diameter must be accepted"
+        );
+        // Just outside the boundaries — must be rejected
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(0.09))
+                .is_err(),
+            "just below min must be rejected"
+        );
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(6.51))
+                .is_err(),
+            "just above max must be rejected"
+        );
+    }
+
+    // Polynomial MTS form: Sut = c0 + c1*d + c2*d^2 (d in mm, Sut in MPa).
+    // Coefficients [2000.0, -5.0, 0.5] → at d=4 mm:
+    //   correct:  2000 + (-5)*4 + 0.5*16 = 2000 - 20 + 8 = 1988 MPa
+    //   *→+:      2000 + (-5)+4 + 0.5+16 = trivially wrong
+    //   *→/:      2000 + (-5)/4 + 0.5/16 = also wrong
+    // Pins both polynomial-multiply mutants.
+    const POLY_SAMPLE: &str = r#"
+[[material]]
+name = "Poly Test Wire"
+specification = "ASTM A999"
+citations = "synthetic test coefficients"
+mts_form = "polynomial"
+mts_units = "si_mpa_mm"
+mts_coefficients = [2000.0, -5.0, 0.5]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+
+    #[test]
+    fn polynomial_mts_evaluates_correctly() {
+        let set = MaterialSet::from_toml_str(POLY_SAMPLE).unwrap();
+        let m = set.get("Poly Test Wire").unwrap();
+        // d = 4 mm: Sut = 2000 + (-5)*4 + 0.5*16 = 1988 MPa
+        let expected = 2000.0 + (-5.0) * 4.0 + 0.5 * 16.0;
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(4.0))
+                .unwrap()
+                .megapascals(),
+            expected,
+            max_relative = 1e-9
+        );
+        // d = 3 mm: Sut = 2000 + (-5)*3 + 0.5*9 = 1989.5 MPa (differs from d=4 value)
+        let expected3 = 2000.0 + (-5.0) * 3.0 + 0.5 * 9.0;
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(3.0))
+                .unwrap()
+                .megapascals(),
+            expected3,
+            max_relative = 1e-9
+        );
+    }
+
     #[test]
     fn endurance_optional() {
         let set = MaterialSet::from_toml_str(SAMPLE).unwrap();

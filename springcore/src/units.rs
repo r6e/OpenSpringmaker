@@ -184,6 +184,15 @@ mod tests {
         assert_relative_eq!(f.pounds_force(), 1.0, max_relative = 1e-12);
     }
 
+    // Extra non-unity value: kills the "replace pounds_force -> 1.0" mutant.
+    #[test]
+    fn force_pound_non_unity_roundtrip() {
+        // 3 lbf != 1.0, so a mutant returning constant 1.0 would fail here.
+        let f = Force::from_pounds_force(3.0);
+        assert_relative_eq!(f.pounds_force(), 3.0, max_relative = 1e-12);
+        assert_relative_eq!(f.newtons(), 3.0 * 4.4482216152605, max_relative = 1e-12);
+    }
+
     #[test]
     fn stress_psi_roundtrip() {
         let s = Stress::from_psi(1.0);
@@ -206,6 +215,19 @@ mod tests {
             max_relative = 1e-12
         );
         assert_relative_eq!(k.pounds_per_inch(), 1.0, max_relative = 1e-12);
+    }
+
+    // Extra non-unity value: kills the "replace pounds_per_inch -> 1.0" mutant.
+    #[test]
+    fn rate_pounds_per_inch_non_unity_roundtrip() {
+        // 5 lbf/in != 1.0, so a mutant returning constant 1.0 would fail here.
+        let k = SpringRate::from_pounds_per_inch(5.0);
+        assert_relative_eq!(k.pounds_per_inch(), 5.0, max_relative = 1e-12);
+        assert_relative_eq!(
+            k.newtons_per_meter(),
+            5.0 * 4.4482216152605 / 0.0254,
+            max_relative = 1e-12
+        );
     }
 
     #[test]
