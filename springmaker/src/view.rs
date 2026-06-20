@@ -15,6 +15,16 @@ use springcore::BindingConstraint;
 use springcore::UnitSystem;
 
 // --------------------------------------------------------------------------
+// Font-size constants
+// --------------------------------------------------------------------------
+
+const SZ_CAPTION: u16 = 11;
+const SZ_LABEL: u16 = 13;
+const SZ_BODY: u16 = 14;
+const SZ_TITLE: u16 = 18;
+const SZ_HERO: u16 = 22;
+
+// --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
 // --------------------------------------------------------------------------
 
@@ -110,7 +120,7 @@ where
 {
     pick_list(options, selected, on_select)
         .width(Length::Fill)
-        .text_size(14)
+        .text_size(SZ_BODY)
         .style(|_theme, _status| iced::widget::pick_list::Style {
             text_color: C::TEXT,
             placeholder_color: C::MUTED,
@@ -139,7 +149,7 @@ where
 fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
     text_input(placeholder, value)
         .on_input(move |s| Message::Field(field, s))
-        .size(14)
+        .size(SZ_BODY)
         .font(Font::MONOSPACE)
         .style(|_theme, status| {
             use iced::widget::text_input::Status;
@@ -165,7 +175,7 @@ fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Elemen
 
 /// A field label in the muted color at 13px.
 fn field_label(label: impl Into<String>) -> Element<'static, Message> {
-    text(label.into()).size(13).color(C::MUTED).into()
+    text(label.into()).size(SZ_LABEL).color(C::MUTED).into()
 }
 
 /// A labeled input: muted label above a styled text_input.
@@ -187,25 +197,35 @@ fn mono_value(value: impl Into<String>, color: Color, size: u16) -> Element<'sta
         .into()
 }
 
-/// A muted label + mono value row, used in results readouts.
+/// A muted label + mono value row with an explicit value color.
+fn result_row_colored<'a>(
+    label: impl Into<String>,
+    value: impl Into<String>,
+    unit: impl Into<String>,
+    value_color: Color,
+) -> Element<'a, Message> {
+    row![
+        text(label.into())
+            .size(SZ_LABEL)
+            .color(C::MUTED)
+            .width(Length::FillPortion(2)),
+        text(format!("{} {}", value.into(), unit.into()))
+            .font(Font::MONOSPACE)
+            .size(SZ_BODY)
+            .color(value_color)
+            .width(Length::FillPortion(3)),
+    ]
+    .spacing(8)
+    .into()
+}
+
+/// A muted label + mono value row in standard text color, used in results readouts.
 fn result_row<'a>(
     label: impl Into<String>,
     value: impl Into<String>,
     unit: impl Into<String>,
 ) -> Element<'a, Message> {
-    row![
-        text(label.into())
-            .size(13)
-            .color(C::MUTED)
-            .width(Length::FillPortion(2)),
-        text(format!("{} {}", value.into(), unit.into()))
-            .font(Font::MONOSPACE)
-            .size(14)
-            .color(C::TEXT)
-            .width(Length::FillPortion(3)),
-    ]
-    .spacing(8)
-    .into()
+    result_row_colored(label, value, unit, C::TEXT)
 }
 
 fn section_divider() -> Element<'static, Message> {
@@ -221,7 +241,7 @@ fn section_divider() -> Element<'static, Message> {
 
 fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into())
-        .size(13)
+        .size(SZ_LABEL)
         .color(C::MUTED)
         .font(Font {
             weight: iced::font::Weight::Semibold,
@@ -273,7 +293,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
 fn build_header(app: &App) -> Element<'_, Message> {
     let app_name = text("OpenSpringmaker")
-        .size(18)
+        .size(SZ_TITLE)
         .color(C::ACCENT)
         .font(Font {
             weight: iced::font::Weight::Semibold,
@@ -286,7 +306,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
         Some(app.form.unit_system),
         Message::Units,
     )
-    .text_size(13);
+    .text_size(SZ_LABEL);
 
     let unit_us = radio(
         "US (in / lbf)",
@@ -294,7 +314,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
         Some(app.form.unit_system),
         Message::Units,
     )
-    .text_size(13);
+    .text_size(SZ_LABEL);
 
     row![app_name, horizontal_space(), unit_metric, unit_us,]
         .spacing(16)
@@ -533,6 +553,226 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
 }
 
 // --------------------------------------------------------------------------
+// Results (right) panel — section builders
+// --------------------------------------------------------------------------
+
+fn build_governing_rate<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element<'a, Message> {
+    let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
+    let rate_value = mono_value(
+        format!("{:.4} {}", display_rate(d.rate, us), unit_rate_label(us)),
+        C::ACCENT,
+        SZ_HERO,
+    );
+    column![rate_label, rate_value].spacing(4).into()
+}
+
+fn build_geometry_section<'a>(
+    d: &springcore::SpringDesign,
+    us: UnitSystem,
+) -> Element<'a, Message> {
+    let buckling_color = if d.buckling_stable {
+        C::TEXT
+    } else {
+        C::DANGER
+    };
+    let buckling_text = if d.buckling_stable {
+        "Stable".to_string()
+    } else {
+        "UNSTABLE".to_string()
+    };
+    column![
+        section_heading("Geometry"),
+        result_row("Spring index", format!("{:.3}", d.index), ""),
+        result_row("Active coils", format!("{:.3}", d.active_coils), ""),
+        result_row("Total coils", format!("{:.3}", d.total_coils), ""),
+        result_row(
+            "Free length",
+            format!("{:.4}", display_len(d.free_length, us)),
+            unit_length_label(us),
+        ),
+        result_row(
+            "Solid length",
+            format!("{:.4}", display_len(d.solid_length, us)),
+            unit_length_label(us),
+        ),
+        result_row(
+            "Outer diameter",
+            format!("{:.4}", display_len(d.outer_dia, us)),
+            unit_length_label(us),
+        ),
+        result_row(
+            "Inner diameter",
+            format!("{:.4}", display_len(d.inner_dia, us)),
+            unit_length_label(us),
+        ),
+        result_row(
+            "Natural frequency",
+            format!("{:.2}", d.natural_frequency.hertz()),
+            "Hz",
+        ),
+        result_row_colored("Buckling", buckling_text, "", buckling_color),
+    ]
+    .spacing(6)
+    .into()
+}
+
+fn build_load_table<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element<'a, Message> {
+    let stress_unit = if us == UnitSystem::Metric {
+        "MPa"
+    } else {
+        "ksi"
+    };
+    let mut load_col = column![section_heading("Load points")].spacing(4);
+
+    load_col = load_col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Stress ({stress_unit})"))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("%MTS")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4),
+    );
+
+    for (i, lp) in d.load_points.iter().enumerate() {
+        let (stress_val, _stress_lbl) = display_stress(lp.shear_stress, us);
+        let load_row = row![
+            text(format!("{}", i + 1))
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text(format!(
+                "{:.3} {}",
+                display_force(lp.force, us),
+                unit_force_label(us)
+            ))
+            .font(Font::MONOSPACE)
+            .size(SZ_LABEL)
+            .color(C::TEXT)
+            .width(Length::FillPortion(2)),
+            text(format!(
+                "{:.4} {}",
+                display_len(lp.deflection, us),
+                unit_length_label(us)
+            ))
+            .font(Font::MONOSPACE)
+            .size(SZ_LABEL)
+            .color(C::TEXT)
+            .width(Length::FillPortion(2)),
+            text(format!(
+                "{:.4} {}",
+                display_len(lp.length, us),
+                unit_length_label(us)
+            ))
+            .font(Font::MONOSPACE)
+            .size(SZ_LABEL)
+            .color(C::TEXT)
+            .width(Length::FillPortion(2)),
+            text(format!("{stress_val:.3}"))
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(format!("{:.1}%", lp.pct_mts * 100.0))
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4);
+        load_col = load_col.push(load_row);
+    }
+
+    load_col.into()
+}
+
+fn build_fatigue_section<'a>(
+    out: &crate::form::FormOutcome,
+    us: UnitSystem,
+) -> Element<'a, Message> {
+    if out.min_weight.is_some() {
+        return column![].into();
+    }
+    match &out.fatigue {
+        Some(fat) => {
+            let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
+            let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
+            let (endurance_val, endurance_lbl) = display_stress(fat.fully_reversed_endurance, us);
+            let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
+            column![
+                section_divider(),
+                section_heading("Fatigue analysis"),
+                result_row("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
+                result_row("Mean stress", format!("{mean_val:.2}"), mean_lbl),
+                result_row(
+                    "Endurance (S\u{2032}\u{2032}se)",
+                    format!("{endurance_val:.2}"),
+                    endurance_lbl,
+                ),
+                result_row("Ultimate shear (Ssu)", format!("{ssu_val:.2}"), ssu_lbl),
+                result_row(
+                    "Goodman FOS",
+                    format!("{:.3}", fat.goodman_factor_of_safety),
+                    "",
+                ),
+            ]
+            .spacing(6)
+            .into()
+        }
+        None => column![
+            section_divider(),
+            text("No fatigue data for this material.")
+                .size(SZ_LABEL)
+                .color(C::MUTED),
+        ]
+        .spacing(8)
+        .into(),
+    }
+}
+
+fn build_min_weight_section<'a>(out: &crate::form::FormOutcome) -> Element<'a, Message> {
+    match &out.min_weight {
+        Some(mw) => {
+            let binding_label = match mw.binding {
+                BindingConstraint::Stress => "stress",
+                BindingConstraint::Index => "index",
+                BindingConstraint::OuterDiameter => "outer diameter",
+            };
+            column![
+                section_divider(),
+                section_heading("Min-weight optimisation"),
+                result_row("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
+                result_row("Binding constraint", binding_label, ""),
+            ]
+            .spacing(6)
+            .into()
+        }
+        None => column![].into(),
+    }
+}
+
+// --------------------------------------------------------------------------
 // Results (right) panel
 // --------------------------------------------------------------------------
 
@@ -544,7 +784,7 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
             if let Some(err) = &app.error {
                 column![
                     section_heading("Results"),
-                    text(err.as_str()).size(13).color(C::DANGER),
+                    text(err.as_str()).size(SZ_LABEL).color(C::DANGER),
                 ]
                 .spacing(12)
                 .into()
@@ -552,7 +792,7 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
                 column![
                     section_heading("Results"),
                     text("Enter design parameters to see results.")
-                        .size(14)
+                        .size(SZ_BODY)
                         .color(C::MUTED),
                 ]
                 .spacing(12)
@@ -561,234 +801,18 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
         }
         Some(out) => {
             let d = &out.design;
-
-            // Governing value — spring rate, large mono in accent
-            let rate_label = text("Spring rate").size(13).color(C::MUTED);
-            let rate_value = mono_value(
-                format!("{:.4} {}", display_rate(d.rate, us), unit_rate_label(us)),
-                C::ACCENT,
-                22,
-            );
-
-            let buckling_color = if d.buckling_stable {
-                C::TEXT
-            } else {
-                C::DANGER
-            };
-            let buckling_text = if d.buckling_stable {
-                "Stable".to_string()
-            } else {
-                "UNSTABLE".to_string()
-            };
-
-            let stress_unit = if us == UnitSystem::Metric {
-                "MPa"
-            } else {
-                "ksi"
-            };
-
-            // Per-load table
-            let load_section_heading = section_heading("Load points");
-            let mut load_col = column![load_section_heading].spacing(4);
-
-            // Column header
-            load_col = load_col.push(
-                row![
-                    text("Pt")
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::Fixed(24.0)),
-                    text("Force")
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(2)),
-                    text("Deflection")
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(2)),
-                    text("Length")
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(2)),
-                    text(format!("Stress ({stress_unit})"))
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(2)),
-                    text("%MTS")
-                        .size(11)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(1)),
-                ]
-                .spacing(4),
-            );
-
-            for (i, lp) in d.load_points.iter().enumerate() {
-                let (stress_val, _stress_lbl) = display_stress(lp.shear_stress, us);
-                let load_row = row![
-                    text(format!("{}", i + 1))
-                        .font(Font::MONOSPACE)
-                        .size(13)
-                        .color(C::MUTED)
-                        .width(Length::Fixed(24.0)),
-                    text(format!(
-                        "{:.3} {}",
-                        display_force(lp.force, us),
-                        unit_force_label(us)
-                    ))
-                    .font(Font::MONOSPACE)
-                    .size(13)
-                    .color(C::TEXT)
-                    .width(Length::FillPortion(2)),
-                    text(format!(
-                        "{:.4} {}",
-                        display_len(lp.deflection, us),
-                        unit_length_label(us)
-                    ))
-                    .font(Font::MONOSPACE)
-                    .size(13)
-                    .color(C::TEXT)
-                    .width(Length::FillPortion(2)),
-                    text(format!(
-                        "{:.4} {}",
-                        display_len(lp.length, us),
-                        unit_length_label(us)
-                    ))
-                    .font(Font::MONOSPACE)
-                    .size(13)
-                    .color(C::TEXT)
-                    .width(Length::FillPortion(2)),
-                    text(format!("{stress_val:.3}"))
-                        .font(Font::MONOSPACE)
-                        .size(13)
-                        .color(C::TEXT)
-                        .width(Length::FillPortion(2)),
-                    text(format!("{:.1}%", lp.pct_mts * 100.0))
-                        .font(Font::MONOSPACE)
-                        .size(13)
-                        .color(C::TEXT)
-                        .width(Length::FillPortion(1)),
-                ]
-                .spacing(4);
-                load_col = load_col.push(load_row);
-            }
-
-            // Fatigue section
-            let fatigue_section: Element<'_, Message> = if out.min_weight.is_none() {
-                match &out.fatigue {
-                    Some(fat) => {
-                        let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
-                        let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
-                        let (endurance_val, endurance_lbl) =
-                            display_stress(fat.fully_reversed_endurance, us);
-                        let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
-                        column![
-                            section_divider(),
-                            section_heading("Fatigue analysis"),
-                            result_row("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
-                            result_row("Mean stress", format!("{mean_val:.2}"), mean_lbl),
-                            result_row(
-                                "Endurance (S\u{2032}\u{2032}se)",
-                                format!("{endurance_val:.2}"),
-                                endurance_lbl,
-                            ),
-                            result_row("Ultimate shear (Ssu)", format!("{ssu_val:.2}"), ssu_lbl),
-                            result_row(
-                                "Goodman FOS",
-                                format!("{:.3}", fat.goodman_factor_of_safety),
-                                "",
-                            ),
-                        ]
-                        .spacing(6)
-                        .into()
-                    }
-                    None => column![
-                        section_divider(),
-                        text("No fatigue data for this material.")
-                            .size(13)
-                            .color(C::MUTED),
-                    ]
-                    .spacing(8)
-                    .into(),
-                }
-            } else {
-                column![].into()
-            };
-
-            // Min weight section
-            let min_weight_section: Element<'_, Message> = if let Some(mw) = &out.min_weight {
-                let binding_label = match mw.binding {
-                    BindingConstraint::Stress => "stress",
-                    BindingConstraint::Index => "index",
-                    BindingConstraint::OuterDiameter => "outer diameter",
-                };
-                column![
-                    section_divider(),
-                    section_heading("Min-weight optimisation"),
-                    result_row("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
-                    result_row("Binding constraint", binding_label, ""),
-                ]
-                .spacing(6)
-                .into()
-            } else {
-                column![].into()
-            };
-
-            // Chart
             let chart = crate::plot::results_chart(d, us);
 
             column![
                 section_heading("Results"),
                 section_divider(),
-                // Governing value
-                rate_label,
-                rate_value,
+                build_governing_rate(d, us),
                 section_divider(),
-                // Key geometry
-                section_heading("Geometry"),
-                result_row("Spring index", format!("{:.3}", d.index), ""),
-                result_row("Active coils", format!("{:.3}", d.active_coils), ""),
-                result_row("Total coils", format!("{:.3}", d.total_coils), ""),
-                result_row(
-                    "Free length",
-                    format!("{:.4}", display_len(d.free_length, us)),
-                    unit_length_label(us),
-                ),
-                result_row(
-                    "Solid length",
-                    format!("{:.4}", display_len(d.solid_length, us)),
-                    unit_length_label(us),
-                ),
-                result_row(
-                    "Outer diameter",
-                    format!("{:.4}", display_len(d.outer_dia, us)),
-                    unit_length_label(us),
-                ),
-                result_row(
-                    "Inner diameter",
-                    format!("{:.4}", display_len(d.inner_dia, us)),
-                    unit_length_label(us),
-                ),
-                result_row(
-                    "Natural frequency",
-                    format!("{:.2}", d.natural_frequency.hertz()),
-                    "Hz"
-                ),
-                row![
-                    text("Buckling")
-                        .size(13)
-                        .color(C::MUTED)
-                        .width(Length::FillPortion(2)),
-                    text(buckling_text)
-                        .font(Font::MONOSPACE)
-                        .size(14)
-                        .color(buckling_color)
-                        .width(Length::FillPortion(3)),
-                ]
-                .spacing(8),
+                build_geometry_section(d, us),
                 section_divider(),
-                load_col,
-                fatigue_section,
-                min_weight_section,
+                build_load_table(d, us),
+                build_fatigue_section(out, us),
+                build_min_weight_section(out),
                 section_divider(),
                 chart,
             ]
@@ -831,10 +855,10 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
             };
             let status_row = row![
                 text(prefix)
-                    .size(13)
+                    .size(SZ_LABEL)
                     .color(color)
                     .width(Length::Fixed(72.0)),
-                text(msg.message.as_str()).size(13).color(color),
+                text(msg.message.as_str()).size(SZ_LABEL).color(color),
             ]
             .spacing(8);
             col = col.push(status_row);
@@ -849,7 +873,7 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn build_footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(14).color(C::INK))
+    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
         .on_press(Message::Save)
         .style(|_theme, status| {
             use iced::widget::button::Status;
@@ -874,7 +898,7 @@ fn build_footer() -> Element<'static, Message> {
             }
         });
 
-    let load_btn = button(text("Load design").size(14).color(C::TEXT))
+    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
         .on_press(Message::Load)
         .style(|_theme, status| {
             use iced::widget::button::Status;

@@ -32,7 +32,7 @@ exclude_re = [
   #   Because wire_mass = rho*(pi^2/4)*d^2*dm*Nt and active coils na = G*d^4/(8*dm^3*rate)
   #   are both continuous functions of distinct wire diameters, two different
   #   candidates producing identical mass_kg in IEEE 754 would require a manufactured
-  #   coincidence. No physically meaningful test distinguishes them; both produce a
-  #   valid minimum-weight design.
+  #   coincidence. The tie itself is unreachable — no input can produce two candidates
+  #   with bit-identical mass_kg — so no distinguishing test can exist.
   "optimize\\.rs:148:.*replace < with <=",
 ]

@@ -1,9 +1,19 @@
 //! Live load-vs-deflection chart for the current design.
 
-use crate::app::Message;
+use crate::app::{Message, C};
 use plotters::prelude::*;
 use plotters_iced::{Chart, ChartWidget};
 use springcore::{SpringDesign, UnitSystem};
+
+/// Convert an iced palette colour to a plotters `RGBColor`.
+///
+/// Each channel is multiplied by 255 and rounded; the result is clamped to
+/// the valid `u8` range so values from the token struct (which are guaranteed
+/// to be in [0, 1]) round-trip cleanly.
+fn to_rgb(c: iced::Color) -> RGBColor {
+    let ch = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    RGBColor(ch(c.r), ch(c.g), ch(c.b))
+}
 
 /// Force–deflection points (deflection x, force y) in the display unit system.
 ///
@@ -56,17 +66,13 @@ pub fn force_deflection_series(design: &SpringDesign, units: UnitSystem) -> Vec<
 /// or the resulting max is not finite and positive (i.e., the design is
 /// degenerate and must not be passed to plotters).
 pub fn finite_positive_extent(series: &[(f64, f64)]) -> Option<(f64, f64)> {
-    let x_max = series
+    let (x_max, y_max) = series
         .iter()
         .filter(|(x, y)| x.is_finite() && y.is_finite())
-        .map(|&(x, _)| x)
-        .fold(f64::NEG_INFINITY, f64::max);
-
-    let y_max = series
-        .iter()
-        .filter(|(x, y)| x.is_finite() && y.is_finite())
-        .map(|&(_, y)| y)
-        .fold(f64::NEG_INFINITY, f64::max);
+        .fold(
+            (f64::NEG_INFINITY, f64::NEG_INFINITY),
+            |(xm, ym), &(x, y)| (xm.max(x), ym.max(y)),
+        );
 
     if x_max.is_finite() && x_max > 0.0 && y_max.is_finite() && y_max > 0.0 {
         Some((x_max, y_max))
@@ -99,13 +105,14 @@ impl<'a> Chart<Message> for ResultsChart<'a> {
             UnitSystem::Us => ("deflection (in)", "load (lbf)"),
         };
 
-        // Theme colours — keyed to the engineering-instrument dark palette.
-        let accent_cyan = RGBColor(76, 194, 255);
-        let amber = RGBColor(242, 181, 58);
-        let mesh_light = RGBColor(42, 50, 61);
-        let mesh_bold = RGBColor(58, 68, 82);
-        let axis_color = RGBColor(230, 234, 240);
-        let tick_label_color = RGBColor(138, 151, 166);
+        // Theme colours derived from the shared palette tokens so the chart
+        // stays in sync with the application palette automatically.
+        let accent_cyan = to_rgb(C::ACCENT);
+        let amber = to_rgb(C::WARN);
+        let mesh_light = to_rgb(C::LINE);
+        let mesh_bold = to_rgb(C::RAISED);
+        let axis_color = to_rgb(C::TEXT);
+        let tick_label_color = to_rgb(C::MUTED);
 
         let line_style = ShapeStyle {
             color: accent_cyan.to_rgba(),

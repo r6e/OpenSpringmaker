@@ -77,6 +77,13 @@ impl C {
         b: 0.420,
         a: 1.0,
     };
+    /// Success / healthy indicator.
+    pub const SUCCESS: Color = Color {
+        r: 0.31,
+        g: 0.78,
+        b: 0.47,
+        a: 1.0,
+    };
 }
 
 /// Which text field a [`Message::Field`] targets.
@@ -204,12 +211,7 @@ impl App {
                 background: C::INK,
                 text: C::TEXT,
                 primary: C::ACCENT,
-                success: Color {
-                    r: 0.31,
-                    g: 0.78,
-                    b: 0.47,
-                    a: 1.0,
-                },
+                success: C::SUCCESS,
                 danger: C::DANGER,
             },
         )

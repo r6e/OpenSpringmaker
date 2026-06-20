@@ -181,9 +181,14 @@ fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     })
 }
 
-fn force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    // Forces (loads) may be zero (e.g. zero operating load); only finite required.
+/// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
+fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = num(field, value)?;
+    if v < 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be zero or greater"
+        )));
+    }
     Ok(match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
@@ -213,7 +218,7 @@ fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
         .split(',')
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| force_n("load", s, us))
+        .map(|s| non_negative_force_n("load", s, us))
         .collect()
 }
 
@@ -234,9 +239,9 @@ pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
             fixity: form.fixity.clone(),
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
             mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
-            force1_n: force_n("force 1", &form.force1, us)?,
+            force1_n: non_negative_force_n("force 1", &form.force1, us)?,
             length1_mm: length_mm("length 1", &form.length1, us)?,
-            force2_n: force_n("force 2", &form.force2, us)?,
+            force2_n: non_negative_force_n("force 2", &form.force2, us)?,
             length2_mm: length_mm("length 2", &form.length2, us)?,
         },
         ScenarioKind::RateBased => ScenarioSpec::RateBased {
@@ -448,8 +453,16 @@ fn compute_fatigue(
     if form.fatigue_min.trim().is_empty() || form.fatigue_max.trim().is_empty() {
         return Ok(None);
     }
-    let fmin = Force::from_newtons(force_n("fatigue min", &form.fatigue_min, form.unit_system)?);
-    let fmax = Force::from_newtons(force_n("fatigue max", &form.fatigue_max, form.unit_system)?);
+    let fmin = Force::from_newtons(non_negative_force_n(
+        "fatigue min",
+        &form.fatigue_min,
+        form.unit_system,
+    )?);
+    let fmax = Force::from_newtons(non_negative_force_n(
+        "fatigue max",
+        &form.fatigue_max,
+        form.unit_system,
+    )?);
     match analyze_fatigue(material, design.wire_dia, design.mean_dia, fmin, fmax) {
         Ok(r) => Ok(Some(r)),
         Err(SpringError::NoFatigueData(_)) => Ok(None),
@@ -586,17 +599,47 @@ mod tests {
         let result = parse_and_solve(&form, &set);
         if let Err(SpringError::InconsistentInputs(msg)) = &result {
             assert!(
-                !msg.contains("load must be greater than zero"),
+                !msg.contains("load must be zero or greater"),
                 "zero load must be accepted; got: {msg}"
             );
         }
     }
 
     #[test]
-    fn valid_design_still_solves_after_positivity_guards() {
+    fn negative_load_is_rejected_by_positivity_guard() {
+        // Negative loads are unphysical; the non_negative_force_n guard must reject them.
         let set = MaterialSet::load_default();
-        let out = parse_and_solve(&rate_based_metric(), &set).unwrap();
-        assert!(out.design.rate.newtons_per_meter() > 0.0);
+        let mut form = rate_based_metric();
+        form.loads = "-5".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        match &err {
+            SpringError::InconsistentInputs(msg) => {
+                assert!(
+                    msg.contains("must be zero or greater"),
+                    "expected 'must be zero or greater' in error; got: {msg}"
+                );
+            }
+            other => panic!("expected InconsistentInputs, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn wire_dia_zero_triggers_greater_than_zero_error() {
+        // Exercises the positivity guard on a dimensional field; wire_dia = "0"
+        // must produce an error mentioning "greater than zero".
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.wire_dia = "0".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        match &err {
+            SpringError::InconsistentInputs(msg) => {
+                assert!(
+                    msg.contains("greater than zero"),
+                    "expected 'greater than zero' in error; got: {msg}"
+                );
+            }
+            other => panic!("expected InconsistentInputs, got: {other}"),
+        }
     }
 
     #[test]
@@ -751,19 +794,29 @@ mod tests {
             "expected DiameterOutOfRange, got: {err}"
         );
         let msg = format_error(&err, springcore::UnitSystem::Us);
+        // Must contain the inch unit token.
         assert!(
-            msg.contains("in"),
-            "US error message must contain 'in': {msg}"
+            msg.contains(" in"),
+            "US error message must contain ' in': {msg}"
+        );
+        // Must not contain a millimetre or bare-metre token.
+        assert!(
+            !msg.contains("mm"),
+            "US error message must not contain 'mm': {msg}"
         );
         assert!(
-            !msg.contains(" m") || msg.contains("mm"),
-            "US error message must not contain bare ' m' (metres): {msg}"
+            !msg.contains(" m ") && !msg.ends_with(" m"),
+            "US error message must not contain a bare metre suffix: {msg}"
         );
-        // Sanity: the metric variant should contain "mm".
+        // The metric variant must contain "mm" and not "in".
         let msg_metric = format_error(&err, springcore::UnitSystem::Metric);
         assert!(
             msg_metric.contains("mm"),
             "metric error message must contain 'mm': {msg_metric}"
+        );
+        assert!(
+            !msg_metric.contains(" in"),
+            "metric error message must not contain ' in': {msg_metric}"
         );
     }
 
