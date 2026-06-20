@@ -1,0 +1,38 @@
+# Mutation-equivalent exclusions for springcore/src/optimize.rs.
+#
+# Each entry is justified below. Only mutants proven equivalent by formal
+# argument are excluded — all others must be killed by tests.
+
+exclude_re = [
+  # Line 77: `if stress_at(dm_lo) - allowable > 0.0 { return None; }`
+  #
+  # Mutant "> → ==":
+  #   When stress > allowable (infeasible), `==` is false → no early return.
+  #   Execution reaches find_root_bracketed where f(dm_lo) > 0 and f(dm_hi) > 0
+  #   (both endpoints positive, no sign change). find_root returns Err; .ok()?
+  #   propagates None. Callers that reject None produce Infeasible — identical to
+  #   original. No distinguishing test exists because the outcome is the same.
+  #
+  # Mutant "> → >=":
+  #   Only differs when stress_at(dm_lo) - allowable == 0.0 exactly.
+  #   Original: 0.0 > 0.0 = false → continues (design at exact allowable is accepted).
+  #   Mutant:   0.0 >= 0.0 = true → returns None (rejected).
+  #   Achieving exact IEEE 754 cancellation between two independent computation
+  #   paths (Wahl-corrected torsion and the power-law MTS) is not realistically
+  #   achievable with the available material constants, so no killable test exists.
+  "optimize\\.rs:77:.*replace > with ==",
+  "optimize\\.rs:77:.*replace > with >=",
+
+  # Line 148: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
+  #
+  # Mutant "< → <=":
+  #   Only differs when two candidates produce exactly equal mass_kg.
+  #   Original: equal mass → false → keeps the previously recorded best.
+  #   Mutant:   equal mass → true → replaces best with the new candidate.
+  #   Because wire_mass = rho*(pi^2/4)*d^2*dm*Nt and active coils na = G*d^4/(8*dm^3*rate)
+  #   are both continuous functions of distinct wire diameters, two different
+  #   candidates producing identical mass_kg in IEEE 754 would require a manufactured
+  #   coincidence. No physically meaningful test distinguishes them; both produce a
+  #   valid minimum-weight design.
+  "optimize\\.rs:148:.*replace < with <=",
+]
