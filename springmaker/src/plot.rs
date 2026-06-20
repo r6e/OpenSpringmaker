@@ -99,15 +99,46 @@ impl<'a> Chart<Message> for ResultsChart<'a> {
             UnitSystem::Us => ("deflection (in)", "load (lbf)"),
         };
 
+        // Theme colours — keyed to the engineering-instrument dark palette.
+        let accent_cyan = RGBColor(76, 194, 255);
+        let amber = RGBColor(242, 181, 58);
+        let mesh_light = RGBColor(42, 50, 61);
+        let mesh_bold = RGBColor(58, 68, 82);
+        let axis_color = RGBColor(230, 234, 240);
+        let tick_label_color = RGBColor(138, 151, 166);
+
+        let line_style = ShapeStyle {
+            color: accent_cyan.to_rgba(),
+            filled: false,
+            stroke_width: 2,
+        };
+
         let mut chart = builder
-            .margin(20)
-            .x_label_area_size(30)
-            .y_label_area_size(50)
+            .margin(24)
+            .x_label_area_size(44)
+            .y_label_area_size(64)
             .build_cartesian_2d(0.0..x_max, 0.0..y_max)
             .expect("chart axes");
 
         chart
             .configure_mesh()
+            .light_line_style(ShapeStyle {
+                color: mesh_light.to_rgba(),
+                filled: false,
+                stroke_width: 1,
+            })
+            .bold_line_style(ShapeStyle {
+                color: mesh_bold.to_rgba(),
+                filled: false,
+                stroke_width: 1,
+            })
+            .axis_style(ShapeStyle {
+                color: axis_color.to_rgba(),
+                filled: false,
+                stroke_width: 1,
+            })
+            .label_style(("sans-serif", 14).into_font().color(&tick_label_color))
+            .axis_desc_style(("sans-serif", 15).into_font().color(&axis_color))
             .x_desc(x_label)
             .y_desc(y_label)
             .draw()
@@ -121,7 +152,7 @@ impl<'a> Chart<Message> for ResultsChart<'a> {
             .collect();
 
         chart
-            .draw_series(LineSeries::new(finite_series, &BLUE))
+            .draw_series(LineSeries::new(finite_series, line_style))
             .expect("line");
 
         // Filter markers to finite coordinates only.
@@ -136,10 +167,16 @@ impl<'a> Chart<Message> for ResultsChart<'a> {
             .filter(|(x, y)| x.is_finite() && y.is_finite())
             .collect();
 
+        let marker_style = ShapeStyle {
+            color: amber.to_rgba(),
+            filled: true,
+            stroke_width: 0,
+        };
+
         chart
             .draw_series(
                 pts.iter()
-                    .map(|&(x, y)| Circle::new((x, y), 4, RED.filled())),
+                    .map(|&(x, y)| Circle::new((x, y), 5, marker_style)),
             )
             .expect("markers");
     }

@@ -7,6 +7,39 @@ use springcore::{
     SavedDesign, ScenarioSpec, SpringDesign, SpringError,
 };
 
+/// Render a [`SpringError`] with length values expressed in `units`.
+///
+/// `DiameterOutOfRange` bakes SI metres into its `Display` impl. This
+/// function converts those lengths to the active unit system before
+/// formatting so US-customary users see inches rather than metres.
+///
+/// All other variants have unit-neutral messages, so we fall through to
+/// `err.to_string()`.
+pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
+    match err {
+        SpringError::DiameterOutOfRange {
+            diameter_m,
+            min_m,
+            max_m,
+        } => match units {
+            UnitSystem::Metric => {
+                let d = Length::from_meters(*diameter_m).millimeters();
+                let lo = Length::from_meters(*min_m).millimeters();
+                let hi = Length::from_meters(*max_m).millimeters();
+                format!("wire diameter {d:.3} mm is outside the valid range [{lo:.3}, {hi:.3}] mm")
+            }
+            UnitSystem::Us => {
+                let d = Length::from_meters(*diameter_m).inches();
+                let lo = Length::from_meters(*min_m).inches();
+                let hi = Length::from_meters(*max_m).inches();
+                format!("wire diameter {d:.3} in is outside the valid range [{lo:.3}, {hi:.3}] in")
+            }
+        },
+        // All other variants carry unit-neutral messages.
+        other => other.to_string(),
+    }
+}
+
 /// Which scenario the form is editing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioKind {
@@ -687,5 +720,85 @@ mod tests {
             mw.binding,
             BindingConstraint::Stress | BindingConstraint::Index | BindingConstraint::OuterDiameter
         ));
+    }
+
+    // --- format_error tests --------------------------------------------------
+
+    /// A US form whose wire diameter is below the material's valid range
+    /// produces a DiameterOutOfRange error. format_error(…, Us) must render
+    /// inches (not metres) and must not contain " m" as a unit suffix.
+    #[test]
+    fn format_error_us_uses_inches() {
+        let set = MaterialSet::load_default();
+        // Music Wire valid range: 0.10 mm – 6.5 mm (≈ 0.00394 – 0.256 in).
+        // 0.001 in ≈ 0.0254 mm — well below 0.10 mm minimum.
+        let form = FormState {
+            material: "Music Wire".into(),
+            unit_system: springcore::UnitSystem::Us,
+            scenario: ScenarioKind::RateBased,
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            wire_dia: "0.001".into(), // 0.001 in — below valid minimum
+            mean_dia: "0.8".into(),
+            rate: "10".into(),
+            free_length: "2.0".into(),
+            loads: "2".into(),
+            ..Default::default()
+        };
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(
+            matches!(err, SpringError::DiameterOutOfRange { .. }),
+            "expected DiameterOutOfRange, got: {err}"
+        );
+        let msg = format_error(&err, springcore::UnitSystem::Us);
+        assert!(
+            msg.contains("in"),
+            "US error message must contain 'in': {msg}"
+        );
+        assert!(
+            !msg.contains(" m") || msg.contains("mm"),
+            "US error message must not contain bare ' m' (metres): {msg}"
+        );
+        // Sanity: the metric variant should contain "mm".
+        let msg_metric = format_error(&err, springcore::UnitSystem::Metric);
+        assert!(
+            msg_metric.contains("mm"),
+            "metric error message must contain 'mm': {msg_metric}"
+        );
+    }
+
+    /// A metric form whose wire diameter is above the valid range produces a
+    /// DiameterOutOfRange error. format_error(…, Metric) must render mm.
+    #[test]
+    fn format_error_metric_uses_mm() {
+        let set = MaterialSet::load_default();
+        // Music Wire valid max: 6.5 mm. Use 100 mm — far out of range.
+        let form = FormState {
+            material: "Music Wire".into(),
+            unit_system: springcore::UnitSystem::Metric,
+            scenario: ScenarioKind::RateBased,
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            wire_dia: "100.0".into(), // 100 mm — above valid max
+            mean_dia: "200.0".into(),
+            rate: "2000.0".into(),
+            free_length: "60.0".into(),
+            loads: "10".into(),
+            ..Default::default()
+        };
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(
+            matches!(err, SpringError::DiameterOutOfRange { .. }),
+            "expected DiameterOutOfRange, got: {err}"
+        );
+        let msg = format_error(&err, springcore::UnitSystem::Metric);
+        assert!(
+            msg.contains("mm"),
+            "metric error message must contain 'mm': {msg}"
+        );
+        assert!(
+            !msg.contains(" in"),
+            "metric error message must not contain 'in': {msg}"
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
-use crate::form::{parse_and_solve, FormOutcome, FormState, ScenarioKind};
+use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind};
 use crate::view;
 use iced::theme::Palette;
 use iced::{Color, Theme};
@@ -146,7 +146,7 @@ impl App {
             }
             Err(e) => {
                 self.outcome = None;
-                self.error = Some(e.to_string());
+                self.error = Some(format_error(&e, self.form.unit_system));
             }
         }
     }
