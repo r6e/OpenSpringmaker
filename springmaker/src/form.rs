@@ -128,8 +128,20 @@ fn num(field: &str, value: &str) -> Result<f64> {
     Ok(v)
 }
 
-fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+/// Like `num`, but additionally requires the value to be strictly greater than zero.
+fn positive_num(field: &str, value: &str) -> Result<f64> {
     let v = num(field, value)?;
+    if v <= 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be greater than zero"
+        )));
+    }
+    Ok(v)
+}
+
+fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    // Lengths must be strictly positive — a zero-length dimension is unphysical.
+    let v = positive_num(field, value)?;
     Ok(match us {
         UnitSystem::Us => Length::from_inches(v).millimeters(),
         UnitSystem::Metric => v,
@@ -137,6 +149,7 @@ fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
 }
 
 fn force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    // Forces (loads) may be zero (e.g. zero operating load); only finite required.
     let v = num(field, value)?;
     Ok(match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
@@ -144,8 +157,18 @@ fn force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     })
 }
 
+/// Like `force_n` but requires the value to be strictly positive (e.g. max_force).
+fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    let v = positive_num(field, value)?;
+    Ok(match us {
+        UnitSystem::Us => Force::from_pounds_force(v).newtons(),
+        UnitSystem::Metric => v,
+    })
+}
+
 fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = num(field, value)?;
+    // A spring rate must be strictly positive.
+    let v = positive_num(field, value)?;
     Ok(match us {
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
         UnitSystem::Metric => v,
@@ -169,7 +192,7 @@ pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
             fixity: form.fixity.clone(),
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
             mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
-            active: num("active coils", &form.active)?,
+            active: positive_num("active coils", &form.active)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             loads_n: loads_n(&form.loads, us)?,
         },
@@ -197,7 +220,7 @@ pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
             fixity: form.fixity.clone(),
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
             outer_dia_mm: length_mm("outer diameter", &form.outer_dia, us)?,
-            active: num("active coils", &form.active)?,
+            active: positive_num("active coils", &form.active)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             loads_n: loads_n(&form.loads, us)?,
         },
@@ -223,9 +246,9 @@ pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
                 end_type: form.end_type.clone(),
                 fixity: form.fixity.clone(),
                 required_rate_n_per_m: rate_npm("rate", &form.rate, us)?,
-                max_force_n: force_n("max force", &form.max_force, us)?,
-                index_min: num("index min", &form.index_min)?,
-                index_max: num("index max", &form.index_max)?,
+                max_force_n: positive_force_n("max force", &form.max_force, us)?,
+                index_min: positive_num("index min", &form.index_min)?,
+                index_max: positive_num("index max", &form.index_max)?,
                 max_outer_dia_mm,
                 candidate_diameters_mm: diameters_mm,
                 clash_allowance: num("clash allowance", &form.clash_allowance)?,
@@ -499,6 +522,48 @@ mod tests {
         let mut form = rate_based_metric();
         form.wire_dia = "abc".into();
         assert!(parse_and_solve(&form, &set).is_err());
+    }
+
+    #[test]
+    fn zero_wire_diameter_is_an_error() {
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.wire_dia = "0".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn negative_wire_diameter_is_an_error() {
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.wire_dia = "-1.0".into();
+        let err = parse_and_solve(&form, &set).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn zero_load_is_accepted() {
+        // A zero operating load is physically valid (unloaded check).
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.loads = "0".into();
+        // Should not error on the zero load itself (may still fail for other reasons,
+        // but the error must not be about the zero load value).
+        let result = parse_and_solve(&form, &set);
+        if let Err(SpringError::InconsistentInputs(msg)) = &result {
+            assert!(
+                !msg.contains("load must be greater than zero"),
+                "zero load must be accepted; got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_design_still_solves_after_positivity_guards() {
+        let set = MaterialSet::load_default();
+        let out = parse_and_solve(&rate_based_metric(), &set).unwrap();
+        assert!(out.design.rate.newtons_per_meter() > 0.0);
     }
 
     #[test]
