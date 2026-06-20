@@ -81,7 +81,7 @@ pub struct SavedDesign {
     pub scenario: ScenarioSpec,
 }
 
-pub fn parse_end_type(s: &str) -> Result<EndType> {
+fn parse_end_type(s: &str) -> Result<EndType> {
     Ok(match s {
         "plain" => EndType::Plain,
         "plain_ground" => EndType::PlainGround,
@@ -91,7 +91,7 @@ pub fn parse_end_type(s: &str) -> Result<EndType> {
     })
 }
 
-pub fn parse_fixity(s: &str) -> Result<EndFixity> {
+fn parse_fixity(s: &str) -> Result<EndFixity> {
     Ok(match s {
         "fixed_fixed" => EndFixity::FixedFixed,
         "fixed_pinned" => EndFixity::FixedPinned,

@@ -25,9 +25,6 @@ pub use material::{Endurance, Material, MaterialSet, MtsEquation, MtsForm, Stren
 pub use mechanics::EndFixity;
 pub use numeric::{find_root_bracketed, SolveConfig};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
-pub use persistence::{
-    min_weight_request_from_spec, parse_end_type as persistence_parse_end_type,
-    parse_fixity as persistence_parse_fixity, SavedDesign, ScenarioSpec, UnitSystem,
-};
+pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress};
