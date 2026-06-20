@@ -16,6 +16,7 @@ pub trait Scenario {
 }
 
 /// All geometry given; compute performance.
+#[derive(Debug, Clone)]
 pub struct PowerUser {
     pub end_type: EndType,
     pub fixity: EndFixity,
@@ -42,6 +43,7 @@ impl Scenario for PowerUser {
 }
 
 /// Two (force, length) operating points; solve rate and free length.
+#[derive(Debug, Clone)]
 pub struct TwoLoad {
     pub end_type: EndType,
     pub fixity: EndFixity,
@@ -83,6 +85,7 @@ impl Scenario for TwoLoad {
 }
 
 /// Target rate given; solve active coils.
+#[derive(Debug, Clone)]
 pub struct RateBased {
     pub end_type: EndType,
     pub fixity: EndFixity,
@@ -115,6 +118,7 @@ impl Scenario for RateBased {
 }
 
 /// Outer diameter given; derive mean diameter.
+#[derive(Debug, Clone)]
 pub struct Dimensional {
     pub end_type: EndType,
     pub fixity: EndFixity,

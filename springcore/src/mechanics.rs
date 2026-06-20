@@ -60,8 +60,10 @@ pub fn corrected_shear_stress(
     Stress::from_pascals(factor * 8.0 * f * dm / (PI * d.powi(3)))
 }
 
-/// Natural frequency of a both-ends-fixed spring (Shigley Eq. 10-25),
+/// Fundamental natural frequency of a compression spring with both ends against
+/// fixed/parallel plates (Shigley Eq. 10-25):
 /// fn = (d / (2*pi*Na*D^2)) * sqrt(G / (32*rho)), rho = mass density.
+/// Note: this formula does not take an EndFixity parameter.
 pub fn natural_frequency(
     wire_dia: Length,
     mean_dia: Length,

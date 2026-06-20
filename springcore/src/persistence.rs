@@ -128,10 +128,15 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
                     "required_rate must be a positive finite number (N/m)".into(),
                 ));
             }
-            // index_bounds must satisfy 0 < index_min < index_max.
-            if !(*index_min > 0.0 && *index_min < *index_max) {
+            // index_bounds must satisfy 0 < index_min < index_max, and both must be finite
+            // (TOML permits inf/nan literals which would cause optimizer divergence).
+            if !(*index_min > 0.0
+                && *index_min < *index_max
+                && index_min.is_finite()
+                && index_max.is_finite())
+            {
                 return Err(SpringError::InconsistentInputs(format!(
-                    "index bounds must satisfy 0 < index_min < index_max; \
+                    "index bounds must satisfy 0 < index_min < index_max with both finite; \
                      got index_min={index_min}, index_max={index_max}"
                 )));
             }
@@ -332,6 +337,23 @@ mod tests {
             max_force_n: 50.0,
             index_min: 12.0,
             index_max: 4.0,
+            max_outer_dia_mm: None,
+            candidate_diameters_mm: vec![2.0],
+            clash_allowance: 0.15,
+        };
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn min_weight_index_max_inf_is_rejected() {
+        let spec = ScenarioSpec::MinWeight {
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            required_rate_n_per_m: 2000.0,
+            max_force_n: 50.0,
+            index_min: 4.0,
+            index_max: f64::INFINITY,
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![2.0],
             clash_allowance: 0.15,
