@@ -6,6 +6,7 @@
 pub mod design;
 pub mod end_type;
 pub mod error;
+pub mod fatigue;
 pub mod material;
 pub mod mechanics;
 pub mod numeric;
@@ -18,6 +19,7 @@ pub use design::{
 };
 pub use end_type::EndType;
 pub use error::{Result, SpringError};
+pub use fatigue::{analyze_fatigue, FatigueResult};
 pub use material::{Endurance, Material, MaterialSet, MtsEquation, MtsForm, StrengthUnits};
 pub use mechanics::EndFixity;
 pub use numeric::{find_root_bracketed, SolveConfig};
