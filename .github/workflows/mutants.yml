@@ -1,0 +1,101 @@
+name: Mutation Testing
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      cargo_workspace: ${{ steps.workspace.outputs.exists }}
+      core: ${{ steps.filter.outputs.core }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - id: workspace
+        shell: bash
+        run: |
+          if [[ -f Cargo.toml ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          filters: |
+            core:
+              - 'springcore/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/mutants.yml'
+
+  mutants:
+    name: cargo-mutants (springcore PR diff)
+    needs: changes
+    if: needs.changes.outputs.cargo_workspace == 'true' && needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-rust
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-mutants
+      - name: Compute PR diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff "origin/${BASE_REF}" -- > /tmp/pr.diff
+      - name: Run cargo-mutants on springcore PR diff
+        run: |
+          cargo mutants \
+            --in-diff /tmp/pr.diff \
+            --no-shuffle \
+            -j 2 \
+            --package springcore \
+            --all-features
+      - name: Summarize results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Mutation testing"
+            echo ""
+            if [[ -d mutants.out ]]; then
+              echo "| Outcome | Count |"
+              echo "| --- | --- |"
+              for kind in caught missed timeout unviable; do
+                f="mutants.out/${kind}.txt"
+                count=0
+                if [[ -f "$f" ]]; then count=$(wc -l < "$f" | tr -d ' '); fi
+                echo "| ${kind} | ${count} |"
+              done
+              if [[ -s mutants.out/missed.txt ]]; then
+                echo ""
+                echo "### Missed mutants"
+                echo '```'
+                cat mutants.out/missed.txt
+                echo '```'
+              fi
+            else
+              echo "No mutants.out directory produced. See the uploaded artifact."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-results
+          path: mutants.out/
+          retention-days: 30
