@@ -1,0 +1,2 @@
+# Curated thresholds; rules themselves are enabled via `-D warnings` in CI.
+too-many-arguments-threshold = 10
