@@ -12,9 +12,72 @@ use crate::app::{App, Field, Message};
 use crate::form::{ScenarioKind, ALL_SCENARIOS};
 use springcore::UnitSystem;
 
-// Static option lists for pick-lists backed by string keys.
-const END_TYPES: &[&str] = &["plain", "plain_ground", "squared", "squared_ground"];
-const FIXITIES: &[&str] = &["fixed_fixed", "fixed_pinned", "pinned_pinned", "fixed_free"];
+// --------------------------------------------------------------------------
+// Newtype for pick-list items that show a human-readable label while
+// storing the snake_case key in the form.
+// --------------------------------------------------------------------------
+
+/// A (key, label) pair for end-type and fixity pick-lists.
+///
+/// The `Display` impl renders the human-readable label; the key is used to
+/// store the value in [`FormState`] and round-trip through save/load.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct KeyLabel {
+    key: &'static str,
+    label: &'static str,
+}
+
+impl std::fmt::Display for KeyLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
+/// All end-type options in display order.
+const END_TYPES: &[KeyLabel] = &[
+    KeyLabel {
+        key: "plain",
+        label: "Plain",
+    },
+    KeyLabel {
+        key: "plain_ground",
+        label: "Plain ground",
+    },
+    KeyLabel {
+        key: "squared",
+        label: "Squared",
+    },
+    KeyLabel {
+        key: "squared_ground",
+        label: "Squared and ground",
+    },
+];
+
+/// All fixity options in display order.
+const FIXITIES: &[KeyLabel] = &[
+    KeyLabel {
+        key: "fixed_fixed",
+        label: "Fixed-Fixed",
+    },
+    KeyLabel {
+        key: "fixed_pinned",
+        label: "Fixed-Pinned",
+    },
+    KeyLabel {
+        key: "pinned_pinned",
+        label: "Pinned-Pinned",
+    },
+    KeyLabel {
+        key: "fixed_free",
+        label: "Fixed-Free",
+    },
+];
+
+/// Find a `KeyLabel` by its stored key string. Returns `None` if the key is
+/// unrecognised (e.g. a future format loaded into an older binary).
+fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
+    options.iter().find(|kl| kl.key == key)
+}
 
 /// Build the complete application UI.
 pub fn view(app: &App) -> Element<'_, Message> {
@@ -62,12 +125,14 @@ fn build_header(app: &App) -> Element<'_, Message> {
         Message::Units,
     );
 
-    // end_type and fixity are stored as string keys
-    let end_pick = pick_list(END_TYPES, Some(app.form.end_type.as_str()), |s: &str| {
-        Message::EndType(s.to_string())
+    // end_type and fixity are stored as snake_case keys; pick-lists show human labels.
+    let selected_end = find_by_key(END_TYPES, &app.form.end_type).copied();
+    let selected_fix = find_by_key(FIXITIES, &app.form.fixity).copied();
+    let end_pick = pick_list(END_TYPES, selected_end, |kl: KeyLabel| {
+        Message::EndType(kl.key.to_string())
     });
-    let fix_pick = pick_list(FIXITIES, Some(app.form.fixity.as_str()), |s: &str| {
-        Message::Fixity(s.to_string())
+    let fix_pick = pick_list(FIXITIES, selected_fix, |kl: KeyLabel| {
+        Message::Fixity(kl.key.to_string())
     });
 
     row![
@@ -94,23 +159,28 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
     let us_force = unit_force_label(app.form.unit_system);
     let us_rate = unit_rate_label(app.form.unit_system);
 
-    // Fields shared by all scenarios
+    // Wire diameter is shared by all scenarios.
     let wire_field = labeled_input(
         &format!("Wire diameter ({us_label})"),
         &app.form.wire_dia,
         Field::WireDia,
     );
+
+    // Mean diameter is owned by PowerUser / TwoLoad / RateBased.
+    // Dimensional owns outer_dia instead; rendering mean_dia there would silently
+    // discard edits since build_spec never reads it for that variant.
     let mean_field = labeled_input(
         &format!("Mean diameter ({us_label})"),
         &app.form.mean_dia,
         Field::MeanDia,
     );
 
-    let mut col = column![wire_field, mean_field].spacing(8);
+    let mut col = column![wire_field].spacing(8);
 
     match s {
         ScenarioKind::PowerUser => {
             col = col
+                .push(mean_field)
                 .push(labeled_input(
                     "Active coils",
                     &app.form.active,
@@ -129,6 +199,7 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
         }
         ScenarioKind::TwoLoad => {
             col = col
+                .push(mean_field)
                 .push(labeled_input(
                     &format!("Force 1 ({us_force})"),
                     &app.form.force1,
@@ -152,6 +223,7 @@ fn build_inputs(app: &App) -> Element<'_, Message> {
         }
         ScenarioKind::RateBased => {
             col = col
+                .push(mean_field)
                 .push(labeled_input(
                     &format!("Spring rate ({us_rate})"),
                     &app.form.rate,
@@ -265,12 +337,19 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
             });
 
             // Per-load table header + rows
-            let load_header =
-                text("Load pt  |  Force      |  Deflection  |  Length      |  Stress      |  %MTS");
+            let stress_unit = if us == UnitSystem::Metric {
+                "MPa"
+            } else {
+                "ksi"
+            };
+            let load_header = text(format!(
+                "Load pt  |  Force      |  Deflection  |  Length      |  Stress ({stress_unit})  |  %MTS"
+            ));
             let mut load_rows: Vec<Element<'_, Message>> = vec![load_header.into()];
             for (i, lp) in d.load_points.iter().enumerate() {
+                let (stress_val, stress_lbl) = display_stress(lp.shear_stress, us);
                 let row_text = text(format!(
-                    "  {:>4}    |  {:>8.3} {} |  {:>8.4} {}  |  {:>8.4} {}  |  {:>8.3} MPa  |  {:>5.1}%",
+                    "  {:>4}    |  {:>8.3} {} |  {:>8.4} {}  |  {:>8.4} {}  |  {:>8.3} {}  |  {:>5.1}%",
                     i + 1,
                     display_force(lp.force, us),
                     unit_force_label(us),
@@ -278,7 +357,8 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
                     unit_length_label(us),
                     display_len(lp.length, us),
                     unit_length_label(us),
-                    lp.shear_stress.megapascals(),
+                    stress_val,
+                    stress_lbl,
                     lp.pct_mts * 100.0,
                 ));
                 load_rows.push(row_text.into());
@@ -286,27 +366,27 @@ fn build_outputs(app: &App) -> Element<'_, Message> {
 
             // Fatigue
             let fatigue_section: Element<'_, Message> = match &out.fatigue {
-                Some(fat) => column![
-                    text("--- Fatigue Analysis ---"),
-                    text(format!(
-                        "Alternating stress: {:.2} MPa",
-                        fat.alternating_stress.megapascals()
-                    )),
-                    text(format!(
-                        "Mean stress: {:.2} MPa",
-                        fat.mean_stress.megapascals()
-                    )),
-                    text(format!(
-                        "Fully-reversed endurance (S''se): {:.2} MPa",
-                        fat.fully_reversed_endurance.megapascals()
-                    )),
-                    text(format!(
-                        "Goodman factor of safety: {:.3}",
-                        fat.goodman_factor_of_safety
-                    )),
-                ]
-                .spacing(4)
-                .into(),
+                Some(fat) => {
+                    let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
+                    let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
+                    let (endur_val, endur_lbl) = display_stress(fat.fully_reversed_endurance, us);
+                    let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
+                    column![
+                        text("--- Fatigue Analysis ---"),
+                        text(format!("Alternating stress: {alt_val:.2} {alt_lbl}")),
+                        text(format!("Mean stress: {mean_val:.2} {mean_lbl}")),
+                        text(format!(
+                            "Fully-reversed endurance (S\u{2032}\u{2032}se): {endur_val:.2} {endur_lbl}"
+                        )),
+                        text(format!("Ultimate shear strength (Ssu): {ssu_val:.2} {ssu_lbl}")),
+                        text(format!(
+                            "Goodman factor of safety: {:.3}",
+                            fat.goodman_factor_of_safety
+                        )),
+                    ]
+                    .spacing(4)
+                    .into()
+                }
                 None => text("No fatigue data for this material.").into(),
             };
 
@@ -416,5 +496,14 @@ fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
     match us {
         UnitSystem::Metric => r.newtons_per_meter(),
         UnitSystem::Us => r.pounds_per_inch(),
+    }
+}
+
+/// Returns `(value, label)` for a stress in the active unit system.
+/// Metric → MPa; US → ksi.
+fn display_stress(s: springcore::Stress, us: UnitSystem) -> (f64, &'static str) {
+    match us {
+        UnitSystem::Metric => (s.megapascals(), "MPa"),
+        UnitSystem::Us => (s.psi() / 1000.0, "ksi"),
     }
 }

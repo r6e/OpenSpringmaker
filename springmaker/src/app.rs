@@ -70,17 +70,42 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) {
-        match message {
-            Message::Field(field, value) => self.set_field(field, value),
-            Message::Material(m) => self.form.material = m,
-            Message::Scenario(s) => self.form.scenario = s,
-            Message::Units(u) => self.form.unit_system = u,
-            Message::EndType(e) => self.form.end_type = e,
-            Message::Fixity(f) => self.form.fixity = f,
-            Message::Save => self.save_dialog(),
+        let should_recompute = match message {
+            Message::Field(field, value) => {
+                self.set_field(field, value);
+                true
+            }
+            Message::Material(m) => {
+                self.form.material = m;
+                true
+            }
+            Message::Scenario(s) => {
+                self.form.scenario = s;
+                true
+            }
+            Message::Units(u) => {
+                self.form.unit_system = u;
+                true
+            }
+            Message::EndType(e) => {
+                self.form.end_type = e;
+                true
+            }
+            Message::Fixity(f) => {
+                self.form.fixity = f;
+                true
+            }
+            // Save never mutates the form; preserve any error from the dialog.
+            Message::Save => {
+                self.save_dialog();
+                false
+            }
+            // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+        };
+        if should_recompute {
+            self.recompute();
         }
-        self.recompute();
     }
 
     pub fn view(&self) -> iced::Element<'_, Message> {
@@ -129,16 +154,23 @@ impl App {
         }
     }
 
-    fn load_dialog(&mut self) {
+    /// Returns `true` if the form was mutated (successful load), `false` otherwise.
+    fn load_dialog(&mut self) -> bool {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("design", &["toml"])
             .pick_file()
         {
             match SavedDesign::load(&path) {
-                Ok(saved) => self.apply_saved(saved),
-                Err(e) => self.error = Some(e.to_string()),
+                Ok(saved) => {
+                    self.apply_saved(saved);
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                }
             }
         }
+        false
     }
 
     fn apply_saved(&mut self, saved: SavedDesign) {
