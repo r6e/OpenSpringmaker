@@ -117,10 +117,13 @@ pub struct Material {
     pub youngs_modulus: Stress,
     pub shear_modulus: Stress,
     pub density: MassDensity,
+    /// Allowable torsional stress as a fraction of MTS; applies to torsionally
+    /// loaded spring types (e.g. helical compression/extension).
     pub allowable_pct_torsion: f64,
     /// Allowable bending stress as a fraction of MTS; applies to bending-loaded
     /// spring types (e.g. torsion, flat). Retained here for future sub-projects.
     pub allowable_pct_bending: f64,
+    /// Allowable stress before permanent set, as a fraction of MTS.
     pub allowable_pct_set: f64,
     pub endurance: Option<Endurance>,
     pub citations: String,
@@ -275,6 +278,60 @@ impl Material {
         if r.valid_dia_min_mm > r.valid_dia_max_mm {
             return Err(SpringError::DataFile(format!(
                 "material '{}': valid_dia_min_mm > valid_dia_max_mm",
+                r.name
+            )));
+        }
+        // Untrusted overlay input: reject non-finite numbers (the toml crate
+        // accepts nan/inf literals) so they can never poison a downstream f64
+        // calculation. Finiteness is checked before positivity because
+        // `NaN <= 0.0` is false and would otherwise slip past the `<= 0.0` guards.
+        let finite_fields = [
+            r.youngs_modulus_gpa,
+            r.shear_modulus_gpa,
+            r.density_kg_per_m3,
+            r.valid_dia_min_mm,
+            r.valid_dia_max_mm,
+            r.allowable_pct_torsion,
+            r.allowable_pct_bending,
+            r.allowable_pct_set,
+        ];
+        let coeff_finite = r.mts_coefficients.iter().copied();
+        let optional_finite = r
+            .max_service_temp_c
+            .into_iter()
+            .chain(r.endurance.iter().flat_map(|e| [e.ssa_mpa, e.ssm_mpa]));
+        if finite_fields
+            .into_iter()
+            .chain(coeff_finite)
+            .chain(optional_finite)
+            .any(|x| !x.is_finite())
+        {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': non-finite numeric field",
+                r.name
+            )));
+        }
+        if r.youngs_modulus_gpa <= 0.0 {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': youngs_modulus_gpa must be > 0",
+                r.name
+            )));
+        }
+        if r.shear_modulus_gpa <= 0.0 {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': shear_modulus_gpa must be > 0",
+                r.name
+            )));
+        }
+        if r.density_kg_per_m3 <= 0.0 {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': density_kg_per_m3 must be > 0",
+                r.name
+            )));
+        }
+        if r.valid_dia_min_mm <= 0.0 {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': valid_dia_min_mm must be > 0",
                 r.name
             )));
         }
@@ -720,6 +777,205 @@ allowable_pct_bending = 0.75
 allowable_pct_set = 0.60
 "#;
         assert!(MaterialSet::from_toml_str(toml).is_ok());
+    }
+
+    // --- FIX 1: finiteness + positivity validation on untrusted overlay input ---
+
+    // A known-good RawMaterial fixture; tests mutate one field each.
+    fn good_raw() -> RawMaterial {
+        RawMaterial {
+            name: "Fixture Wire".into(),
+            specification: "synthetic".into(),
+            citations: "synthetic".into(),
+            mts_form: "power_law".into(),
+            mts_units: "si_mpa_mm".into(),
+            mts_coefficients: vec![2211.0, 0.145],
+            valid_dia_min_mm: 0.10,
+            valid_dia_max_mm: 6.5,
+            youngs_modulus_gpa: 203.4,
+            shear_modulus_gpa: 80.0,
+            density_kg_per_m3: 7850.0,
+            allowable_pct_torsion: 0.45,
+            allowable_pct_bending: 0.75,
+            allowable_pct_set: 0.60,
+            endurance: Some(RawEndurance {
+                ssa_mpa: 241.0,
+                ssm_mpa: 379.0,
+                peened: false,
+            }),
+            max_service_temp_c: Some(120.0),
+        }
+    }
+
+    fn assert_data_err(r: RawMaterial) {
+        assert!(matches!(
+            Material::try_from_raw(r),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn good_fixture_parses_ok() {
+        assert!(Material::try_from_raw(good_raw()).is_ok());
+    }
+
+    #[test]
+    fn non_finite_coefficient_is_rejected() {
+        let mut r = good_raw();
+        r.mts_coefficients = vec![f64::NAN, 0.145];
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn infinite_youngs_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.youngs_modulus_gpa = f64::INFINITY;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_shear_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.shear_modulus_gpa = f64::NAN;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_density_is_rejected() {
+        let mut r = good_raw();
+        r.density_kg_per_m3 = f64::INFINITY;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_valid_dia_min_is_rejected() {
+        let mut r = good_raw();
+        r.valid_dia_min_mm = f64::NAN;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_valid_dia_max_is_rejected() {
+        let mut r = good_raw();
+        r.valid_dia_max_mm = f64::INFINITY;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_allowable_pct_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_torsion = f64::NAN;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_allowable_pct_bending_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_bending = f64::INFINITY;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_allowable_pct_set_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_set = f64::NEG_INFINITY;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_max_service_temp_is_rejected() {
+        let mut r = good_raw();
+        r.max_service_temp_c = Some(f64::NAN);
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_endurance_ssa_is_rejected() {
+        let mut r = good_raw();
+        r.endurance = Some(RawEndurance {
+            ssa_mpa: f64::INFINITY,
+            ssm_mpa: 379.0,
+            peened: false,
+        });
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn non_finite_endurance_ssm_is_rejected() {
+        let mut r = good_raw();
+        r.endurance = Some(RawEndurance {
+            ssa_mpa: 241.0,
+            ssm_mpa: f64::NAN,
+            peened: false,
+        });
+        assert_data_err(r);
+    }
+
+    // Positivity: each field gets BOTH a 0.0 test (pins `<=` vs `<`) and a
+    // negative test (pins `<=` vs `==`), so the full operator-swap mutant set dies.
+    #[test]
+    fn zero_youngs_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.youngs_modulus_gpa = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_youngs_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.youngs_modulus_gpa = -1.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn zero_shear_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.shear_modulus_gpa = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_shear_modulus_is_rejected() {
+        let mut r = good_raw();
+        r.shear_modulus_gpa = -1.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn zero_density_is_rejected() {
+        let mut r = good_raw();
+        r.density_kg_per_m3 = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_density_is_rejected() {
+        let mut r = good_raw();
+        r.density_kg_per_m3 = -1.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn zero_valid_dia_min_is_rejected() {
+        let mut r = good_raw();
+        r.valid_dia_min_mm = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_valid_dia_min_is_rejected() {
+        let mut r = good_raw();
+        r.valid_dia_min_mm = -1.0;
+        assert_data_err(r);
+    }
+
+    // Boundary: a tiny positive valid_dia_min_mm must be ACCEPTED, pinning the
+    // `<` vs `<=` distinction on the positivity guard.
+    #[test]
+    fn tiny_positive_valid_dia_min_is_accepted() {
+        let mut r = good_raw();
+        r.valid_dia_min_mm = 1e-6;
+        assert!(Material::try_from_raw(r).is_ok());
     }
 
     #[test]
