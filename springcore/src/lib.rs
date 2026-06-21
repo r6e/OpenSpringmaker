@@ -29,7 +29,9 @@ pub use design::{
 pub use end_type::EndType;
 pub use error::{Result, SpringError};
 pub use fatigue::{analyze_fatigue, FatigueResult};
-pub use material::{Endurance, EnduranceDraft, Material, MaterialDraft, MaterialSet};
+pub use material::{
+    Endurance, EnduranceDraft, Material, MaterialDraft, MaterialSet, MtsForm, StrengthUnits,
+};
 pub use material_persist::{user_overlay_path, LoadWarning};
 pub use material_store::MaterialStore;
 pub use mechanics::EndFixity;
