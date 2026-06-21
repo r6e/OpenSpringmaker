@@ -1,7 +1,10 @@
 //! Engineering calculations for helical compression springs.
 //!
-//! All public quantities are stored internally in SI units. See the crate
-//! `ARCHITECTURE.md` and `docs/adr/` for design rationale.
+//! All public quantities are stored internally in SI units, with one documented
+//! exception: `Temperature` is informational-only and stored in degrees Celsius
+//! (the engineering convention for material service temperatures), not the SI
+//! base unit kelvin. See the crate `ARCHITECTURE.md` and `docs/adr/` for design
+//! rationale.
 
 pub(crate) mod design;
 pub(crate) mod end_type;

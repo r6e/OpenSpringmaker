@@ -46,13 +46,13 @@ SI canonical internally; dual MIT/Apache.
 `springcore` (engine, no GUI deps):
 - `material.rs` — existing `Material`, `MtsEquation`, `MtsForm`, `StrengthUnits`,
   `Endurance` types, extended with `Rational` and `max_service_temperature`.
-- `material/store.rs` (new) — `MaterialStore`: the merged curated+user collection
+- `material_store.rs` (new) — `MaterialStore`: the merged curated+user collection
   and all mutation/query logic.
-- `material/persist.rs` (new) — load/save of the user overlay TOML (config-dir
+- `material_persist.rs` (new) — load/save of the user overlay TOML (config-dir
   resolution, atomic write, schema version, error handling).
 
-(If splitting `material.rs` into a `material/` module directory is cleaner than a
-flat file, do so; keep each file focused.)
+(Implemented as flat `material_store.rs` / `material_persist.rs` siblings of
+`material.rs` rather than a `material/` module directory; each file stays focused.)
 
 `springmaker` (GUI):
 - `materials_view.rs` (or a section of the view layer) — the editor screen.
@@ -75,8 +75,11 @@ Added:
 - `max_service_temperature: Option<Temperature>` — informational only, **not used
   in any calculation**; carries a value + unit (°C/°F) and is cited. The UI labels
   it as informational so it is not mistaken for a derating input.
-- `source: MaterialSource` (`Curated` | `User`) — provenance for read-only
-  enforcement and UI badging.
+Provenance (curated vs user, for read-only enforcement and UI badging) is **not**
+a per-`Material` field. It is derived from `MaterialStore` membership via
+`is_curated(name)`: a material in the curated set is curated, one in the user
+overlay is user. This keeps `Material` free of store-coupling and makes the
+disjoint-sets identity rule (§5) the single source of truth.
 
 ### Fallible parsing (fix deferred panic)
 `From<RawMaterial>` (which panics on unknown `mts_form`/`mts_units`) becomes
@@ -204,9 +207,9 @@ visual language (panels, tokens, accent):
 ## 11. Delivery — three PRs
 
 To keep review tractable and isolate the data-entry risk (per the advisor):
-- **PR (a):** data model (`Rational`, temperature, `MaterialSource`), fallible
-  parsing, `MaterialStore` (CRUD + merge/identity), overlay persistence. Engine
-  only; the bundled set may stay at 4 materials here.
+- **PR (a):** data model (`Rational`, temperature, membership-based provenance),
+  fallible parsing, `MaterialStore` (CRUD + merge/identity), overlay persistence.
+  Engine only; the bundled set may stay at 4 materials here.
 - **PR (b):** the ~20+ curated material transcription with two-source citations +
   per-material golden tests.
 - **PR (c):** the GUI materials editor.
