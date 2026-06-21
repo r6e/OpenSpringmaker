@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Subagent-driven-development scratch (briefs, reports, diffs, progress ledger)
+/.superpowers/
+
+# cargo-mutants output
+/mutants.out/
+/mutants.out.old/
+
+# Claude Code local session/config state
+/.claude/

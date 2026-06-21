@@ -124,6 +124,31 @@ OpenSpringmaker/
 - Produces: a compiling two-crate workspace. `springcore` exposes an empty public API
   (`lib.rs`); `springmaker` has a stub `main`. Later tasks add modules to `springcore`.
 
+**Reconciliation with existing repo boilerplate (added after PR #2):** The repo already
+contains GitHub boilerplate — a single MIT `LICENSE`, a `CONTRIBUTING.md`, a rich
+`.github/workflows/ci.yml`, plus issue templates, `CODE_OF_CONDUCT.md`, `SECURITY.md`,
+and extra workflows (CodeQL, audit, deny, mutants, etc.). **Where this plan and the
+boilerplate define the same concern, the plan governs — prefer the plan over the
+boilerplate.** Apply this rule:
+- **License (dual):** the plan and spec chose dual MIT/Apache-2.0. Delete the single
+  `LICENSE`, create `LICENSE-MIT` and `LICENSE-APACHE` (canonical SPDX texts, 2026,
+  "OpenSpringmaker contributors"), and keep the workspace `license = "MIT OR Apache-2.0"`.
+  Update `CONTRIBUTING.md`'s license section to state dual licensing.
+- **`CONTRIBUTING.md`:** keep the existing file but ensure it states the plan's
+  requirements (TDD workflow, `cargo fmt` + `cargo clippy -- -D warnings` gate,
+  conventional commits, the inline-citation requirement for any formula/constant, and the
+  no-commercial-product-reference rule). Add what's missing; don't discard useful content.
+- **`.gitignore`, `rustfmt.toml`, `clippy.toml`:** create per the steps below if absent;
+  if present, reconcile their values to this plan.
+- **CI:** the workspace must be gated by `cargo fmt --all -- --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and
+  `cargo build --workspace`. If the existing `ci.yml` already runs these (or can with
+  minor edits), adapt it; otherwise replace its job with the plan's. Do **not** delete the
+  additive workflows (CodeQL, audit, deny, mutants, etc.) — they don't conflict.
+- **Keep** all non-conflicting boilerplate the plan doesn't define (issue templates,
+  `CODE_OF_CONDUCT.md`, `SECURITY.md`, the extra workflows). Override only where plan and
+  boilerplate address the same thing.
+
 - [ ] **Step 1: Create the workspace manifest**
 
 `Cargo.toml`:
@@ -136,7 +161,7 @@ members = ["springcore", "springmaker"]
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/REPLACE_WITH_ACTUAL_REPO/OpenSpringmaker"
+repository = "https://github.com/r6e/OpenSpringmaker"
 rust-version = "1.80"
 
 [workspace.dependencies]
@@ -146,8 +171,7 @@ approx = "0.5"
 proptest = "1"
 ```
 
-(Set `repository` to the real URL once the repo exists; it must not name any
-commercial product.)
+(`repository` is set to the actual repo; it must not name any commercial product.)
 
 - [ ] **Step 2: Create `springcore/Cargo.toml`**
 

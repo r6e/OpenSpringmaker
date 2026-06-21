@@ -1,0 +1,81 @@
+# Curated spring-wire materials. Strength coefficients are in native units
+# (MPa·mm^m) per Shigley Table 10-4 and are evaluated in those units.
+# Sources: Shigley's Mechanical Engineering Design (10th ed.) Tables 10-4, 10-5,
+# §10-9 (Zimmerli endurance); SMI Handbook of Spring Design (design stresses).
+#
+# KNOWN SIMPLIFICATION (see ADR 0006): allowable_pct_torsion / _bending / _set are
+# single scalars. Real SMI design stresses are diameter- and set-dependent curves.
+# These scalars gate the status warnings and the Min Weight feasibility boundary;
+# diameter-dependent design-stress curves are a later sub-project.
+
+[[material]]
+name = "Music Wire"
+specification = "ASTM A228"
+citations = "Shigley Table 10-4 (A=2211 MPa*mm^m, m=0.145); Table 10-5 (E, G); Zimmerli via Shigley 10-9; SMI design stresses"
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [2211.0, 0.145]
+valid_dia_min_mm = 0.10
+valid_dia_max_mm = 6.5
+youngs_modulus_gpa = 203.4
+shear_modulus_gpa = 80.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+[material.endurance]
+ssa_mpa = 241.0
+ssm_mpa = 379.0
+peened = false
+
+[[material]]
+name = "Oil-Tempered Wire"
+specification = "ASTM A229"
+citations = "Shigley Table 10-4 (A=1855 MPa*mm^m, m=0.187); Table 10-5 (E, G); Zimmerli via Shigley 10-9; SMI design stresses"
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1855.0, 0.187]
+valid_dia_min_mm = 0.50
+valid_dia_max_mm = 12.7
+youngs_modulus_gpa = 196.5
+shear_modulus_gpa = 78.6
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.49
+[material.endurance]
+ssa_mpa = 241.0
+ssm_mpa = 379.0
+peened = false
+
+[[material]]
+name = "Stainless 302"
+specification = "ASTM A313 (Type 302)"
+citations = "Shigley Table 10-4 (A=1867 MPa*mm^m, m=0.146); Table 10-5 (E, G); SMI design stresses. No cited endurance data."
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1867.0, 0.146]
+valid_dia_min_mm = 0.30
+valid_dia_max_mm = 6.5
+youngs_modulus_gpa = 193.0
+shear_modulus_gpa = 69.0
+density_kg_per_m3 = 7920.0
+allowable_pct_torsion = 0.35
+allowable_pct_bending = 0.55
+allowable_pct_set = 0.35
+
+[[material]]
+name = "Chrome-Silicon"
+specification = "ASTM A401"
+citations = "Shigley Table 10-4 (A=1974 MPa*mm^m, m=0.108); Table 10-5 (E, G); SMI design stresses. No cited endurance data in v1."
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1974.0, 0.108]
+valid_dia_min_mm = 1.6
+valid_dia_max_mm = 9.5
+youngs_modulus_gpa = 203.4
+shear_modulus_gpa = 77.2
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.49

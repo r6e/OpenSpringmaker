@@ -1,0 +1,434 @@
+//! Spring-wire materials. Strength is defined by a diameter-dependent equation
+//! whose coefficients live in their native unit system (Shigley Table 10-4);
+//! only the scalar result is converted to SI (see ADR 0003).
+
+use crate::error::{Result, SpringError};
+use crate::units::{Length, MassDensity, Stress};
+use serde::Deserialize;
+
+const PSI_PER_KPSI: f64 = 1000.0;
+
+/// Functional form of the minimum-tensile-strength equation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtsForm {
+    /// Sut = c0 (constant).
+    Constant,
+    /// Sut = A / d^m, coefficients = [A, m] (Shigley Eq. 10-14).
+    PowerLaw,
+    /// Sut = sum_i c_i d^i, coefficients = [c0, c1, ...].
+    Polynomial,
+}
+
+/// Native unit system of an MTS equation's coefficients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrengthUnits {
+    /// A in kpsi·inᵐ, diameter in inches, result in kpsi.
+    UsKpsiInch,
+    /// A in MPa·mmᵐ, diameter in mm, result in MPa.
+    SiMpaMm,
+}
+
+impl StrengthUnits {
+    /// Express a diameter in this system's native length unit.
+    pub fn length_native(self, d: Length) -> f64 {
+        match self {
+            Self::UsKpsiInch => d.inches(),
+            Self::SiMpaMm => d.millimeters(),
+        }
+    }
+
+    /// Convert a native strength scalar to SI stress.
+    pub fn stress_from_native(self, value: f64) -> Stress {
+        match self {
+            Self::UsKpsiInch => Stress::from_psi(value * PSI_PER_KPSI),
+            Self::SiMpaMm => Stress::from_megapascals(value),
+        }
+    }
+}
+
+/// Diameter-dependent minimum tensile strength.
+#[derive(Debug, Clone)]
+pub struct MtsEquation {
+    pub form: MtsForm,
+    pub units: StrengthUnits,
+    pub coefficients: Vec<f64>,
+    pub valid_dia_min: Length,
+    pub valid_dia_max: Length,
+}
+
+impl MtsEquation {
+    /// Minimum tensile strength at diameter `d`, in SI.
+    pub fn evaluate(&self, d: Length) -> Result<Stress> {
+        if d.meters() < self.valid_dia_min.meters() || d.meters() > self.valid_dia_max.meters() {
+            return Err(SpringError::DiameterOutOfRange {
+                diameter_m: d.meters(),
+                min_m: self.valid_dia_min.meters(),
+                max_m: self.valid_dia_max.meters(),
+            });
+        }
+        let dn = self.units.length_native(d);
+        let c = &self.coefficients;
+        let raw = match self.form {
+            MtsForm::Constant => c[0],
+            MtsForm::PowerLaw => c[0] / dn.powf(c[1]),
+            MtsForm::Polynomial => c
+                .iter()
+                .enumerate()
+                .map(|(i, ci)| ci * dn.powi(i as i32))
+                .sum::<f64>(),
+        };
+        Ok(self.units.stress_from_native(raw))
+    }
+}
+
+/// Cited endurance data (Zimmerli; steel spring wire only).
+#[derive(Debug, Clone, Copy)]
+pub struct Endurance {
+    /// Alternating shear endurance strength.
+    pub ssa: Stress,
+    /// Mean shear endurance strength.
+    pub ssm: Stress,
+    /// Whether the data is for shot-peened springs.
+    pub peened: bool,
+}
+
+/// A spring-wire material.
+#[derive(Debug, Clone)]
+pub struct Material {
+    pub name: String,
+    pub specification: String,
+    pub(crate) mts: MtsEquation,
+    pub youngs_modulus: Stress,
+    pub shear_modulus: Stress,
+    pub density: MassDensity,
+    pub allowable_pct_torsion: f64,
+    /// Allowable bending stress as a fraction of MTS; applies to bending-loaded
+    /// spring types (e.g. torsion, flat). Retained here for future sub-projects.
+    pub allowable_pct_bending: f64,
+    pub allowable_pct_set: f64,
+    pub endurance: Option<Endurance>,
+    pub citations: String,
+}
+
+impl Material {
+    /// Minimum tensile strength at wire diameter `d`, in SI (pascals).
+    pub fn min_tensile_strength(&self, d: Length) -> Result<Stress> {
+        self.mts.evaluate(d)
+    }
+}
+
+/// An immutable, named collection of materials.
+#[derive(Debug, Clone)]
+pub struct MaterialSet {
+    materials: Vec<Material>,
+}
+
+impl MaterialSet {
+    /// Parse a TOML document containing `[[material]]` entries.
+    ///
+    /// # Panics
+    /// `mts_form` and `mts_units` values are validated via `panic!` in
+    /// `From<RawMaterial>`. This is acceptable for the bundled file; callers
+    /// passing untrusted input should switch to a `Result`-returning conversion
+    /// if an editable database is added in a later sub-project.
+    pub fn from_toml_str(s: &str) -> Result<Self> {
+        let raw: RawDoc = toml::from_str(s).map_err(|e| SpringError::DataFile(e.to_string()))?;
+        let materials = raw.material.into_iter().map(Material::from).collect();
+        Ok(Self { materials })
+    }
+
+    /// Load the curated material set bundled with the crate.
+    pub fn load_default() -> Self {
+        Self::from_toml_str(include_str!("../data/materials.toml"))
+            .expect("bundled materials.toml is valid")
+    }
+
+    /// Look up a material by name; returns an error if not found.
+    pub fn get(&self, name: &str) -> Result<&Material> {
+        self.materials
+            .iter()
+            .find(|m| m.name == name)
+            .ok_or_else(|| SpringError::MaterialNotFound(name.to_string()))
+    }
+
+    /// Return the names of all materials in insertion order.
+    pub fn names(&self) -> Vec<&str> {
+        self.materials.iter().map(|m| m.name.as_str()).collect()
+    }
+}
+
+// --- TOML deserialization layer (native, human-readable units) ---
+
+#[derive(Deserialize)]
+struct RawDoc {
+    material: Vec<RawMaterial>,
+}
+
+#[derive(Deserialize)]
+struct RawMaterial {
+    name: String,
+    specification: String,
+    citations: String,
+    mts_form: String,
+    mts_units: String,
+    mts_coefficients: Vec<f64>,
+    valid_dia_min_mm: f64,
+    valid_dia_max_mm: f64,
+    youngs_modulus_gpa: f64,
+    shear_modulus_gpa: f64,
+    density_kg_per_m3: f64,
+    allowable_pct_torsion: f64,
+    allowable_pct_bending: f64,
+    allowable_pct_set: f64,
+    endurance: Option<RawEndurance>,
+}
+
+#[derive(Deserialize)]
+struct RawEndurance {
+    ssa_mpa: f64,
+    ssm_mpa: f64,
+    peened: bool,
+}
+
+impl From<RawMaterial> for Material {
+    fn from(r: RawMaterial) -> Self {
+        let form = match r.mts_form.as_str() {
+            "constant" => MtsForm::Constant,
+            "power_law" => MtsForm::PowerLaw,
+            "polynomial" => MtsForm::Polynomial,
+            other => panic!("unknown mts_form: {other}"),
+        };
+        let units = match r.mts_units.as_str() {
+            "us_kpsi_inch" => StrengthUnits::UsKpsiInch,
+            "si_mpa_mm" => StrengthUnits::SiMpaMm,
+            other => panic!("unknown mts_units: {other}"),
+        };
+        Material {
+            name: r.name,
+            specification: r.specification,
+            mts: MtsEquation {
+                form,
+                units,
+                coefficients: r.mts_coefficients,
+                valid_dia_min: Length::from_millimeters(r.valid_dia_min_mm),
+                valid_dia_max: Length::from_millimeters(r.valid_dia_max_mm),
+            },
+            youngs_modulus: Stress::from_pascals(r.youngs_modulus_gpa * 1.0e9),
+            shear_modulus: Stress::from_pascals(r.shear_modulus_gpa * 1.0e9),
+            density: MassDensity::from_kg_per_m3(r.density_kg_per_m3),
+            allowable_pct_torsion: r.allowable_pct_torsion,
+            allowable_pct_bending: r.allowable_pct_bending,
+            allowable_pct_set: r.allowable_pct_set,
+            endurance: r.endurance.map(|e| Endurance {
+                ssa: Stress::from_megapascals(e.ssa_mpa),
+                ssm: Stress::from_megapascals(e.ssm_mpa),
+                peened: e.peened,
+            }),
+            citations: r.citations,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::SpringError;
+    use crate::units::Length;
+    use approx::assert_relative_eq;
+
+    const SAMPLE: &str = r#"
+[[material]]
+name = "Test Music Wire"
+specification = "ASTM A228"
+citations = "Shigley Table 10-4 (A, m); Table 10-5 (E, G)"
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [2211.0, 0.145]
+valid_dia_min_mm = 0.10
+valid_dia_max_mm = 6.5
+youngs_modulus_gpa = 203.4
+shear_modulus_gpa = 80.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+[material.endurance]
+ssa_mpa = 241.0
+ssm_mpa = 379.0
+peened = false
+"#;
+
+    #[test]
+    fn power_law_mts_si_native() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        // Sut = 2211 / d^0.145, d in mm. At d=1mm -> 2211 MPa.
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(1.0))
+                .unwrap()
+                .megapascals(),
+            2211.0,
+            max_relative = 1e-9
+        );
+        // At d=2mm -> 2211 / 2^0.145
+        let expected = 2211.0 / 2.0_f64.powf(0.145);
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(2.0))
+                .unwrap()
+                .megapascals(),
+            expected,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn us_native_units_not_converted_as_coefficients() {
+        let us = r#"
+[[material]]
+name = "US Music Wire"
+specification = "ASTM A228"
+citations = "Shigley Table 10-4"
+mts_form = "power_law"
+mts_units = "us_kpsi_inch"
+mts_coefficients = [201.0, 0.145]
+valid_dia_min_mm = 2.54
+valid_dia_max_mm = 25.4
+youngs_modulus_gpa = 203.4
+shear_modulus_gpa = 80.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        let set = MaterialSet::from_toml_str(us).unwrap();
+        let m = set.get("US Music Wire").unwrap();
+        // d = 0.2 in. Sut = 201 / 0.2^0.145 kpsi, evaluated in inches.
+        let d = Length::from_inches(0.2);
+        let expected_kpsi = 201.0 / 0.2_f64.powf(0.145);
+        let got = m.min_tensile_strength(d).unwrap();
+        assert_relative_eq!(got.psi() / 1000.0, expected_kpsi, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn out_of_range_diameter_rejected() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        let err = m
+            .min_tensile_strength(Length::from_millimeters(10.0))
+            .unwrap_err();
+        assert!(matches!(err, SpringError::DiameterOutOfRange { .. }));
+    }
+
+    // Pins the strict `<`/`>` boundary checks. The min and max boundary diameters
+    // themselves must be accepted (i.e., `d < min` and `d > max` rejects, not
+    // `d <= min` or `d >= max`). A `<`→`<=` mutant would reject d=min_dia; a
+    // `>`→`>=` mutant would reject d=max_dia.
+    #[test]
+    fn boundary_diameters_are_accepted() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        // valid_dia_min_mm = 0.10 — must be Ok
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(0.10))
+                .is_ok(),
+            "min boundary diameter must be accepted"
+        );
+        // valid_dia_max_mm = 6.5 — must be Ok
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(6.5))
+                .is_ok(),
+            "max boundary diameter must be accepted"
+        );
+        // Just outside the boundaries — must be rejected
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(0.09))
+                .is_err(),
+            "just below min must be rejected"
+        );
+        assert!(
+            m.min_tensile_strength(Length::from_millimeters(6.51))
+                .is_err(),
+            "just above max must be rejected"
+        );
+    }
+
+    // Polynomial MTS form: Sut = c0 + c1*d + c2*d^2 (d in mm, Sut in MPa).
+    // Coefficients [2000.0, -5.0, 0.5] → at d=4 mm:
+    //   correct:  2000 + (-5)*4 + 0.5*16 = 2000 - 20 + 8 = 1988 MPa
+    //   *→+:      2000 + (-5)+4 + 0.5+16 = trivially wrong
+    //   *→/:      2000 + (-5)/4 + 0.5/16 = also wrong
+    // Pins both polynomial-multiply mutants.
+    const POLY_SAMPLE: &str = r#"
+[[material]]
+name = "Poly Test Wire"
+specification = "ASTM A999"
+citations = "synthetic test coefficients"
+mts_form = "polynomial"
+mts_units = "si_mpa_mm"
+mts_coefficients = [2000.0, -5.0, 0.5]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+
+    #[test]
+    fn polynomial_mts_evaluates_correctly() {
+        let set = MaterialSet::from_toml_str(POLY_SAMPLE).unwrap();
+        let m = set.get("Poly Test Wire").unwrap();
+        // d = 4 mm: Sut = 2000 + (-5)*4 + 0.5*16 = 1988 MPa
+        let expected = 2000.0 + (-5.0) * 4.0 + 0.5 * 16.0;
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(4.0))
+                .unwrap()
+                .megapascals(),
+            expected,
+            max_relative = 1e-9
+        );
+        // d = 3 mm: Sut = 2000 + (-5)*3 + 0.5*9 = 1989.5 MPa (differs from d=4 value)
+        let expected3 = 2000.0 + (-5.0) * 3.0 + 0.5 * 9.0;
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(3.0))
+                .unwrap()
+                .megapascals(),
+            expected3,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn endurance_optional() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        assert!(m.endurance.is_some());
+    }
+
+    #[test]
+    fn missing_material_errors() {
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        assert_eq!(
+            set.get("nope").unwrap_err(),
+            SpringError::MaterialNotFound("nope".into())
+        );
+    }
+
+    #[test]
+    fn default_set_loads_four_materials_with_music_wire() {
+        let set = MaterialSet::load_default();
+        assert!(set.names().contains(&"Music Wire"));
+        // Music wire at 1 mm -> 2211 MPa (Shigley Table 10-4).
+        let m = set.get("Music Wire").unwrap();
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(1.0))
+                .unwrap()
+                .megapascals(),
+            2211.0,
+            max_relative = 1e-9
+        );
+        assert_eq!(set.names().len(), 4);
+    }
+}

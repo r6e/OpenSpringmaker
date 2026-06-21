@@ -108,6 +108,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) and the ADRs under `docs/adr/` once they 
 
 Follow existing module boundaries when adding code. If a change crosses a boundary, explain the trade-off in the PR description.
 
+## License
+
+By contributing, you agree that your contributions will be dual-licensed under the
+[MIT License](LICENSE-MIT) and the [Apache License, Version 2.0](LICENSE-APACHE),
+matching the project's dual `MIT OR Apache-2.0` license. Unless you explicitly state
+otherwise, any contribution intentionally submitted for inclusion in this project shall
+be licensed as above, without any additional terms or conditions.
+
+No commercial-product references are permitted in any persisted file — code, comments,
+docs, data files, commit messages, or tests.
+
 ## Reporting issues
 
 Open a GitHub issue with:
