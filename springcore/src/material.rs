@@ -594,7 +594,7 @@ allowable_pct_set = 0.60
     }
 
     #[test]
-    fn default_set_loads_four_materials_with_music_wire() {
+    fn default_set_loads_seven_materials_with_music_wire() {
         let set = MaterialSet::load_default();
         assert!(set.names().contains(&"Music Wire"));
         // Music wire at 1 mm -> 2211 MPa (Shigley Table 10-4).
@@ -606,7 +606,8 @@ allowable_pct_set = 0.60
             2211.0,
             max_relative = 1e-9
         );
-        assert_eq!(set.names().len(), 4);
+        // 4 from sub-project 1 + 3 from PR (b).
+        assert_eq!(set.names().len(), 7);
     }
 
     // Rational MTS form: Sut = (P0*d^P4 + P1) / (P2*d^P4 + P3), d in mm, MPa.
