@@ -86,7 +86,7 @@ impl MtsEquation {
                 let value = numerator / denominator;
                 if !value.is_finite() {
                     return Err(SpringError::InconsistentInputs(format!(
-                        "rational MTS denominator is zero or non-finite at diameter {} m",
+                        "rational MTS form produced a non-finite result at diameter {} m",
                         d.meters()
                     )));
                 }
@@ -145,14 +145,15 @@ pub struct MaterialSet {
 impl MaterialSet {
     /// Parse a TOML document containing `[[material]]` entries.
     ///
-    /// # Panics
-    /// `mts_form` and `mts_units` values are validated via `panic!` in
-    /// `From<RawMaterial>`. This is acceptable for the bundled file; callers
-    /// passing untrusted input should switch to a `Result`-returning conversion
-    /// if an editable database is added in a later sub-project.
+    /// Returns `SpringError::DataFile` on malformed input (unknown form/units,
+    /// wrong coefficient count, inverted diameter range, or TOML syntax errors).
     pub fn from_toml_str(s: &str) -> Result<Self> {
         let raw: RawDoc = toml::from_str(s).map_err(|e| SpringError::DataFile(e.to_string()))?;
-        let materials = raw.material.into_iter().map(Material::from).collect();
+        let materials = raw
+            .material
+            .into_iter()
+            .map(Material::try_from_raw)
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self { materials })
     }
 
@@ -211,21 +212,74 @@ struct RawEndurance {
     peened: bool,
 }
 
-impl From<RawMaterial> for Material {
-    fn from(r: RawMaterial) -> Self {
-        let form = match r.mts_form.as_str() {
-            "constant" => MtsForm::Constant,
-            "power_law" => MtsForm::PowerLaw,
-            "polynomial" => MtsForm::Polynomial,
-            "rational" => MtsForm::Rational,
-            other => panic!("unknown mts_form: {other}"),
-        };
-        let units = match r.mts_units.as_str() {
-            "us_kpsi_inch" => StrengthUnits::UsKpsiInch,
-            "si_mpa_mm" => StrengthUnits::SiMpaMm,
-            other => panic!("unknown mts_units: {other}"),
-        };
-        Material {
+/// Stable string key for an MTS form (used in TOML).
+#[allow(dead_code)]
+pub(crate) fn mts_form_str(form: MtsForm) -> &'static str {
+    match form {
+        MtsForm::Constant => "constant",
+        MtsForm::PowerLaw => "power_law",
+        MtsForm::Polynomial => "polynomial",
+        MtsForm::Rational => "rational",
+    }
+}
+
+fn mts_form_from_str(s: &str) -> Result<MtsForm> {
+    Ok(match s {
+        "constant" => MtsForm::Constant,
+        "power_law" => MtsForm::PowerLaw,
+        "polynomial" => MtsForm::Polynomial,
+        "rational" => MtsForm::Rational,
+        other => return Err(SpringError::DataFile(format!("unknown mts_form: {other}"))),
+    })
+}
+
+/// Stable string key for a strength unit system (used in TOML).
+#[allow(dead_code)]
+pub(crate) fn strength_units_str(units: StrengthUnits) -> &'static str {
+    match units {
+        StrengthUnits::UsKpsiInch => "us_kpsi_inch",
+        StrengthUnits::SiMpaMm => "si_mpa_mm",
+    }
+}
+
+fn strength_units_from_str(s: &str) -> Result<StrengthUnits> {
+    Ok(match s {
+        "us_kpsi_inch" => StrengthUnits::UsKpsiInch,
+        "si_mpa_mm" => StrengthUnits::SiMpaMm,
+        other => return Err(SpringError::DataFile(format!("unknown mts_units: {other}"))),
+    })
+}
+
+/// Number of coefficients each form requires. Polynomial requires >= 1
+/// (checked separately as a minimum).
+fn coefficients_ok(form: MtsForm, n: usize) -> bool {
+    match form {
+        MtsForm::Constant => n == 1,
+        MtsForm::PowerLaw => n == 2,
+        MtsForm::Rational => n == 5,
+        MtsForm::Polynomial => n >= 1,
+    }
+}
+
+impl Material {
+    fn try_from_raw(r: RawMaterial) -> Result<Self> {
+        let form = mts_form_from_str(&r.mts_form)?;
+        let units = strength_units_from_str(&r.mts_units)?;
+        if !coefficients_ok(form, r.mts_coefficients.len()) {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': {} coefficients for form {}",
+                r.name,
+                r.mts_coefficients.len(),
+                r.mts_form
+            )));
+        }
+        if r.valid_dia_min_mm > r.valid_dia_max_mm {
+            return Err(SpringError::DataFile(format!(
+                "material '{}': valid_dia_min_mm > valid_dia_max_mm",
+                r.name
+            )));
+        }
+        Ok(Material {
             name: r.name,
             specification: r.specification,
             mts: MtsEquation {
@@ -246,9 +300,9 @@ impl From<RawMaterial> for Material {
                 ssm: Stress::from_megapascals(e.ssm_mpa),
                 peened: e.peened,
             }),
-            citations: r.citations,
             max_service_temperature: r.max_service_temp_c.map(Temperature::from_celsius),
-        }
+            citations: r.citations,
+        })
     }
 }
 
@@ -522,6 +576,80 @@ allowable_pct_set = 0.60
             .min_tensile_strength(Length::from_millimeters(2.0))
             .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn unknown_mts_form_is_data_error_not_panic() {
+        let toml = r#"
+[[material]]
+name = "Bad Form"
+specification = "x"
+citations = "x"
+mts_form = "banana"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        let err = MaterialSet::from_toml_str(toml).unwrap_err();
+        assert!(matches!(err, SpringError::DataFile(_)));
+    }
+
+    #[test]
+    fn unknown_mts_units_is_data_error() {
+        let toml = r#"
+[[material]]
+name = "Bad Units"
+specification = "x"
+citations = "x"
+mts_form = "constant"
+mts_units = "furlongs"
+mts_coefficients = [1.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        assert!(matches!(
+            MaterialSet::from_toml_str(toml).unwrap_err(),
+            SpringError::DataFile(_)
+        ));
+    }
+
+    #[test]
+    fn wrong_coefficient_count_is_data_error() {
+        // power_law needs exactly 2 coefficients; give 1.
+        let toml = r#"
+[[material]]
+name = "Bad Coeffs"
+specification = "x"
+citations = "x"
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [2211.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        assert!(matches!(
+            MaterialSet::from_toml_str(toml).unwrap_err(),
+            SpringError::DataFile(_)
+        ));
     }
 
     #[test]
