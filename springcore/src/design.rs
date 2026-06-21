@@ -8,7 +8,7 @@ use crate::mechanics::{
     wahl_factor, EndFixity,
 };
 use crate::units::{Force, Frequency, Length, SpringRate, Stress};
-use crate::Result;
+use crate::{Result, SpringError};
 
 /// State of the spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +76,15 @@ pub fn solve_forward(
     free_length: Length,
     loads: &[Force],
 ) -> Result<SpringDesign> {
+    // A spring index ≤ 1 is physically meaningless; mean diameter must exceed wire diameter
+    // (SMI Handbook; Shigley §10-1). This also guards the Dimensional scenario when
+    // outer_dia ≤ wire_dia, which would produce a non-positive mean diameter.
+    if mean_dia.meters() <= wire_dia.meters() {
+        return Err(SpringError::InconsistentInputs(
+            "mean diameter must be greater than wire diameter (spring index must exceed 1)".into(),
+        ));
+    }
+
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
     let total_coils = end_type.total_coils(active);
@@ -573,6 +582,72 @@ mod tests {
             .messages
             .iter()
             .any(|msg| msg.message.contains("index")));
+    }
+
+    // ── solve_forward: mean_dia ≤ wire_dia guard (lines 79-86) ─────────────────
+
+    /// mean == wire is rejected (spring index == 1; coil cannot close).
+    /// Kills: `<=` → `<` (would accept equal) and `<=` → `==` (would miss mean < wire).
+    #[test]
+    fn solve_forward_rejects_mean_equal_to_wire() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(2.0), // mean == wire → rejected
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "mean == wire must return InconsistentInputs"
+        );
+    }
+
+    /// mean < wire is also rejected.
+    /// Kills: `<=` → `<` would still accept if mean < wire (not applicable here — belt-and-suspenders).
+    #[test]
+    fn solve_forward_rejects_mean_less_than_wire() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(5.0),
+            Length::from_millimeters(3.0), // mean < wire → rejected
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "mean < wire must return InconsistentInputs"
+        );
+    }
+
+    /// mean just above wire (by 1 µm) is accepted — pins the `<=` vs `<` boundary.
+    /// Kills: `<=` → `<` would accept equal (but we check the just-above case too).
+    #[test]
+    fn solve_forward_accepts_mean_just_above_wire() {
+        let m = crate::test_support::music_wire();
+        // wire = 2 mm, mean = 2.001 mm → index ≈ 1.0005 (accepted by guard, though low).
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(2.001), // mean just above wire → accepted
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(1.0)],
+        );
+        assert!(
+            result.is_ok(),
+            "mean just above wire must be accepted by the guard"
+        );
     }
 
     #[test]

@@ -233,4 +233,46 @@ mod tests {
         assert_relative_eq!(d.index, 10.0, max_relative = 1e-9);
         assert_relative_eq!(d.mean_dia.millimeters(), 20.0, max_relative = 1e-9);
     }
+
+    /// Dimensional with outer_dia == wire_dia → mean = 0 → InconsistentInputs.
+    #[test]
+    fn dimensional_rejects_outer_equal_to_wire() {
+        let s = Dimensional {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(5.0),
+            outer_dia: Length::from_millimeters(5.0), // mean = 0 → rejected
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(_))
+            ),
+            "outer_dia == wire_dia must return InconsistentInputs"
+        );
+    }
+
+    /// Dimensional with outer_dia < wire_dia → mean < 0 → InconsistentInputs.
+    #[test]
+    fn dimensional_rejects_outer_less_than_wire() {
+        let s = Dimensional {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(5.0),
+            outer_dia: Length::from_millimeters(3.0), // mean = −2 mm → rejected
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(_))
+            ),
+            "outer_dia < wire_dia must return InconsistentInputs"
+        );
+    }
 }

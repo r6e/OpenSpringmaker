@@ -301,7 +301,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
         });
 
     let unit_metric = radio(
-        "Metric (mm / N)",
+        "Metric (mm, N)",
         UnitSystem::Metric,
         Some(app.form.unit_system),
         Message::Units,
@@ -309,7 +309,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
     .text_size(SZ_LABEL);
 
     let unit_us = radio(
-        "US (in / lbf)",
+        "US (in, lbf)",
         UnitSystem::Us,
         Some(app.form.unit_system),
         Message::Units,
@@ -942,7 +942,7 @@ fn unit_force_label(us: UnitSystem) -> &'static str {
 
 fn unit_rate_label(us: UnitSystem) -> &'static str {
     match us {
-        UnitSystem::Metric => "N/m",
+        UnitSystem::Metric => "N/mm",
         UnitSystem::Us => "lbf/in",
     }
 }
@@ -963,7 +963,9 @@ fn display_force(f: springcore::Force, us: UnitSystem) -> f64 {
 
 fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
     match us {
-        UnitSystem::Metric => r.newtons_per_meter(),
+        // Display in N/mm (= N/m ÷ 1000) so rate is consistent with mm lengths and
+        // the chart axes (deflection in mm, force in N → slope in N/mm).
+        UnitSystem::Metric => r.newtons_per_meter() / 1000.0,
         UnitSystem::Us => r.pounds_per_inch(),
     }
 }

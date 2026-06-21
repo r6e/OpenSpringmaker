@@ -13,7 +13,7 @@ The workspace is split into two crates:
 
 ## Build
 
-Requires a stable Rust toolchain (MSRV 1.80).
+Requires a stable Rust toolchain (MSRV 1.86).
 
 ```sh
 cargo build --workspace
