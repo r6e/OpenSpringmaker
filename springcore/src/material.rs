@@ -335,6 +335,24 @@ impl Material {
                 r.name
             )));
         }
+        // Allowable stresses are fractions of MTS used as safety thresholds:
+        // design.rs warns when operating stress exceeds them, and optimize.rs caps
+        // feasible stress at allowable_pct_torsion * MTS. An untrusted overlay value
+        // outside (0, 1] would silently suppress overstress warnings or let the
+        // optimizer accept designs stressed beyond ultimate, so reject it. (Finiteness
+        // is already established above, so these comparisons cannot see NaN.)
+        for (label, pct) in [
+            ("allowable_pct_torsion", r.allowable_pct_torsion),
+            ("allowable_pct_bending", r.allowable_pct_bending),
+            ("allowable_pct_set", r.allowable_pct_set),
+        ] {
+            if pct <= 0.0 || pct > 1.0 {
+                return Err(SpringError::DataFile(format!(
+                    "material '{}': {label} must be in (0, 1]",
+                    r.name
+                )));
+            }
+        }
         Ok(Material {
             name: r.name,
             specification: r.specification,
@@ -976,6 +994,52 @@ allowable_pct_set = 0.60
         let mut r = good_raw();
         r.valid_dia_min_mm = 1e-6;
         assert!(Material::try_from_raw(r).is_ok());
+    }
+
+    // Allowable-stress fractions must lie in (0, 1]: a value > 1.0 from an
+    // untrusted overlay would silently suppress overstress warnings and let the
+    // optimizer accept designs stressed beyond ultimate; <= 0.0 is nonsensical.
+    #[test]
+    fn zero_allowable_pct_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_torsion = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_allowable_pct_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_torsion = -0.1;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn over_one_allowable_pct_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_torsion = 1.5;
+        assert_data_err(r);
+    }
+
+    // Boundary: exactly 1.0 (allow up to ultimate) is ACCEPTED, pinning `>` vs `>=`.
+    #[test]
+    fn allowable_pct_torsion_of_one_is_accepted() {
+        let mut r = good_raw();
+        r.allowable_pct_torsion = 1.0;
+        assert!(Material::try_from_raw(r).is_ok());
+    }
+
+    #[test]
+    fn over_one_allowable_pct_bending_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_bending = 1.5;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn over_one_allowable_pct_set_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_set = 1.5;
+        assert_data_err(r);
     }
 
     #[test]
