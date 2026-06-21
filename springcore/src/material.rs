@@ -17,6 +17,9 @@ pub enum MtsForm {
     PowerLaw,
     /// Sut = sum_i c_i d^i, coefficients = [c0, c1, ...].
     Polynomial,
+    /// Sut = (P0*d^P4 + P1) / (P2*d^P4 + P3), coefficients = [P0, P1, P2, P3, P4].
+    /// A 5-parameter rational curve fit. The denominator is guarded against zero.
+    Rational,
 }
 
 /// Native unit system of an MTS equation's coefficients.
@@ -76,6 +79,19 @@ impl MtsEquation {
                 .enumerate()
                 .map(|(i, ci)| ci * dn.powi(i as i32))
                 .sum::<f64>(),
+            MtsForm::Rational => {
+                let p = dn.powf(c[4]);
+                let denominator = c[2] * p + c[3];
+                let numerator = c[0] * p + c[1];
+                let value = numerator / denominator;
+                if !value.is_finite() {
+                    return Err(SpringError::InconsistentInputs(format!(
+                        "rational MTS denominator is zero or non-finite at diameter {} m",
+                        d.meters()
+                    )));
+                }
+                value
+            }
         };
         Ok(self.units.stress_from_native(raw))
     }
@@ -196,6 +212,7 @@ impl From<RawMaterial> for Material {
             "constant" => MtsForm::Constant,
             "power_law" => MtsForm::PowerLaw,
             "polynomial" => MtsForm::Polynomial,
+            "rational" => MtsForm::Rational,
             other => panic!("unknown mts_form: {other}"),
         };
         let units = match r.mts_units.as_str() {
@@ -430,5 +447,74 @@ allowable_pct_set = 0.60
             max_relative = 1e-9
         );
         assert_eq!(set.names().len(), 4);
+    }
+
+    // Rational MTS form: Sut = (P0*d^P4 + P1) / (P2*d^P4 + P3), d in mm, MPa.
+    // Coeffs [1000, 500, 0.0, 2.0, 1.0] => Sut = (1000*d + 500) / (0 + 2) = 500*d + 250.
+    // At d=3 mm -> 1750 MPa; at d=5 mm -> 2750 MPa (distinct).
+    const RATIONAL_SAMPLE: &str = r#"
+[[material]]
+name = "Rational Test Wire"
+specification = "synthetic"
+citations = "synthetic test coefficients"
+mts_form = "rational"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1000.0, 500.0, 0.0, 2.0, 1.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+
+    #[test]
+    fn rational_mts_evaluates_correctly() {
+        let set = MaterialSet::from_toml_str(RATIONAL_SAMPLE).unwrap();
+        let m = set.get("Rational Test Wire").unwrap();
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(3.0))
+                .unwrap()
+                .megapascals(),
+            500.0 * 3.0 + 250.0,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            m.min_tensile_strength(Length::from_millimeters(5.0))
+                .unwrap()
+                .megapascals(),
+            500.0 * 5.0 + 250.0,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn rational_denominator_zero_is_rejected() {
+        // [P0,P1,P2,P3,P4] = [1, 1, 1, -2, 1] => denom = d - 2; at d=2 -> 0.
+        let toml = r#"
+[[material]]
+name = "Bad Rational"
+specification = "synthetic"
+citations = "synthetic"
+mts_form = "rational"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1.0, 1.0, 1.0, -2.0, 1.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        let set = MaterialSet::from_toml_str(toml).unwrap();
+        let m = set.get("Bad Rational").unwrap();
+        let err = m
+            .min_tensile_strength(Length::from_millimeters(2.0))
+            .unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 }
