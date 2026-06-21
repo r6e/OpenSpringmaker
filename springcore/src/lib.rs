@@ -8,7 +8,7 @@ pub(crate) mod end_type;
 pub mod error;
 pub(crate) mod fatigue;
 pub(crate) mod material;
-pub mod material_persist;
+pub(crate) mod material_persist;
 pub mod material_store;
 pub(crate) mod mechanics;
 pub(crate) mod numeric;
