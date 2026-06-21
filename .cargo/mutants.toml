@@ -41,10 +41,12 @@ exclude_re = [
   # produces identical no-warning behavior in parse_user_overlay. Equivalent.
   "material_persist\\.rs:40:.*",
 
-  # material_persist.rs:161 — save() body replaced with Ok(()). Exercising save()
-  # requires writing to the real OS user config file (non-hermetic). The hermetic
-  # core (save_to_path, serialize_user_materials, atomic_write) is unit-tested.
-  "material_persist\\.rs:161:.*save",
+  # MaterialStore::save() body replaced with Ok(()). Exercising save() requires
+  # writing to the real OS user config file (non-hermetic). The hermetic core
+  # (save_to_path, serialize_user_materials, atomic_write) is unit-tested. Matched
+  # by mutant signature (not line number) so edits above save() don't un-anchor it;
+  # the `save -> ` (space) cannot match `save_to_path -> `.
+  "replace MaterialStore::save -> Result.*with Ok",
 
   # material_store.rs — mutants that cargo-mutants can only record as timeouts because
   # MaterialStore::unique_copy_name's search loop is unbounded: it appends "(copy)",
