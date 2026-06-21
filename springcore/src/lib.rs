@@ -29,4 +29,4 @@ pub use mechanics::EndFixity;
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
-pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress};
+pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress, Temperature};

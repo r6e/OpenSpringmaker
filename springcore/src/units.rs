@@ -43,6 +43,11 @@ si_quantity!(
     /// Mass density, stored in kilograms per cubic metre.
     MassDensity
 );
+si_quantity!(
+    /// Temperature, stored in degrees Celsius. Informational only — not used in
+    /// any spring calculation.
+    Temperature
+);
 
 impl Length {
     /// Construct from metres (SI base unit).
@@ -162,6 +167,25 @@ impl MassDensity {
     }
 }
 
+impl Temperature {
+    /// Construct from degrees Celsius (SI base unit).
+    pub fn from_celsius(v: f64) -> Self {
+        Self(v)
+    }
+    /// Construct from degrees Fahrenheit (°C = (°F - 32) × 5/9).
+    pub fn from_fahrenheit(v: f64) -> Self {
+        Self((v - 32.0) * 5.0 / 9.0)
+    }
+    /// Return value in degrees Celsius.
+    pub fn celsius(self) -> f64 {
+        self.0
+    }
+    /// Return value in degrees Fahrenheit (°F = °C × 9/5 + 32).
+    pub fn fahrenheit(self) -> f64 {
+        self.0 * 9.0 / 5.0 + 32.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +259,14 @@ mod tests {
         // 1 lb/in^3 = 27679.9047 kg/m^3 (derived from lbm and inch definitions)
         let d = MassDensity::from_pounds_per_in3(1.0);
         assert_relative_eq!(d.kg_per_m3(), 27679.904710203, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn temperature_celsius_fahrenheit_roundtrip() {
+        let t = Temperature::from_celsius(100.0);
+        assert_relative_eq!(t.celsius(), 100.0, max_relative = 1e-12);
+        assert_relative_eq!(t.fahrenheit(), 212.0, max_relative = 1e-12);
+        let f = Temperature::from_fahrenheit(32.0);
+        assert_relative_eq!(f.celsius(), 0.0, max_relative = 1e-12);
     }
 }

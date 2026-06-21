@@ -3,7 +3,7 @@
 //! only the scalar result is converted to SI (see ADR 0003).
 
 use crate::error::{Result, SpringError};
-use crate::units::{Length, MassDensity, Stress};
+use crate::units::{Length, MassDensity, Stress, Temperature};
 use serde::Deserialize;
 
 const PSI_PER_KPSI: f64 = 1000.0;
@@ -124,6 +124,9 @@ pub struct Material {
     pub allowable_pct_set: f64,
     pub endurance: Option<Endurance>,
     pub citations: String,
+    /// Maximum service temperature, if specified. Informational only — NOT used
+    /// in any calculation (no derating). Displayed with its citation.
+    pub max_service_temperature: Option<Temperature>,
 }
 
 impl Material {
@@ -197,6 +200,8 @@ struct RawMaterial {
     allowable_pct_bending: f64,
     allowable_pct_set: f64,
     endurance: Option<RawEndurance>,
+    #[serde(default)]
+    max_service_temp_c: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -242,6 +247,7 @@ impl From<RawMaterial> for Material {
                 peened: e.peened,
             }),
             citations: r.citations,
+            max_service_temperature: r.max_service_temp_c.map(Temperature::from_celsius),
         }
     }
 }
@@ -516,5 +522,42 @@ allowable_pct_set = 0.60
             .min_tensile_strength(Length::from_millimeters(2.0))
             .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn max_service_temperature_parses_when_present_and_absent() {
+        // Present:
+        let with_temp = r#"
+[[material]]
+name = "Temp Wire"
+specification = "synthetic"
+citations = "synthetic"
+mts_form = "constant"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1500.0]
+valid_dia_min_mm = 1.0
+valid_dia_max_mm = 10.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+max_service_temp_c = 120.0
+"#;
+        let m = MaterialSet::from_toml_str(with_temp).unwrap();
+        let mat = m.get("Temp Wire").unwrap();
+        assert_relative_eq!(
+            mat.max_service_temperature.unwrap().celsius(),
+            120.0,
+            max_relative = 1e-12
+        );
+        // Absent -> None (the existing SAMPLE has no max_service_temp_c).
+        let s = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        assert!(s
+            .get("Test Music Wire")
+            .unwrap()
+            .max_service_temperature
+            .is_none());
     }
 }
