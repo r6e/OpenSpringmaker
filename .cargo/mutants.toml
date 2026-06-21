@@ -45,4 +45,23 @@ exclude_re = [
   # requires writing to the real OS user config file (non-hermetic). The hermetic
   # core (save_to_path, serialize_user_materials, atomic_write) is unit-tested.
   "material_persist\\.rs:161:.*save",
+
+  # material_store.rs — non-terminating mutants of MaterialStore::unique_copy_name's
+  # search loop. unique_copy_name appends "(copy)", "(copy 2)", ... until
+  # name_exists() is false. The four mutants below each make that exit condition
+  # permanently unsatisfiable, so the loop runs forever:
+  #   :44 is_curated -> true   => name_exists() always true (via its `||`)
+  #   :49 name_exists -> true  => exit condition never reached
+  #   :127 delete `!`          => returns only on a *taken* name; freshly generated
+  #                               unique candidates are never taken => never returns
+  #   :130 `+=` -> `*=`        => n stays 2 => the same taken candidate forever
+  # The divergence IS observable — the clone tests hang — but cargo-mutants records
+  # a hang as a timeout, not a catch, and which mutant trips the auto-timeout first
+  # is runner-timing-sensitive. These are caught-by-non-termination, not survivors;
+  # excluded so the gate is deterministic. All other mutants on these lines (e.g.
+  # is_curated/name_exists -> false, `+=` -> `-=`) remain in scope and are killed.
+  "material_store\\.rs:44:.*with true",
+  "material_store\\.rs:49:.*with true",
+  "material_store\\.rs:127:.*delete !",
+  "material_store\\.rs:130:.*replace \\+= with \\*=",
 ]

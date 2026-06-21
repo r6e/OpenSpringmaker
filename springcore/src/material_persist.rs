@@ -314,8 +314,14 @@ mod tests {
 
     #[test]
     fn unreadable_path_yields_warning() {
-        // temp_dir() is a directory, not a file — read_to_string returns IsADirectory (not NotFound)
-        let (_, warns) = MaterialStore::from_overlay_file(curated(), &std::env::temp_dir());
+        // A path containing an interior NUL byte is rejected before the OS call
+        // with ErrorKind::InvalidInput on every platform (Unix CString and
+        // Windows wide-string conversion both reject NUL) — a portable way to
+        // force a non-NotFound read error, exercising the "could not read" warning
+        // branch. (A directory path is not portable here: Unix yields IsADirectory
+        // but Windows does not surface a warning-triggering error.)
+        let (_, warns) =
+            MaterialStore::from_overlay_file(curated(), Path::new("bad\0overlay.toml"));
         assert!(!warns.is_empty());
     }
 

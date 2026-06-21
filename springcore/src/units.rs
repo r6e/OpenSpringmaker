@@ -268,5 +268,9 @@ mod tests {
         assert_relative_eq!(t.fahrenheit(), 212.0, max_relative = 1e-12);
         let f = Temperature::from_fahrenheit(32.0);
         assert_relative_eq!(f.celsius(), 0.0, max_relative = 1e-12);
+        // Boiling point pins the 5/9 scale factor (a zero input cannot:
+        // (32-32)*k = 0 for any k). 212 °F = 100 °C.
+        let boiling = Temperature::from_fahrenheit(212.0);
+        assert_relative_eq!(boiling.celsius(), 100.0, max_relative = 1e-12);
     }
 }
