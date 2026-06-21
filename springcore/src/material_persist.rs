@@ -276,6 +276,35 @@ mod tests {
     }
 
     #[test]
+    fn save_overwrites_existing_overlay() {
+        // atomic_write writes a temp file then renames over the target. Rust's
+        // std::fs::rename replaces an existing destination on every platform
+        // (Windows via MoveFileExW + MOVEFILE_REPLACE_EXISTING), so a second save
+        // to the same path must succeed and reflect the new contents — this pins
+        // that cross-platform behavior (notably on Windows, where the raw Win32
+        // rename would fail on an existing target).
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "osm_materials_overwrite_{}.toml",
+            std::process::id()
+        ));
+
+        let mut first = MaterialStore::new(curated());
+        first.add(a_user_material("First Wire")).unwrap();
+        first.save_to_path(&path).unwrap();
+
+        let mut second = MaterialStore::new(curated());
+        second.add(a_user_material("Second Wire")).unwrap();
+        second.save_to_path(&path).unwrap(); // overwrites the existing file
+
+        let (loaded, warns) = MaterialStore::from_overlay_file(curated(), &path);
+        assert!(warns.is_empty());
+        assert!(loaded.get("Second Wire").is_ok());
+        assert!(loaded.get("First Wire").is_err()); // old contents replaced
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn roundtrip_preserves_youngs_and_shear_modulus() {
         let orig = MaterialSet::load_default()
             .get("Music Wire")
