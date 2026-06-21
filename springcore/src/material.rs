@@ -4,7 +4,7 @@
 
 use crate::error::{Result, SpringError};
 use crate::units::{Length, MassDensity, Stress, Temperature};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const PSI_PER_KPSI: f64 = 1000.0;
 
@@ -179,41 +179,41 @@ impl MaterialSet {
 
 // --- TOML deserialization layer (native, human-readable units) ---
 
-#[derive(Deserialize)]
-struct RawDoc {
-    material: Vec<RawMaterial>,
+#[derive(Deserialize, Serialize)]
+pub(crate) struct RawDoc {
+    pub(crate) material: Vec<RawMaterial>,
 }
 
-#[derive(Deserialize)]
-struct RawMaterial {
-    name: String,
-    specification: String,
-    citations: String,
-    mts_form: String,
-    mts_units: String,
-    mts_coefficients: Vec<f64>,
-    valid_dia_min_mm: f64,
-    valid_dia_max_mm: f64,
-    youngs_modulus_gpa: f64,
-    shear_modulus_gpa: f64,
-    density_kg_per_m3: f64,
-    allowable_pct_torsion: f64,
-    allowable_pct_bending: f64,
-    allowable_pct_set: f64,
-    endurance: Option<RawEndurance>,
-    #[serde(default)]
-    max_service_temp_c: Option<f64>,
+#[derive(Deserialize, Serialize)]
+pub(crate) struct RawMaterial {
+    pub(crate) name: String,
+    pub(crate) specification: String,
+    pub(crate) citations: String,
+    pub(crate) mts_form: String,
+    pub(crate) mts_units: String,
+    pub(crate) mts_coefficients: Vec<f64>,
+    pub(crate) valid_dia_min_mm: f64,
+    pub(crate) valid_dia_max_mm: f64,
+    pub(crate) youngs_modulus_gpa: f64,
+    pub(crate) shear_modulus_gpa: f64,
+    pub(crate) density_kg_per_m3: f64,
+    pub(crate) allowable_pct_torsion: f64,
+    pub(crate) allowable_pct_bending: f64,
+    pub(crate) allowable_pct_set: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) endurance: Option<RawEndurance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) max_service_temp_c: Option<f64>,
 }
 
-#[derive(Deserialize)]
-struct RawEndurance {
-    ssa_mpa: f64,
-    ssm_mpa: f64,
-    peened: bool,
+#[derive(Deserialize, Serialize)]
+pub(crate) struct RawEndurance {
+    pub(crate) ssa_mpa: f64,
+    pub(crate) ssm_mpa: f64,
+    pub(crate) peened: bool,
 }
 
 /// Stable string key for an MTS form (used in TOML).
-#[allow(dead_code)]
 pub(crate) fn mts_form_str(form: MtsForm) -> &'static str {
     match form {
         MtsForm::Constant => "constant",
@@ -234,7 +234,6 @@ fn mts_form_from_str(s: &str) -> Result<MtsForm> {
 }
 
 /// Stable string key for a strength unit system (used in TOML).
-#[allow(dead_code)]
 pub(crate) fn strength_units_str(units: StrengthUnits) -> &'static str {
     match units {
         StrengthUnits::UsKpsiInch => "us_kpsi_inch",
@@ -262,7 +261,7 @@ fn coefficients_ok(form: MtsForm, n: usize) -> bool {
 }
 
 impl Material {
-    fn try_from_raw(r: RawMaterial) -> Result<Self> {
+    pub(crate) fn try_from_raw(r: RawMaterial) -> Result<Self> {
         let form = mts_form_from_str(&r.mts_form)?;
         let units = strength_units_from_str(&r.mts_units)?;
         if !coefficients_ok(form, r.mts_coefficients.len()) {
@@ -303,6 +302,32 @@ impl Material {
             max_service_temperature: r.max_service_temp_c.map(Temperature::from_celsius),
             citations: r.citations,
         })
+    }
+
+    /// Convert back to the serializable raw form (for the user overlay file).
+    pub(crate) fn to_raw(&self) -> RawMaterial {
+        RawMaterial {
+            name: self.name.clone(),
+            specification: self.specification.clone(),
+            citations: self.citations.clone(),
+            mts_form: mts_form_str(self.mts.form).to_string(),
+            mts_units: strength_units_str(self.mts.units).to_string(),
+            mts_coefficients: self.mts.coefficients.clone(),
+            valid_dia_min_mm: self.mts.valid_dia_min.millimeters(),
+            valid_dia_max_mm: self.mts.valid_dia_max.millimeters(),
+            youngs_modulus_gpa: self.youngs_modulus.pascals() / 1.0e9,
+            shear_modulus_gpa: self.shear_modulus.pascals() / 1.0e9,
+            density_kg_per_m3: self.density.kg_per_m3(),
+            allowable_pct_torsion: self.allowable_pct_torsion,
+            allowable_pct_bending: self.allowable_pct_bending,
+            allowable_pct_set: self.allowable_pct_set,
+            endurance: self.endurance.map(|e| RawEndurance {
+                ssa_mpa: e.ssa.megapascals(),
+                ssm_mpa: e.ssm.megapascals(),
+                peened: e.peened,
+            }),
+            max_service_temp_c: self.max_service_temperature.map(|t| t.celsius()),
+        }
     }
 }
 

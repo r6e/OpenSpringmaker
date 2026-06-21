@@ -6,6 +6,7 @@ license.workspace = true
 description = "Engineering calculations for helical compression springs"
 
 [dependencies]
+directories = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 
