@@ -4,7 +4,7 @@ use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, Scenari
 use crate::view;
 use iced::theme::Palette;
 use iced::{Color, Theme};
-use springcore::{MaterialSet, SavedDesign, UnitSystem};
+use springcore::{LoadWarning, MaterialStore, SavedDesign, UnitSystem};
 
 // --------------------------------------------------------------------------
 // Design tokens — single source of truth for colours used in view.rs
@@ -127,16 +127,19 @@ pub enum Message {
 /// Top-level application state.
 pub struct App {
     pub form: FormState,
-    pub materials: MaterialSet,
+    pub materials: MaterialStore,
+    pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
     pub error: Option<String>,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let (materials, load_warnings) = MaterialStore::load();
         Self {
             form: FormState::default(),
-            materials: MaterialSet::load_default(),
+            materials,
+            load_warnings,
             outcome: None,
             error: None,
         }
@@ -300,6 +303,12 @@ mod tests {
         let app = App::default();
         assert!(app.outcome.is_none());
         assert_eq!(app.form.material, "Music Wire");
+    }
+
+    #[test]
+    fn default_app_loads_material_store_with_curated() {
+        let app = App::default();
+        assert!(app.materials.names().contains(&"Music Wire"));
     }
 
     #[test]

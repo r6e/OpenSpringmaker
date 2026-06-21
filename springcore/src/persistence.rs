@@ -3,7 +3,7 @@
 
 use crate::design::SpringDesign;
 use crate::end_type::EndType;
-use crate::material::MaterialSet;
+use crate::material::{Material, MaterialSet};
 use crate::mechanics::EndFixity;
 use crate::optimize::{solve_min_weight, MinWeightRequest};
 use crate::scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
@@ -240,9 +240,10 @@ impl SavedDesign {
         Self::from_toml(&text)
     }
 
-    /// Re-compute the spring design from the stored scenario inputs and the given material set.
-    pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
-        let material = materials.get(&self.material)?;
+    /// Re-compute the spring design from the stored scenario inputs and an already-resolved
+    /// material reference. Callers that hold a `MaterialStore` (or any other lookup source)
+    /// can call `.get(name)?` themselves and pass the result here.
+    pub fn solve_with_material(&self, material: &Material) -> Result<SpringDesign> {
         match &self.scenario {
             ScenarioSpec::PowerUser {
                 end_type,
@@ -327,6 +328,12 @@ impl SavedDesign {
                 solve_min_weight(material, &req).map(|s| s.design)
             }
         }
+    }
+
+    /// Re-compute the spring design from the stored scenario inputs and the given material set.
+    pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
+        let material = materials.get(&self.material)?;
+        self.solve_with_material(material)
     }
 }
 

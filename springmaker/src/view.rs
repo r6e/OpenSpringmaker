@@ -848,18 +848,31 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
 fn build_status_panel(app: &App) -> Element<'_, Message> {
     use springcore::Severity;
 
-    // Only render when there's something to say.
-    let has_messages = app
+    let has_design_messages = app
         .outcome
         .as_ref()
         .map(|o| !o.status.messages.is_empty())
         .unwrap_or(false);
+    let has_load_warnings = !app.load_warnings.is_empty();
 
-    if !has_messages {
+    if !has_design_messages && !has_load_warnings {
         return column![].into();
     }
 
     let mut col = column![section_heading("Design status")].spacing(6);
+
+    // Surface any startup material-load warnings first.
+    for warn in &app.load_warnings {
+        let warn_row = row![
+            text("Warning:")
+                .size(SZ_LABEL)
+                .color(C::WARN)
+                .width(Length::Fixed(72.0)),
+            text(warn.message.as_str()).size(SZ_LABEL).color(C::WARN),
+        ]
+        .spacing(8);
+        col = col.push(warn_row);
+    }
 
     if let Some(out) = &app.outcome {
         for msg in &out.status.messages {
