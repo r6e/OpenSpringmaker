@@ -83,20 +83,10 @@ impl MaterialStore {
             .iter()
             .position(|m| m.name == name)
             .ok_or_else(|| SpringError::MaterialNotFound(name.to_string()))?;
-        // If renaming, the new name must be free (ignoring the entry being edited).
+        // If renaming, the new name must be free. The old entry still holds the
+        // old `name`, so this can't false-positive on the entry being edited.
         if material.name != name {
-            if self.is_curated(&material.name) {
-                return Err(SpringError::InconsistentInputs(format!(
-                    "'{}' is a reserved curated material name",
-                    material.name
-                )));
-            }
-            if self.user.iter().any(|m| m.name == material.name) {
-                return Err(SpringError::InconsistentInputs(format!(
-                    "a user material named '{}' already exists",
-                    material.name
-                )));
-            }
+            self.check_name_available(&material.name)?;
         }
         self.user[idx] = material;
         Ok(())
