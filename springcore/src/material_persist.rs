@@ -90,7 +90,12 @@ pub fn parse_user_overlay(s: &str) -> (Vec<Material>, Vec<LoadWarning>) {
 }
 
 fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "overlay path has no parent directory",
+        )
+    })?;
     let tmp = dir.join(format!(".materials.{}.tmp", std::process::id()));
     std::fs::write(&tmp, contents)?;
     std::fs::rename(&tmp, path)
@@ -190,10 +195,13 @@ mod tests {
         assert!(warns.is_empty());
         assert_eq!(mats.len(), 1);
         assert_eq!(mats[0].name, "My Wire");
-        // MTS preserved.
-        assert!(mats[0]
-            .min_tensile_strength(crate::units::Length::from_millimeters(1.0))
-            .is_ok());
+        // MTS value preserved (not merely parseable): compare the strength at a
+        // reference diameter before vs after the round-trip. A corrupted
+        // to_raw/try_from_raw conversion would change this value.
+        let d = crate::units::Length::from_millimeters(1.0);
+        let before = m.min_tensile_strength(d).unwrap().pascals();
+        let after = mats[0].min_tensile_strength(d).unwrap().pascals();
+        assert_relative_eq!(after, before, max_relative = 1e-9);
     }
 
     #[test]
@@ -295,6 +303,25 @@ mod tests {
     fn user_overlay_path_ends_with_materials_toml() {
         let p = user_overlay_path().expect("config dir");
         assert!(p.ends_with("materials.toml"));
+    }
+
+    #[test]
+    fn save_to_path_without_parent_is_data_error_not_panic() {
+        // An empty path has no parent directory; atomic_write must error rather
+        // than silently falling back to the current directory for the temp file.
+        let store = MaterialStore::new(curated());
+        let err = store.save_to_path(Path::new("")).unwrap_err();
+        // Assert the specific no-parent message so the test pins the explicit
+        // parent-check branch rather than an incidental rename failure.
+        match err {
+            SpringError::DataFile(msg) => {
+                assert!(
+                    msg.contains("no parent directory"),
+                    "expected no-parent message, got: {msg}"
+                );
+            }
+            other => panic!("expected DataFile, got {other:?}"),
+        }
     }
 
     #[test]
