@@ -66,3 +66,4 @@ borrowing constants from another family.
 | [0004](docs/adr/0004-two-crate-workspace.md) | Two-crate workspace |
 | [0005](docs/adr/0005-absolute-stability-buckling.md) | Absolute stability buckling criterion |
 | [0006](docs/adr/0006-allowable-stress-simplification.md) | Allowable stress simplification |
+| [0007](docs/adr/0007-accept-transitive-lru-advisory.md) | Accept transitive `lru` advisory RUSTSEC-2026-0002 |
