@@ -175,10 +175,8 @@ fn en_13906_1_worked_example() {
 fn material_hard_drawn_a227() {
     let set = MaterialSet::load_default();
     let m = set.get("Hard-Drawn MB").unwrap();
-    // MH p390: 0.080 in (2.03 mm) -> 227 kpsi = 1565 MPa.
-    let sut = m
-        .min_tensile_strength(Length::from_millimeters(2.03))
-        .unwrap();
+    // MH p390: 0.080 in -> 227 kpsi = 1565 MPa (diameter from the cited inch value).
+    let sut = m.min_tensile_strength(Length::from_inches(0.080)).unwrap();
     assert_relative_eq!(sut.megapascals(), 1565.0, max_relative = 0.02);
     // MH Table 20 (0.064-0.125 in band): E = 28.6 Mpsi, G = 11.5 Mpsi.
     assert_relative_eq!(m.youngs_modulus.psi(), 28.6e6, max_relative = 0.005);
@@ -194,10 +192,8 @@ fn material_hard_drawn_a227() {
 fn material_chrome_vanadium_a231() {
     let set = MaterialSet::load_default();
     let m = set.get("Chrome-Vanadium").unwrap();
-    // MH p390 "Cr-V Alloy": 0.105 in (2.67 mm) -> 229 kpsi = 1579 MPa.
-    let sut = m
-        .min_tensile_strength(Length::from_millimeters(2.67))
-        .unwrap();
+    // MH p390 "Cr-V Alloy": 0.105 in -> 229 kpsi = 1579 MPa (diameter from the cited inch value).
+    let sut = m.min_tensile_strength(Length::from_inches(0.105)).unwrap();
     assert_relative_eq!(sut.megapascals(), 1579.0, max_relative = 0.02);
     // MH Table 20: E = 28.5 Mpsi, G = 11.2 Mpsi.
     assert_relative_eq!(m.youngs_modulus.psi(), 28.5e6, max_relative = 0.005);
@@ -213,11 +209,9 @@ fn material_chrome_vanadium_a231() {
 fn material_phosphor_bronze_b159() {
     let set = MaterialSet::load_default();
     let m = set.get("Phosphor Bronze").unwrap();
-    // MH p390 "Phosphor Bronze": 0.041 in (1.04 mm) -> 135 kpsi = 931 MPa,
-    // INDEPENDENTLY confirmed by ASTM B159 (135 kpsi for the 0.025-0.0625 in band).
-    let sut = m
-        .min_tensile_strength(Length::from_millimeters(1.04))
-        .unwrap();
+    // MH p390 "Phosphor Bronze": 0.041 in -> 135 kpsi = 931 MPa (diameter from the
+    // cited inch value), INDEPENDENTLY confirmed by ASTM B159 (135 kpsi, 0.025-0.0625 in band).
+    let sut = m.min_tensile_strength(Length::from_inches(0.041)).unwrap();
     assert_relative_eq!(sut.megapascals(), 931.0, max_relative = 0.02);
     // MH Table 20 ("Phosphor Bronze 5 percent tin"): E = 15.0 Mpsi, G = 6.0 Mpsi.
     assert_relative_eq!(m.youngs_modulus.psi(), 15.0e6, max_relative = 0.005);
