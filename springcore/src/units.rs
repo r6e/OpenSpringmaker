@@ -1,5 +1,8 @@
 //! Strongly-typed physical quantities. Each wraps an `f64` stored in SI base
-//! units. Conversion factors are exact per NIST Special Publication 811.
+//! units (metres, newtons, pascals, ...), with one documented exception:
+//! `Temperature` is an informational-only quantity stored in degrees Celsius —
+//! the engineering convention for material service temperatures — not the SI
+//! base unit kelvin. Conversion factors are exact per NIST Special Publication 811.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +45,11 @@ si_quantity!(
 si_quantity!(
     /// Mass density, stored in kilograms per cubic metre.
     MassDensity
+);
+si_quantity!(
+    /// Temperature, stored in degrees Celsius. Informational only — not used in
+    /// any spring calculation.
+    Temperature
 );
 
 impl Length {
@@ -162,6 +170,26 @@ impl MassDensity {
     }
 }
 
+impl Temperature {
+    /// Construct from degrees Celsius (the unit this informational quantity is
+    /// stored in; see the module header).
+    pub fn from_celsius(v: f64) -> Self {
+        Self(v)
+    }
+    /// Construct from degrees Fahrenheit (°C = (°F - 32) × 5/9).
+    pub fn from_fahrenheit(v: f64) -> Self {
+        Self((v - 32.0) * 5.0 / 9.0)
+    }
+    /// Return value in degrees Celsius.
+    pub fn celsius(self) -> f64 {
+        self.0
+    }
+    /// Return value in degrees Fahrenheit (°F = °C × 9/5 + 32).
+    pub fn fahrenheit(self) -> f64 {
+        self.0 * 9.0 / 5.0 + 32.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +263,18 @@ mod tests {
         // 1 lb/in^3 = 27679.9047 kg/m^3 (derived from lbm and inch definitions)
         let d = MassDensity::from_pounds_per_in3(1.0);
         assert_relative_eq!(d.kg_per_m3(), 27679.904710203, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn temperature_celsius_fahrenheit_roundtrip() {
+        let t = Temperature::from_celsius(100.0);
+        assert_relative_eq!(t.celsius(), 100.0, max_relative = 1e-12);
+        assert_relative_eq!(t.fahrenheit(), 212.0, max_relative = 1e-12);
+        let f = Temperature::from_fahrenheit(32.0);
+        assert_relative_eq!(f.celsius(), 0.0, max_relative = 1e-12);
+        // Boiling point pins the 5/9 scale factor (a zero input cannot:
+        // (32-32)*k = 0 for any k). 212 °F = 100 °C.
+        let boiling = Temperature::from_fahrenheit(212.0);
+        assert_relative_eq!(boiling.celsius(), 100.0, max_relative = 1e-12);
     }
 }

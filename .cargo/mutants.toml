@@ -35,4 +35,49 @@ exclude_re = [
   #   coincidence. The tie itself is unreachable — no input can produce two candidates
   #   with bit-identical mass_kg — so no distinguishing test can exist.
   "optimize\\.rs:148:.*replace < with <=",
+
+  # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
+  # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
+  # produces identical no-warning behavior in parse_user_overlay. Equivalent.
+  "material_persist\\.rs:40:.*",
+
+  # MaterialStore::save() body replaced with Ok(()). Exercising save() requires
+  # writing to the real OS user config file (non-hermetic). The hermetic core
+  # (save_to_path, serialize_user_materials, atomic_write) is unit-tested. Matched
+  # by mutant signature (not line number) so edits above save() don't un-anchor it;
+  # the `save -> ` (space) cannot match `save_to_path -> `.
+  "replace MaterialStore::save -> Result.*with Ok",
+
+  # material_store.rs — mutants that cargo-mutants can only record as timeouts because
+  # MaterialStore::unique_copy_name's search loop is unbounded: it appends "(copy)",
+  # "(copy 2)", ... until name_exists() is false (name_exists is called ONLY here, at
+  # lines 121/127).
+  #
+  #   :49 name_exists -> true   } These three make the loop's exit condition
+  #   :127 delete `!`           } permanently unsatisfiable, so the clone tests hang.
+  #   :130 `+=` -> `*=`         } name_exists has no caller outside the loop, so they
+  #                               are PURE non-termination — caught-by-hang, not
+  #                               survivors. (:130 freezes n=2; :127 returns only on a
+  #                               taken name, and fresh candidates are never taken.)
+  #
+  #   :44 is_curated -> true    is DIFFERENT and excluded for an honest, narrower
+  #                             reason: is_curated is ALSO called from add /
+  #                             check_name_available / update / remove, so this mutant
+  #                             is independently KILLABLE — add_user_material,
+  #                             update_user_material, and remove_user_only each open with
+  #                             `s.add(...).unwrap()`, which panics under it. It is
+  #                             provably caught, NOT a survivor. It lands in the timeout bucket
+  #                             only because it ALSO forces name_exists() always-true,
+  #                             hanging the clone tests in the same process so
+  #                             cargo-mutants reports a process timeout instead of the
+  #                             assertion failure. Excluded with the others purely for a
+  #                             deterministic gate (which mutant trips the auto-timeout
+  #                             first is runner-timing-sensitive).
+  #
+  # All other mutants on these lines (is_curated/name_exists -> false, `+=` -> `-=`,
+  # the line-121 guard, ...) remain in scope and are killed.
+  "material_store\\.rs:44:.*with true",
+  "material_store\\.rs:49:.*with true",
+  "material_store\\.rs:127:.*delete !",
+  "material_store\\.rs:130:.*replace \\+= with \\*=",
 ]
