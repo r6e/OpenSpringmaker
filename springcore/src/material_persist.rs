@@ -96,7 +96,16 @@ fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
             "overlay path has no parent directory",
         )
     })?;
-    let tmp = dir.join(format!(".materials.{}.tmp", std::process::id()));
+    // Temp name is unique per process AND per thread: concurrent saves (and
+    // concurrent tests, which cargo runs as threads in one process) must not share
+    // a temp path, or one writer's rename could consume another's bytes or race to
+    // ENOENT. Same-thread sequential saves reuse the name safely (each completes its
+    // write+rename before the next).
+    let tmp = dir.join(format!(
+        ".materials.{}.{:?}.tmp",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     std::fs::write(&tmp, contents)?;
     std::fs::rename(&tmp, path)
 }
