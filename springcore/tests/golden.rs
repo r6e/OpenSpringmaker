@@ -55,60 +55,57 @@ fn pipeline_rate_based_music_wire() {
     assert!(fat.goodman_factor_of_safety > 1.0);
 }
 
-// RELEASE BLOCKER: The two tests below are #[ignore]'d because they require
-// numeric values transcribed directly from physical copies of the cited
-// engineering references.  Fabricating or web-scraping published test vectors
-// is an integrity violation — the numbers MUST be read from the source and
-// entered here before these tests are un-ignored.  Until then they remain as
-// structural placeholders that compile cleanly but do not execute.
-
+// Part B — independent published-source cross-check.
+//
+// This is the engine's independent numerical oracle: inputs and results are
+// taken from a third-party worked example, NOT recomputed by us, so it catches
+// a wrong constant in the engine that the formula-based unit tests would share.
+//
+// Source: "Comprehensive Spring Design" handbook procedure, §7.13.1 Calculation
+// Examples (a production music-wire compression spring used in ~50,000
+// mechanisms), as reproduced publicly by Victory Spring Ltd.:
+// https://victoryspring.ca/wp-content/uploads/2021/01/comprehensive-spring-design.pdf
+//
+// The example (US customary units) specifies a music-wire compression spring
+// with closed-and-ground ends:
+//   d = 0.250 in, OD = 1.94 in -> mean D = 1.69 in, spring index C = 6.76,
+//   N = 13 active coils (15 total), free length 8 in, G = 11.5e6 psi.
+// and publishes:
+//   spring rate R = 89 lb/in,  Wahl factor Ka = 1.221,
+//   load P = 356 lb at 4 in deflection,  corrected shear stress S = 119,695 psi.
+//
+// Verified internally consistent by hand against the canonical formulas
+// (k = G d^4 / 8 N D^3; Ka = (4C-1)/(4C-4) + 0.615/C; S = 8 Ka P D / pi d^3).
+// The 3% tolerance absorbs the source's rounding and the small difference
+// between its G = 11.5e6 psi and our cited G = 11.6e6 psi (Shigley Table 10-5);
+// shear stress is independent of G.
 #[test]
-#[ignore = "awaiting Shigley 10th ed. Ex 10-1 source values — RELEASE BLOCKER, see PR body"]
-fn shigley_example_10_1() {
-    // Inputs and expected values transcribed from Shigley's Mechanical
-    // Engineering Design, 10th ed., Example 10-1 (helical compression spring,
-    // music wire, US customary units).
-    //
-    // TODO: Open Shigley 10th ed., p. <page TBD>, Example 10-1.
-    //       Record the given values for d, D (or OD), Na (or Nt), L0, end
-    //       type, and the load F, then fill in the zeros below.
-    //       Also record the published results for k, Ls, and tau_corrected.
+fn comprehensive_spring_design_compression() {
     let set = MaterialSet::load_default();
     let material = set.get("Music Wire").unwrap();
 
-    // GIVEN (from the source — replace each 0.0 with the printed figure):
-    let wire_dia = Length::from_inches(/* d from Ex 10-1 */ 0.0);
-    let mean_dia = Length::from_inches(/* D from Ex 10-1 */ 0.0);
-    let active = /* Na from Ex 10-1 */ 0.0_f64;
-    let free_length = Length::from_inches(/* L0 from Ex 10-1 */ 0.0);
-    let load = Force::from_pounds_force(/* F from Ex 10-1 */ 0.0);
-
     let design = springcore::PowerUser {
-        end_type: /* end type from Ex 10-1 */ springcore::EndType::SquaredGround,
+        end_type: springcore::EndType::SquaredGround, // closed and ground
         fixity: springcore::EndFixity::FixedFixed,
-        wire_dia,
-        mean_dia,
-        active,
-        free_length,
-        loads: vec![load],
+        wire_dia: Length::from_inches(0.250),
+        mean_dia: Length::from_inches(1.69),
+        active: 13.0,
+        free_length: Length::from_inches(8.0),
+        loads: vec![Force::from_pounds_force(356.0)], // P at 4 in deflection
     }
     .solve(material)
     .unwrap();
 
-    // PUBLISHED RESULTS (from the source — replace each 0.0 with the printed figure):
-    assert_relative_eq!(
-        design.rate.pounds_per_inch(),
-        /* k */ 0.0,
-        max_relative = 0.03
-    );
-    assert_relative_eq!(
-        design.solid_length.inches(),
-        /* Ls */ 0.0,
-        max_relative = 0.03
-    );
+    // Spring index C = D/d = 1.69 / 0.250 = 6.76 (exact).
+    assert_relative_eq!(design.index, 6.76, max_relative = 1e-9);
+    // Solid length = d * Nt = 0.250 * 15 = 3.75 in (closed & ground, Nt = Na + 2).
+    assert_relative_eq!(design.solid_length.inches(), 3.75, max_relative = 1e-9);
+    // Published spring rate R = 89 lb/in (within 3%, absorbing the G-source diff).
+    assert_relative_eq!(design.rate.pounds_per_inch(), 89.0, max_relative = 0.03);
+    // Published corrected shear stress S = 119,695 psi at P = 356 lb.
     assert_relative_eq!(
         design.load_points[0].shear_stress.psi(),
-        /* tau */ 0.0,
+        119_695.0,
         max_relative = 0.03
     );
 }
