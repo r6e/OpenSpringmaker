@@ -41,8 +41,8 @@ exclude_re = [
   # produces identical no-warning behavior in parse_user_overlay. Equivalent.
   "material_persist\\.rs:40:.*",
 
-  # material_persist.rs:156 — save() body replaced with Ok(()). Exercising save()
+  # material_persist.rs:161 — save() body replaced with Ok(()). Exercising save()
   # requires writing to the real OS user config file (non-hermetic). The hermetic
   # core (save_to_path, serialize_user_materials, atomic_write) is unit-tested.
-  "material_persist\\.rs:156:.*save",
+  "material_persist\\.rs:161:.*save",
 ]
