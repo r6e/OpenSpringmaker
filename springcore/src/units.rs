@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 const METERS_PER_INCH: f64 = 0.0254;
 const NEWTONS_PER_LBF: f64 = 4.4482216152605;
 const PASCALS_PER_PSI: f64 = 6894.757293168;
-// 1 lb/in^3 = NEWTONS_PER_LBF/g_n converted... derived as mass: 1 lbm = 0.45359237 kg,
-// 1 in^3 = 0.0254^3 m^3 -> 0.45359237 / 0.0254^3.
+// 1 lb/in³ = (1 lbm = 0.45359237 kg) / (1 in³ = 0.0254³ m³)
+//          = 0.45359237 / 0.0254³ kg/m³  (exact, per NIST SP 811).
 const KG_PER_M3_PER_LB_PER_IN3: f64 = 0.45359237 / (0.0254 * 0.0254 * 0.0254);
 
 macro_rules! si_quantity {

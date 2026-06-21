@@ -10,6 +10,17 @@ use springcore::{
     SavedDesign, ScenarioSpec, SpringDesign, SpringError,
 };
 
+/// Three-state fatigue result distinguishing "not attempted" from "no data".
+#[derive(Debug, Clone)]
+pub enum FatigueStatus {
+    /// User left min/max cycle forces blank; fatigue was not attempted.
+    Skipped,
+    /// Cycle forces were supplied but the material has no cited endurance data.
+    NoData,
+    /// Fatigue analysis succeeded.
+    Computed(FatigueResult),
+}
+
 /// Render a [`SpringError`] with length values expressed in `units`.
 ///
 /// `DiameterOutOfRange` bakes SI metres into its `Display` impl. This
@@ -143,12 +154,12 @@ pub struct MinWeightExtra {
     pub mass_kg: f64,
 }
 
-/// A solved form: the design plus its status and optional fatigue result.
+/// A solved form: the design plus its status and fatigue result.
 #[derive(Debug, Clone)]
 pub struct FormOutcome {
     pub design: SpringDesign,
     pub status: DesignStatus,
-    pub fatigue: Option<FatigueResult>,
+    pub fatigue: FatigueStatus,
     pub min_weight: Option<MinWeightExtra>,
 }
 
@@ -455,9 +466,9 @@ fn compute_fatigue(
     form: &FormState,
     material: &springcore::Material,
     design: &SpringDesign,
-) -> Result<Option<FatigueResult>> {
+) -> Result<FatigueStatus> {
     if form.fatigue_min.trim().is_empty() || form.fatigue_max.trim().is_empty() {
-        return Ok(None);
+        return Ok(FatigueStatus::Skipped);
     }
     let fmin = Force::from_newtons(non_negative_force_n(
         "fatigue min",
@@ -470,8 +481,8 @@ fn compute_fatigue(
         form.unit_system,
     )?);
     match analyze_fatigue(material, design.wire_dia, design.mean_dia, fmin, fmax) {
-        Ok(r) => Ok(Some(r)),
-        Err(SpringError::NoFatigueData(_)) => Ok(None),
+        Ok(r) => Ok(FatigueStatus::Computed(r)),
+        Err(SpringError::NoFatigueData(_)) => Ok(FatigueStatus::NoData),
         Err(e) => Err(e),
     }
 }
@@ -549,7 +560,7 @@ mod tests {
             max_relative = 1e-6
         );
         assert_eq!(out.design.load_points.len(), 2);
-        assert!(out.fatigue.is_some());
+        assert!(matches!(out.fatigue, FatigueStatus::Computed(_)));
     }
 
     #[test]
@@ -703,12 +714,34 @@ mod tests {
     }
 
     #[test]
-    fn fatigue_absent_for_material_without_endurance() {
+    fn fatigue_no_data_for_material_without_endurance() {
+        // Stainless 302 has no cited endurance data; when cycle forces are
+        // supplied the result must be NoData, not Skipped.
         let set = MaterialSet::load_default();
         let mut form = rate_based_metric();
         form.material = "Stainless 302".into();
+        // rate_based_metric already sets fatigue_min/max, so forces are present.
         let out = parse_and_solve(&form, &set).unwrap();
-        assert!(out.fatigue.is_none());
+        assert!(
+            matches!(out.fatigue, FatigueStatus::NoData),
+            "expected NoData for Stainless 302, got: {:?}",
+            out.fatigue,
+        );
+    }
+
+    #[test]
+    fn fatigue_skipped_when_cycle_forces_blank() {
+        // Leaving both cycle-force fields blank must yield Skipped, not NoData.
+        let set = MaterialSet::load_default();
+        let mut form = rate_based_metric();
+        form.fatigue_min = String::new();
+        form.fatigue_max = String::new();
+        let out = parse_and_solve(&form, &set).unwrap();
+        assert!(
+            matches!(out.fatigue, FatigueStatus::Skipped),
+            "expected Skipped when cycle forces are blank, got: {:?}",
+            out.fatigue,
+        );
     }
 
     #[test]

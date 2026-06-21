@@ -152,6 +152,43 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
                      for correct feasibility detection"
                 )));
             }
+            // max_force must be finite and strictly positive; zero or negative
+            // force is unphysical for a compression-spring max-load constraint.
+            if !max_force_n.is_finite() || *max_force_n <= 0.0 {
+                return Err(SpringError::InconsistentInputs(
+                    "max_force_n must be a positive finite number (N)".into(),
+                ));
+            }
+            // clash_allowance must be finite and non-negative; a fraction of
+            // solid length, so negative values are unphysical.
+            if !clash_allowance.is_finite() || *clash_allowance < 0.0 {
+                return Err(SpringError::InconsistentInputs(
+                    "clash_allowance must be a finite number ≥ 0".into(),
+                ));
+            }
+            // candidate_diameters_mm must have at least one entry, and every
+            // entry must be finite and strictly positive.
+            if candidate_diameters_mm.is_empty() {
+                return Err(SpringError::InconsistentInputs(
+                    "candidate_diameters_mm must contain at least one diameter".into(),
+                ));
+            }
+            for &d in candidate_diameters_mm {
+                if !d.is_finite() || d <= 0.0 {
+                    return Err(SpringError::InconsistentInputs(format!(
+                        "every candidate diameter must be a positive finite number (mm); \
+                         got {d}"
+                    )));
+                }
+            }
+            // max_outer_dia_mm, when supplied, must be finite and strictly positive.
+            if let Some(ood) = max_outer_dia_mm {
+                if !ood.is_finite() || *ood <= 0.0 {
+                    return Err(SpringError::InconsistentInputs(format!(
+                        "max_outer_dia_mm must be a positive finite number (mm); got {ood}"
+                    )));
+                }
+            }
             Ok(MinWeightRequest {
                 end_type: parse_end_type(end_type)?,
                 fixity: parse_fixity(fixity)?,
@@ -513,5 +550,240 @@ mod tests {
         let loaded = SavedDesign::load(&path).unwrap();
         assert_eq!(sample(), loaded);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: validation helpers
+    // -----------------------------------------------------------------------
+
+    /// Returns a fully-valid MinWeight ScenarioSpec with configurable fields.
+    /// All parameters correspond to the ScenarioSpec::MinWeight variant fields.
+    fn mw_spec(
+        max_force_n: f64,
+        clash_allowance: f64,
+        candidate_diameters_mm: Vec<f64>,
+        max_outer_dia_mm: Option<f64>,
+    ) -> ScenarioSpec {
+        ScenarioSpec::MinWeight {
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            required_rate_n_per_m: 2000.0,
+            max_force_n,
+            index_min: 4.0,
+            index_max: 12.0,
+            max_outer_dia_mm,
+            candidate_diameters_mm,
+            clash_allowance,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: max_force_n validation
+    // -----------------------------------------------------------------------
+
+    // Pins `> 0.0` (strict): zero max_force must be rejected.
+    #[test]
+    fn max_force_zero_is_rejected() {
+        let spec = mw_spec(0.0, 0.15, vec![2.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_force_n must be a positive finite number"),
+            "expected max_force_n message, got: {msg}"
+        );
+    }
+
+    // Pins `> 0.0` (strict): value just above zero must be accepted.
+    #[test]
+    fn max_force_tiny_positive_is_accepted() {
+        let spec = mw_spec(f64::MIN_POSITIVE, 0.15, vec![2.0], None);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "tiny positive max_force_n must be accepted"
+        );
+    }
+
+    // Pins `is_finite()`: infinity must be rejected.
+    #[test]
+    fn max_force_inf_is_rejected() {
+        let spec = mw_spec(f64::INFINITY, 0.15, vec![2.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_force_n must be a positive finite number"),
+            "expected max_force_n message, got: {msg}"
+        );
+    }
+
+    // Pins `is_finite()`: NaN must be rejected.
+    #[test]
+    fn max_force_nan_is_rejected() {
+        let spec = mw_spec(f64::NAN, 0.15, vec![2.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_force_n must be a positive finite number"),
+            "expected max_force_n message, got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: clash_allowance validation
+    // -----------------------------------------------------------------------
+
+    // Pins `>= 0.0`: zero clash must be accepted (zero = no extra margin).
+    #[test]
+    fn clash_allowance_zero_is_accepted() {
+        let spec = mw_spec(50.0, 0.0, vec![2.0], None);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "clash_allowance=0.0 must be accepted"
+        );
+    }
+
+    // Pins `>= 0.0` (strict lower): negative clash must be rejected.
+    #[test]
+    fn clash_allowance_negative_is_rejected() {
+        let spec = mw_spec(50.0, -f64::EPSILON, vec![2.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("clash_allowance must be a finite number"),
+            "expected clash_allowance message, got: {msg}"
+        );
+    }
+
+    // Pins `is_finite()`: infinity clash must be rejected.
+    #[test]
+    fn clash_allowance_inf_is_rejected() {
+        let spec = mw_spec(50.0, f64::INFINITY, vec![2.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("clash_allowance must be a finite number"),
+            "expected clash_allowance message, got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: candidate_diameters_mm validation
+    // -----------------------------------------------------------------------
+
+    // Pins `is_empty()` guard: empty list must be rejected.
+    #[test]
+    fn candidate_diameters_empty_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("candidate_diameters_mm must contain at least one diameter"),
+            "expected empty-candidates message, got: {msg}"
+        );
+    }
+
+    // Pins per-entry `> 0.0`: a zero diameter in the list must be rejected.
+    #[test]
+    fn candidate_diameters_zero_entry_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0, 0.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("every candidate diameter must be a positive finite number"),
+            "expected per-entry positive message, got: {msg}"
+        );
+    }
+
+    // Pins per-entry `> 0.0`: a negative diameter must be rejected.
+    #[test]
+    fn candidate_diameters_negative_entry_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0, -1.0], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("every candidate diameter must be a positive finite number"),
+            "expected per-entry negative message, got: {msg}"
+        );
+    }
+
+    // Pins per-entry `is_finite()`: infinity in the list must be rejected.
+    #[test]
+    fn candidate_diameters_inf_entry_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0, f64::INFINITY], None);
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("every candidate diameter must be a positive finite number"),
+            "expected per-entry finite message, got: {msg}"
+        );
+    }
+
+    // A single-element list with a valid diameter must be accepted.
+    #[test]
+    fn candidate_diameters_single_valid_is_accepted() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], None);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "single valid candidate diameter must be accepted"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: max_outer_dia_mm validation
+    // -----------------------------------------------------------------------
+
+    // None is always accepted.
+    #[test]
+    fn max_outer_dia_none_is_accepted() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], None);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "None max_outer_dia_mm must be accepted"
+        );
+    }
+
+    // Some(positive) is accepted.
+    #[test]
+    fn max_outer_dia_some_positive_is_accepted() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], Some(25.0));
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "Some(25.0) max_outer_dia_mm must be accepted"
+        );
+    }
+
+    // Pins `> 0.0`: Some(0.0) must be rejected.
+    #[test]
+    fn max_outer_dia_zero_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], Some(0.0));
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_outer_dia_mm must be a positive finite number"),
+            "expected max_outer_dia_mm message, got: {msg}"
+        );
+    }
+
+    // Pins `> 0.0`: Some(negative) must be rejected.
+    #[test]
+    fn max_outer_dia_negative_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], Some(-1.0));
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_outer_dia_mm must be a positive finite number"),
+            "expected max_outer_dia_mm message, got: {msg}"
+        );
+    }
+
+    // Pins `is_finite()`: Some(inf) must be rejected.
+    #[test]
+    fn max_outer_dia_inf_is_rejected() {
+        let spec = mw_spec(50.0, 0.15, vec![2.0], Some(f64::INFINITY));
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("max_outer_dia_mm must be a positive finite number"),
+            "expected max_outer_dia_mm message, got: {msg}"
+        );
     }
 }

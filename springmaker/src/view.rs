@@ -10,7 +10,7 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Field, Message, C};
-use crate::form::{ScenarioKind, ALL_SCENARIOS};
+use crate::form::{FatigueStatus, ScenarioKind, ALL_SCENARIOS};
 use springcore::BindingConstraint;
 use springcore::UnitSystem;
 
@@ -204,12 +204,19 @@ fn result_row_colored<'a>(
     unit: impl Into<String>,
     value_color: Color,
 ) -> Element<'a, Message> {
+    let value = value.into();
+    let unit = unit.into();
+    let display = if unit.is_empty() {
+        value
+    } else {
+        format!("{value} {unit}")
+    };
     row![
         text(label.into())
             .size(SZ_LABEL)
             .color(C::MUTED)
             .width(Length::FillPortion(2)),
-        text(format!("{} {}", value.into(), unit.into()))
+        text(display)
             .font(Font::MONOSPACE)
             .size(SZ_BODY)
             .color(value_color)
@@ -715,7 +722,7 @@ fn build_fatigue_section<'a>(
         return column![].into();
     }
     match &out.fatigue {
-        Some(fat) => {
+        FatigueStatus::Computed(fat) => {
             let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
             let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
             let (endurance_val, endurance_lbl) = display_stress(fat.fully_reversed_endurance, us);
@@ -740,9 +747,17 @@ fn build_fatigue_section<'a>(
             .spacing(6)
             .into()
         }
-        None => column![
+        FatigueStatus::NoData => column![
             section_divider(),
             text("No fatigue data for this material.")
+                .size(SZ_LABEL)
+                .color(C::MUTED),
+        ]
+        .spacing(8)
+        .into(),
+        FatigueStatus::Skipped => column![
+            section_divider(),
+            text("Enter min and max cycle forces to compute fatigue.")
                 .size(SZ_LABEL)
                 .color(C::MUTED),
         ]
