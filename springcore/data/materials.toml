@@ -79,3 +79,61 @@ density_kg_per_m3 = 7850.0
 allowable_pct_torsion = 0.45
 allowable_pct_bending = 0.75
 allowable_pct_set = 0.49
+
+# ── Sub-project 2, PR (b): materials transcribed from Machinery's Handbook 32nd ──
+# Strength models are least-squares fits to MH p390 "Minimum Tensile Strength of
+# Spring Wire by Diameter"; E/G from MH Table 20; design stress (torsion) from
+# optimumspring, cross-checked vs MH Fig 1-10. bending/set are conservative
+# placeholders = torsion (ADR 0006; MH gives diameter-dependent curves, not %).
+# See docs/superpowers/research/2026-06-21-pr-b-materials-data.md for full sourcing.
+
+[[material]]
+name = "Hard-Drawn MB"
+specification = "ASTM A227"
+citations = "MH 32nd Table 20 (E,G); p390 tensile-by-diameter, power-law LSQ fit A=1767.9 MPa*mm^m m=0.184 (max resid 2.9%); torsion 40% (optimumspring, cross-checked MH Fig 1); bending/set conservative placeholder (ADR 0006); max temp 250F (MH p299). Cross-check: MH steel tensiles within ASTM A227 class ranges."
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1767.9, 0.184]
+valid_dia_min_mm = 0.51
+valid_dia_max_mm = 12.70
+youngs_modulus_gpa = 197.2
+shear_modulus_gpa = 79.3
+density_kg_per_m3 = 7861.1
+allowable_pct_torsion = 0.40
+allowable_pct_bending = 0.40
+allowable_pct_set = 0.40
+max_service_temp_c = 121.1
+
+[[material]]
+name = "Chrome-Vanadium"
+specification = "ASTM A231"
+citations = "MH 32nd Table 20 (E,G); p390 'Cr-V Alloy' tensile-by-diameter, power-law LSQ fit A=1858.1 MPa*mm^m m=0.163 (max resid 3.9%); torsion 45% (optimumspring); bending/set conservative placeholder (ADR 0006); max temp 425F (MH p300). Cross-check: within ASTM A231/A232 tensile range. A232 is the valve-spring-quality variant."
+mts_form = "power_law"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1858.1, 0.163]
+valid_dia_min_mm = 0.81
+valid_dia_max_mm = 12.70
+youngs_modulus_gpa = 196.5
+shear_modulus_gpa = 77.2
+density_kg_per_m3 = 7861.1
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.45
+allowable_pct_set = 0.45
+max_service_temp_c = 218.3
+
+[[material]]
+name = "Phosphor Bronze"
+specification = "ASTM B159 (Grade A, CDA 510)"
+citations = "MH 32nd Table 20 'Phosphor Bronze 5 percent tin' (E,G); p390 tensile-by-diameter, deg-2 polynomial LSQ fit (max resid 3.3%; power-law unsuitable, 9.6%); torsion 40% (optimumspring); bending/set conservative placeholder (ADR 0006); max temp 212F (MH p301). Golden cross-check: MH 135 kpsi at 0.041in matches ASTM B159 exactly."
+mts_form = "polynomial"
+mts_units = "si_mpa_mm"
+mts_coefficients = [966.2, -37.85, 1.164]
+valid_dia_min_mm = 0.10
+valid_dia_max_mm = 11.10
+youngs_modulus_gpa = 103.4
+shear_modulus_gpa = 41.4
+density_kg_per_m3 = 8857.6
+allowable_pct_torsion = 0.40
+allowable_pct_bending = 0.40
+allowable_pct_set = 0.40
+max_service_temp_c = 100.0

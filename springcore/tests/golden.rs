@@ -2,7 +2,7 @@
 //! worked examples (values transcribed from the cited sources).
 
 use approx::assert_relative_eq;
-use springcore::units::{Force, Length};
+use springcore::units::{Force, Length, MassDensity};
 use springcore::{
     analyze_fatigue, evaluate_status, MaterialSet, SavedDesign, Scenario, ScenarioSpec, UnitSystem,
 };
@@ -160,4 +160,71 @@ fn en_13906_1_worked_example() {
         /* tau */ 0.0,
         max_relative = 0.03
     );
+}
+
+// ── PR (b) curated materials: per-material data-correctness goldens ──────────
+// Each asserts the strength model reproduces an INDEPENDENT published tensile
+// point (Machinery's Handbook 32nd ed., p390 "Minimum Tensile Strength of Spring
+// Wire by Diameter"), plus E/G/density spot-checks against MH Table 20 source
+// values. E/G are asserted directly in psi and density via the canonical
+// `MassDensity::from_pounds_per_in3` constructor, so the test reuses
+// springcore::units' NIST conversion factors rather than re-declaring them.
+// See docs/superpowers/research/2026-06-21-pr-b-materials-data.md.
+
+#[test]
+fn material_hard_drawn_a227() {
+    let set = MaterialSet::load_default();
+    let m = set.get("Hard-Drawn MB").unwrap();
+    // MH p390: 0.080 in -> 227 kpsi = 1565 MPa (diameter from the cited inch value).
+    let sut = m.min_tensile_strength(Length::from_inches(0.080)).unwrap();
+    assert_relative_eq!(sut.megapascals(), 1565.0, max_relative = 0.02);
+    // MH Table 20 (0.064-0.125 in band): E = 28.6 Mpsi, G = 11.5 Mpsi.
+    assert_relative_eq!(m.youngs_modulus.psi(), 28.6e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 11.5e6, max_relative = 0.005);
+    assert_relative_eq!(
+        m.density.kg_per_m3(),
+        MassDensity::from_pounds_per_in3(0.284).kg_per_m3(),
+        max_relative = 0.005
+    );
+}
+
+#[test]
+fn material_chrome_vanadium_a231() {
+    let set = MaterialSet::load_default();
+    let m = set.get("Chrome-Vanadium").unwrap();
+    // MH p390 "Cr-V Alloy": 0.105 in -> 229 kpsi = 1579 MPa (diameter from the cited inch value).
+    let sut = m.min_tensile_strength(Length::from_inches(0.105)).unwrap();
+    assert_relative_eq!(sut.megapascals(), 1579.0, max_relative = 0.02);
+    // MH Table 20: E = 28.5 Mpsi, G = 11.2 Mpsi.
+    assert_relative_eq!(m.youngs_modulus.psi(), 28.5e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 11.2e6, max_relative = 0.005);
+    assert_relative_eq!(
+        m.density.kg_per_m3(),
+        MassDensity::from_pounds_per_in3(0.284).kg_per_m3(),
+        max_relative = 0.005
+    );
+}
+
+#[test]
+fn material_phosphor_bronze_b159() {
+    let set = MaterialSet::load_default();
+    let m = set.get("Phosphor Bronze").unwrap();
+    // MH p390 "Phosphor Bronze": 0.041 in -> 135 kpsi = 931 MPa (diameter from the
+    // cited inch value), INDEPENDENTLY confirmed by ASTM B159 (135 kpsi, 0.025-0.0625 in band).
+    let sut = m.min_tensile_strength(Length::from_inches(0.041)).unwrap();
+    assert_relative_eq!(sut.megapascals(), 931.0, max_relative = 0.02);
+    // MH Table 20 ("Phosphor Bronze 5 percent tin"): E = 15.0 Mpsi, G = 6.0 Mpsi.
+    assert_relative_eq!(m.youngs_modulus.psi(), 15.0e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 6.0e6, max_relative = 0.005);
+    assert_relative_eq!(
+        m.density.kg_per_m3(),
+        MassDensity::from_pounds_per_in3(0.32).kg_per_m3(),
+        max_relative = 0.005
+    );
+}
+
+#[test]
+fn curated_set_has_seven_materials() {
+    // 4 from sub-project 1 + 3 added in PR (b).
+    assert_eq!(MaterialSet::load_default().names().len(), 7);
 }
