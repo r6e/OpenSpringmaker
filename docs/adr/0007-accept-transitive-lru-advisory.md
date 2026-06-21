@@ -1,6 +1,6 @@
 # ADR 0007: Accept transitive `lru` advisory RUSTSEC-2026-0002
 
-**Status:** Accepted (2026-06-21)
+**Status:** Accepted
 
 ## Context
 
@@ -9,7 +9,7 @@ RUSTSEC-2026-0002, CVSS 0, no CVE) against the `lru` crate:
 
 > `IterMut` violates Stacked Borrows by invalidating an internal pointer.
 
-This is an **unsound** advisory: undefined behaviour under the Stacked Borrows
+This is an **unsound** advisory: undefined behavior under the Stacked Borrows
 aliasing model (observable under Miri), not a remotely exploitable
 vulnerability. Vulnerable range `>= 0.9.0, < 0.16.3`; fixed in `lru 0.16.3`.
 
