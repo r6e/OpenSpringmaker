@@ -2,7 +2,7 @@
 //! worked examples (values transcribed from the cited sources).
 
 use approx::assert_relative_eq;
-use springcore::units::{Force, Length};
+use springcore::units::{Force, Length, MassDensity};
 use springcore::{
     analyze_fatigue, evaluate_status, MaterialSet, SavedDesign, Scenario, ScenarioSpec, UnitSystem,
 };
@@ -166,10 +166,10 @@ fn en_13906_1_worked_example() {
 // Each asserts the strength model reproduces an INDEPENDENT published tensile
 // point (Machinery's Handbook 32nd ed., p390 "Minimum Tensile Strength of Spring
 // Wire by Diameter"), plus E/G/density spot-checks against MH Table 20 source
-// values (in psi / lb-in3). See docs/superpowers/research/2026-06-21-pr-b-materials-data.md.
-
-const PSI_TO_PA: f64 = 6894.757; // NIST SP 811
-const LB_IN3_TO_KGM3: f64 = 27679.905;
+// values. E/G are asserted directly in psi and density via the canonical
+// `MassDensity::from_pounds_per_in3` constructor, so the test reuses
+// springcore::units' NIST conversion factors rather than re-declaring them.
+// See docs/superpowers/research/2026-06-21-pr-b-materials-data.md.
 
 #[test]
 fn material_hard_drawn_a227() {
@@ -181,19 +181,11 @@ fn material_hard_drawn_a227() {
         .unwrap();
     assert_relative_eq!(sut.megapascals(), 1565.0, max_relative = 0.02);
     // MH Table 20 (0.064-0.125 in band): E = 28.6 Mpsi, G = 11.5 Mpsi.
-    assert_relative_eq!(
-        m.youngs_modulus.pascals(),
-        28.6e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
-    assert_relative_eq!(
-        m.shear_modulus.pascals(),
-        11.5e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
+    assert_relative_eq!(m.youngs_modulus.psi(), 28.6e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 11.5e6, max_relative = 0.005);
     assert_relative_eq!(
         m.density.kg_per_m3(),
-        0.284 * LB_IN3_TO_KGM3,
+        MassDensity::from_pounds_per_in3(0.284).kg_per_m3(),
         max_relative = 0.005
     );
 }
@@ -208,19 +200,11 @@ fn material_chrome_vanadium_a231() {
         .unwrap();
     assert_relative_eq!(sut.megapascals(), 1579.0, max_relative = 0.02);
     // MH Table 20: E = 28.5 Mpsi, G = 11.2 Mpsi.
-    assert_relative_eq!(
-        m.youngs_modulus.pascals(),
-        28.5e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
-    assert_relative_eq!(
-        m.shear_modulus.pascals(),
-        11.2e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
+    assert_relative_eq!(m.youngs_modulus.psi(), 28.5e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 11.2e6, max_relative = 0.005);
     assert_relative_eq!(
         m.density.kg_per_m3(),
-        0.284 * LB_IN3_TO_KGM3,
+        MassDensity::from_pounds_per_in3(0.284).kg_per_m3(),
         max_relative = 0.005
     );
 }
@@ -236,19 +220,11 @@ fn material_phosphor_bronze_b159() {
         .unwrap();
     assert_relative_eq!(sut.megapascals(), 931.0, max_relative = 0.02);
     // MH Table 20 ("Phosphor Bronze 5 percent tin"): E = 15.0 Mpsi, G = 6.0 Mpsi.
-    assert_relative_eq!(
-        m.youngs_modulus.pascals(),
-        15.0e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
-    assert_relative_eq!(
-        m.shear_modulus.pascals(),
-        6.0e6 * PSI_TO_PA,
-        max_relative = 0.005
-    );
+    assert_relative_eq!(m.youngs_modulus.psi(), 15.0e6, max_relative = 0.005);
+    assert_relative_eq!(m.shear_modulus.psi(), 6.0e6, max_relative = 0.005);
     assert_relative_eq!(
         m.density.kg_per_m3(),
-        0.32 * LB_IN3_TO_KGM3,
+        MassDensity::from_pounds_per_in3(0.32).kg_per_m3(),
         max_relative = 0.005
     );
 }
