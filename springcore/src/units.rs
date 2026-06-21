@@ -1,5 +1,8 @@
 //! Strongly-typed physical quantities. Each wraps an `f64` stored in SI base
-//! units. Conversion factors are exact per NIST Special Publication 811.
+//! units (metres, newtons, pascals, ...), with one documented exception:
+//! `Temperature` is an informational-only quantity stored in degrees Celsius —
+//! the engineering convention for material service temperatures — not the SI
+//! base unit kelvin. Conversion factors are exact per NIST Special Publication 811.
 
 use serde::{Deserialize, Serialize};
 
@@ -168,7 +171,8 @@ impl MassDensity {
 }
 
 impl Temperature {
-    /// Construct from degrees Celsius (SI base unit).
+    /// Construct from degrees Celsius (the unit this informational quantity is
+    /// stored in; see the module header).
     pub fn from_celsius(v: f64) -> Self {
         Self(v)
     }
