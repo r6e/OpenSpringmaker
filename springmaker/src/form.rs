@@ -1,5 +1,8 @@
 //! Pure form-to-design logic. No iced dependency, so it is unit-testable.
 
+/// Conversion factor: N/mm displayed ↔ N/m stored internally.
+const MM_PER_M: f64 = 1000.0;
+
 use springcore::units::{Force, Length, SpringRate};
 use springcore::UnitSystem;
 use springcore::{
@@ -207,10 +210,11 @@ fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
 
 fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // A spring rate must be strictly positive.
+    // Metric input is in N/mm (display unit); convert to N/m for internal storage.
     let v = positive_num(field, value)?;
     Ok(match us {
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
-        UnitSystem::Metric => v,
+        UnitSystem::Metric => v * MM_PER_M,
     })
 }
 
@@ -312,10 +316,11 @@ fn fmt_force(n: f64, us: UnitSystem) -> String {
     }
 }
 
-/// Convert N/m → display string.
+/// Convert N/m (internal storage) → display string.
+/// Metric: N/m internal → N/mm display (÷ MM_PER_M); US: N/m → lbf/in.
 fn fmt_rate(npm: f64, us: UnitSystem) -> String {
     match us {
-        UnitSystem::Metric => format!("{npm}"),
+        UnitSystem::Metric => format!("{}", npm / MM_PER_M),
         UnitSystem::Us => format!(
             "{}",
             SpringRate::from_newtons_per_meter(npm).pounds_per_inch()
@@ -525,7 +530,7 @@ mod tests {
             fixity: "fixed_fixed".into(),
             wire_dia: "2.0".into(),
             mean_dia: "20.0".into(),
-            rate: "2000.0".into(),
+            rate: "2.0".into(), // 2 N/mm = 2000 N/m (internal)
             free_length: "60.0".into(),
             loads: "10, 30".into(),
             fatigue_min: "10".into(),
@@ -561,6 +566,40 @@ mod tests {
         form.fatigue_max = "2".into();
         let out = parse_and_solve(&form, &set).unwrap();
         assert_relative_eq!(out.design.wire_dia.inches(), 0.08, max_relative = 1e-9);
+    }
+
+    /// Rate field "2" in N/mm (metric) must store 2000 N/m internally.
+    /// Rate field "10" lbf/in (US) must remain unchanged via SpringRate conversion.
+    #[test]
+    fn rate_conversion_direction() {
+        let set = MaterialSet::load_default();
+
+        // Metric: typing "2" into an N/mm-labeled field → 2000 N/m stored
+        let metric_form = rate_based_metric(); // rate = "2.0" N/mm
+        let out = parse_and_solve(&metric_form, &set).unwrap();
+        assert_relative_eq!(
+            out.design.rate.newtons_per_meter(),
+            2000.0,
+            max_relative = 1e-6,
+        );
+
+        // US: lbf/in parse is unchanged — SpringRate conversion handles it
+        let mut us_form = rate_based_metric();
+        us_form.unit_system = springcore::UnitSystem::Us;
+        us_form.wire_dia = "0.08".into();
+        us_form.mean_dia = "0.8".into();
+        us_form.rate = "10".into(); // 10 lbf/in
+        us_form.free_length = "2.0".into();
+        us_form.loads = "2".into();
+        us_form.fatigue_min = "1".into();
+        us_form.fatigue_max = "2".into();
+        let us_out = parse_and_solve(&us_form, &set).unwrap();
+        // 10 lbf/in ≈ 1751.27 N/m
+        assert_relative_eq!(
+            us_out.design.rate.pounds_per_inch(),
+            10.0,
+            max_relative = 1e-6,
+        );
     }
 
     #[test]
@@ -681,7 +720,7 @@ mod tests {
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
-            rate: "2000".into(),
+            rate: "2".into(), // 2 N/mm = 2000 N/m (internal)
             max_force: "50".into(),
             index_min: "4".into(),
             index_max: "12".into(),
@@ -719,7 +758,7 @@ mod tests {
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
-            rate: "2000".into(),
+            rate: "2".into(), // 2 N/mm = 2000 N/m (internal)
             max_force: "50".into(),
             index_min: "4".into(),
             index_max: "12".into(),
@@ -835,7 +874,7 @@ mod tests {
             fixity: "fixed_fixed".into(),
             wire_dia: "100.0".into(), // 100 mm — above valid max
             mean_dia: "200.0".into(),
-            rate: "2000.0".into(),
+            rate: "2.0".into(), // 2 N/mm = 2000 N/m (internal)
             free_length: "60.0".into(),
             loads: "10".into(),
             ..Default::default()

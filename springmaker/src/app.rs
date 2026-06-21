@@ -308,7 +308,7 @@ mod tests {
         app.form.scenario = crate::form::ScenarioKind::RateBased;
         app.form.wire_dia = "2.0".into();
         app.form.mean_dia = "20.0".into();
-        app.form.rate = "2000".into();
+        app.form.rate = "2.0".into(); // 2 N/mm = 2000 N/m (internal)
         app.form.free_length = "60".into();
         app.form.loads = "10, 30".into();
         app.recompute();

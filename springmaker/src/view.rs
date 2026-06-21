@@ -961,11 +961,14 @@ fn display_force(f: springcore::Force, us: UnitSystem) -> f64 {
     }
 }
 
+/// Conversion factor: N/mm displayed ↔ N/m stored internally.
+const MM_PER_M: f64 = 1000.0;
+
 fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
     match us {
-        // Display in N/mm (= N/m ÷ 1000) so rate is consistent with mm lengths and
+        // Display in N/mm (= N/m ÷ MM_PER_M) so rate is consistent with mm lengths and
         // the chart axes (deflection in mm, force in N → slope in N/mm).
-        UnitSystem::Metric => r.newtons_per_meter() / 1000.0,
+        UnitSystem::Metric => r.newtons_per_meter() / MM_PER_M,
         UnitSystem::Us => r.pounds_per_inch(),
     }
 }
