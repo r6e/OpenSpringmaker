@@ -243,6 +243,26 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_toml_literal_entry_is_skipped_others_loaded() {
+        // The TOML format admits `nan`/`inf` float literals, so an untrusted
+        // overlay can carry a non-finite numeric field. It must be skipped with
+        // a warning (never panic, never let NaN/inf reach a calculation), while
+        // valid entries in the same file still load.
+        let good =
+            serialize_user_materials(std::slice::from_ref(&a_user_material("Good Wire"))).unwrap();
+        let bad = good.replace(
+            "[[material]]",
+            "[[material]]\nname = \"NaN Wire\"\nspecification = \"x\"\ncitations = \"x\"\nmts_form = \"power_law\"\nmts_units = \"si_mpa_mm\"\nmts_coefficients = [2000.0, 0.1]\nvalid_dia_min_mm = 1.0\nvalid_dia_max_mm = 10.0\nyoungs_modulus_gpa = nan\nshear_modulus_gpa = 78.0\ndensity_kg_per_m3 = 7850.0\nallowable_pct_torsion = 0.45\nallowable_pct_bending = 0.75\nallowable_pct_set = 0.6\n\n[[material]]",
+        );
+        let (mats, warns) = parse_user_overlay(&bad);
+        assert_eq!(mats.len(), 1);
+        assert_eq!(mats[0].name, "Good Wire");
+        assert!(warns.iter().any(|w| w.message.contains("NaN Wire")));
+        // And the loaded material is finite — no NaN/inf escaped into the store.
+        assert!(mats[0].youngs_modulus.pascals().is_finite());
+    }
+
+    #[test]
     fn file_save_and_load_roundtrip() {
         let mut store = MaterialStore::new(curated());
         store.add(a_user_material("Disk Wire")).unwrap();
