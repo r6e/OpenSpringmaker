@@ -487,8 +487,10 @@ fn compute_fatigue(
     }
 }
 
-/// Parse the form, solve the design, evaluate status, and (if a cycle and endurance
-/// data are present) compute fatigue. Missing endurance data degrades to `None`.
+/// Parse the form, solve the design, evaluate status, and (if cycle forces are
+/// supplied) compute fatigue. Blank cycle-force fields yield [`FatigueStatus::Skipped`];
+/// cycle forces supplied but no endurance data in the material yield
+/// [`FatigueStatus::NoData`].
 pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<FormOutcome> {
     if form.scenario == ScenarioKind::MinWeight {
         let material = materials.get(&form.material)?;

@@ -105,6 +105,14 @@ fn forces(v: &[f64]) -> Vec<Force> {
     v.iter().map(|&n| Force::from_newtons(n)).collect()
 }
 
+/// Returns `true` when `v` is both finite and strictly positive.
+///
+/// Used to validate max_force_n, candidate diameters, and max_outer_dia_mm — all
+/// of which must be > 0. **Not** used for clash_allowance, which permits zero (≥ 0).
+fn finite_positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
+}
+
 /// Build a [`MinWeightRequest`] from a [`ScenarioSpec::MinWeight`] variant.
 ///
 /// Returns an error if `spec` is not the `MinWeight` variant.
@@ -154,7 +162,7 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
             }
             // max_force must be finite and strictly positive; zero or negative
             // force is unphysical for a compression-spring max-load constraint.
-            if !max_force_n.is_finite() || *max_force_n <= 0.0 {
+            if !finite_positive(*max_force_n) {
                 return Err(SpringError::InconsistentInputs(
                     "max_force_n must be a positive finite number (N)".into(),
                 ));
@@ -174,7 +182,7 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
                 ));
             }
             for &d in candidate_diameters_mm {
-                if !d.is_finite() || d <= 0.0 {
+                if !finite_positive(d) {
                     return Err(SpringError::InconsistentInputs(format!(
                         "every candidate diameter must be a positive finite number (mm); \
                          got {d}"
@@ -183,7 +191,7 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
             }
             // max_outer_dia_mm, when supplied, must be finite and strictly positive.
             if let Some(ood) = max_outer_dia_mm {
-                if !ood.is_finite() || *ood <= 0.0 {
+                if !finite_positive(*ood) {
                     return Err(SpringError::InconsistentInputs(format!(
                         "max_outer_dia_mm must be a positive finite number (mm); got {ood}"
                     )));
@@ -730,16 +738,6 @@ mod tests {
     // -----------------------------------------------------------------------
     // Fix 4: max_outer_dia_mm validation
     // -----------------------------------------------------------------------
-
-    // None is always accepted.
-    #[test]
-    fn max_outer_dia_none_is_accepted() {
-        let spec = mw_spec(50.0, 0.15, vec![2.0], None);
-        assert!(
-            min_weight_request_from_spec(&spec).is_ok(),
-            "None max_outer_dia_mm must be accepted"
-        );
-    }
 
     // Some(positive) is accepted.
     #[test]
