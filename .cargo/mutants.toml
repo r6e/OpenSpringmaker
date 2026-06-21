@@ -35,4 +35,14 @@ exclude_re = [
   #   coincidence. The tie itself is unreachable — no input can produce two candidates
   #   with bit-identical mass_kg — so no distinguishing test can exist.
   "optimize\\.rs:148:.*replace < with <=",
+
+  # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
+  # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
+  # produces identical no-warning behavior in parse_user_overlay. Equivalent.
+  "material_persist\\.rs:40:.*",
+
+  # material_persist.rs:156 — save() body replaced with Ok(()). Exercising save()
+  # requires writing to the real OS user config file (non-hermetic). The hermetic
+  # core (save_to_path, serialize_user_materials, atomic_write) is unit-tested.
+  "material_persist\\.rs:156:.*save",
 ]

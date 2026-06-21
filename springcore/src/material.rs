@@ -678,6 +678,51 @@ allowable_pct_set = 0.60
     }
 
     #[test]
+    fn inverted_diameter_range_is_rejected() {
+        let toml = r#"
+[[material]]
+name = "Range Test"
+specification = "synthetic"
+citations = "synthetic"
+mts_form = "constant"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1500.0]
+valid_dia_min_mm = 10.0
+valid_dia_max_mm = 1.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        let err = MaterialSet::from_toml_str(toml).unwrap_err();
+        assert!(matches!(err, SpringError::DataFile(_)));
+    }
+
+    #[test]
+    fn equal_diameter_range_is_accepted() {
+        let toml = r#"
+[[material]]
+name = "Range Test"
+specification = "synthetic"
+citations = "synthetic"
+mts_form = "constant"
+mts_units = "si_mpa_mm"
+mts_coefficients = [1500.0]
+valid_dia_min_mm = 5.0
+valid_dia_max_mm = 5.0
+youngs_modulus_gpa = 200.0
+shear_modulus_gpa = 78.0
+density_kg_per_m3 = 7850.0
+allowable_pct_torsion = 0.45
+allowable_pct_bending = 0.75
+allowable_pct_set = 0.60
+"#;
+        assert!(MaterialSet::from_toml_str(toml).is_ok());
+    }
+
+    #[test]
     fn max_service_temperature_parses_when_present_and_absent() {
         // Present:
         let with_temp = r#"

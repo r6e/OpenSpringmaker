@@ -166,6 +166,7 @@ impl MaterialStore {
 mod tests {
     use super::*;
     use crate::material::MaterialSet;
+    use approx::assert_relative_eq;
 
     fn curated() -> MaterialSet {
         MaterialSet::load_default()
@@ -244,6 +245,56 @@ mod tests {
         assert!(warns.is_empty());
         assert!(loaded.get("Disk Wire").is_ok());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn roundtrip_preserves_youngs_and_shear_modulus() {
+        let orig = MaterialSet::load_default()
+            .get("Music Wire")
+            .unwrap()
+            .clone();
+        let orig_youngs = orig.youngs_modulus.pascals();
+        let orig_shear = orig.shear_modulus.pascals();
+        let toml = serialize_user_materials(std::slice::from_ref(&orig)).unwrap();
+        let (mats, warns) = parse_user_overlay(&toml);
+        assert!(warns.is_empty());
+        assert_eq!(mats.len(), 1);
+        assert_relative_eq!(
+            mats[0].youngs_modulus.pascals(),
+            orig_youngs,
+            max_relative = 1e-6
+        );
+        assert_relative_eq!(
+            mats[0].shear_modulus.pascals(),
+            orig_shear,
+            max_relative = 1e-6
+        );
+    }
+
+    #[test]
+    fn future_schema_version_yields_warning() {
+        let (_, warns) = parse_user_overlay("schema_version = 999\n");
+        assert!(!warns.is_empty());
+        assert!(warns.iter().any(|w| w.message.contains("schema_version")));
+    }
+
+    #[test]
+    fn current_schema_version_yields_no_schema_warning() {
+        let (_, warns) = parse_user_overlay("schema_version = 1\n");
+        assert!(warns.is_empty());
+    }
+
+    #[test]
+    fn unreadable_path_yields_warning() {
+        // temp_dir() is a directory, not a file — read_to_string returns IsADirectory (not NotFound)
+        let (_, warns) = MaterialStore::from_overlay_file(curated(), &std::env::temp_dir());
+        assert!(!warns.is_empty());
+    }
+
+    #[test]
+    fn user_overlay_path_ends_with_materials_toml() {
+        let p = user_overlay_path().expect("config dir");
+        assert!(p.ends_with("materials.toml"));
     }
 
     #[test]

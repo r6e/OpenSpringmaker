@@ -291,4 +291,15 @@ mod tests {
             Err(SpringError::MaterialNotFound(_))
         ));
     }
+
+    #[test]
+    fn clone_increments_to_copy_3() {
+        let mut s = store();
+        let c1 = s.clone_material("Music Wire").unwrap();
+        s.add(c1).unwrap();
+        let c2 = s.clone_material("Music Wire").unwrap();
+        s.add(c2).unwrap();
+        let c3 = s.clone_material("Music Wire").unwrap();
+        assert_eq!(c3.name, "Music Wire (copy 3)");
+    }
 }
