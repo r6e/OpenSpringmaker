@@ -393,6 +393,19 @@ impl App {
                     Ok(()) => {
                         self.mat_error = None;
                         self.mat_status = Some(format!("deleted '{name}'"));
+                        // Close the editor if it was editing the deleted material.
+                        if matches!(&self.editing, Some(EditTarget::Existing(n)) if *n == name) {
+                            self.editing = None;
+                        }
+                        // If the calculator had it selected, fall back to a valid
+                        // remaining material so navigating back doesn't error.
+                        if self.form.material == name {
+                            if let Some(first) =
+                                self.materials.names().first().map(|s| s.to_string())
+                            {
+                                self.form.material = first;
+                            }
+                        }
                     }
                     Err(e) => self.mat_error = Some(format!("{e}")),
                 }
@@ -532,6 +545,16 @@ impl App {
 mod tests {
     use super::*;
 
+    /// An `App` with a curated-only store (no on-disk user overlay), so the
+    /// materials-CRUD tests are hermetic regardless of the developer's saved
+    /// materials. `App::default()` loads the real overlay from the OS config dir.
+    fn test_app() -> App {
+        App {
+            materials: MaterialStore::new(springcore::MaterialSet::load_default()),
+            ..App::default()
+        }
+    }
+
     #[test]
     fn default_app_has_no_outcome_until_filled() {
         let app = App::default();
@@ -589,9 +612,18 @@ mod tests {
         app.update(Message::MatField(MatField::AllowSet, "0.6".into()));
     }
 
+    /// The user material the editor opened after a clone (deterministic,
+    /// regardless of any pre-existing user overlay).
+    fn editing_name(a: &App) -> String {
+        match &a.editing {
+            Some(EditTarget::Existing(n)) => n.clone(),
+            other => panic!("expected an Existing edit target, got {other:?}"),
+        }
+    }
+
     #[test]
     fn add_user_material_via_messages() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatNew);
         fill_valid_power_law(&mut a);
         a.update(Message::MatCommit);
@@ -603,7 +635,7 @@ mod tests {
 
     #[test]
     fn commit_invalid_sets_error_not_panic() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatNew);
         // power_law needs 2 coefficients; supply only 1
         a.update(Message::MatField(MatField::Coefficients, "2000".into()));
@@ -615,7 +647,7 @@ mod tests {
 
     #[test]
     fn editing_curated_is_rejected() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatEdit("Music Wire".into()));
         assert!(a.mat_error.is_some());
         assert!(a.editing.is_none());
@@ -623,7 +655,7 @@ mod tests {
 
     #[test]
     fn delete_curated_is_rejected() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatDelete("Music Wire".into()));
         assert!(a.mat_error.is_some());
         assert!(a.materials.names().contains(&"Music Wire"));
@@ -631,21 +663,21 @@ mod tests {
 
     #[test]
     fn clone_creates_user_copy() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
         assert!(a.materials.names().iter().any(|n| n.contains("(copy)")));
     }
 
     #[test]
     fn navigate_switches_screen() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::NavigateTo(Screen::Materials));
         assert_eq!(a.screen, Screen::Materials);
     }
 
     #[test]
     fn navigate_clears_materials_feedback() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatDelete("Music Wire".into())); // sets mat_error (curated)
         assert!(a.mat_error.is_some());
         a.update(Message::NavigateTo(Screen::Calculator));
@@ -654,9 +686,9 @@ mod tests {
 
     #[test]
     fn edit_then_commit_updates_user_material() {
-        let mut a = App::default();
+        let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
-        let copy_name = a.materials.user_materials()[0].name.clone();
+        let copy_name = editing_name(&a);
         a.update(Message::MatEdit(copy_name.clone()));
         a.update(Message::MatField(MatField::Density, "8000".into()));
         a.update(Message::MatCommit);
@@ -665,5 +697,20 @@ mod tests {
                                       // The edited value is persisted in the store.
         let updated = a.materials.get(&copy_name).unwrap();
         assert!((updated.density.kg_per_m3() - 8000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn deleting_active_and_selected_material_resets_state() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        let copy_name = editing_name(&a); // editor is open on the clone
+        a.form.material = copy_name.clone(); // calculator selects it too
+        a.update(Message::MatDelete(copy_name.clone()));
+        assert!(a.mat_error.is_none());
+        assert!(!a.materials.names().contains(&copy_name.as_str()));
+        // Editor closed and calculator selection moved to a valid material.
+        assert!(a.editing.is_none());
+        assert_ne!(a.form.material, copy_name);
+        assert!(a.materials.names().contains(&a.form.material.as_str()));
     }
 }
