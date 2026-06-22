@@ -244,15 +244,16 @@ impl SavedDesign {
     /// material reference. Callers that hold a `MaterialStore` (or any other lookup source)
     /// can call `.get(name)?` themselves and pass the result here.
     ///
-    /// `material` is expected to be the one named by `self.material`; a mismatch means the
-    /// computed design and the design's recorded material name would disagree. This is
-    /// guarded by a `debug_assert!` (callers resolve the material from `self.material`).
+    /// `material` must be the one named by `self.material`; otherwise the computed design
+    /// and the design's recorded material name would silently disagree. The mismatch is
+    /// rejected at runtime (not merely `debug_assert!`) since this is a public API.
     pub fn solve_with_material(&self, material: &Material) -> Result<SpringDesign> {
-        debug_assert_eq!(
-            self.material, material.name,
-            "solve_with_material: material '{}' does not match SavedDesign.material '{}'",
-            material.name, self.material
-        );
+        if self.material != material.name {
+            return Err(SpringError::InconsistentInputs(format!(
+                "solve_with_material: material '{}' does not match SavedDesign.material '{}'",
+                material.name, self.material
+            )));
+        }
         match &self.scenario {
             ScenarioSpec::PowerUser {
                 end_type,
@@ -555,6 +556,20 @@ mod tests {
         let set = MaterialSet::load_default();
         let design = sample().solve(&set).unwrap();
         assert_relative_eq!(design.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
+    }
+
+    #[test]
+    fn solve_with_material_rejects_mismatched_material() {
+        // sample().material == "Music Wire"; passing a different material errors.
+        let set = MaterialSet::load_default();
+        let wrong = set.get("Stainless 302").unwrap();
+        assert!(matches!(
+            sample().solve_with_material(wrong),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+        // The matching material still solves.
+        let right = set.get("Music Wire").unwrap();
+        assert!(sample().solve_with_material(right).is_ok());
     }
 
     #[test]

@@ -112,10 +112,10 @@ fn parse_coefficients(value: &str) -> Result<Vec<f64>> {
     for token in &tokens {
         if token.is_empty() {
             return Err(SpringError::InconsistentInputs(
-                "coefficients: empty token in list".to_string(),
+                "Coefficients: empty value in the list".to_string(),
             ));
         }
-        out.push(num("coefficient", token)?);
+        out.push(num("Coefficient", token)?);
     }
     // `split(',')` always yields >= 1 token, and an empty input yields a single
     // "" token caught above, so `out` is guaranteed non-empty here. The required
@@ -132,10 +132,12 @@ fn parse_coefficients(value: &str) -> Result<Vec<f64>> {
 pub fn build_draft(form: &MaterialsFormState) -> Result<MaterialDraft> {
     let mts_coefficients = parse_coefficients(&form.coefficients)?;
 
+    // Field labels are user-facing: they surface verbatim in the editor's error
+    // message, so they match the on-screen field names rather than struct fields.
     let endurance = if form.has_endurance {
         Some(EnduranceDraft {
-            ssa_mpa: num("endurance_ssa", &form.endurance_ssa)?,
-            ssm_mpa: num("endurance_ssm", &form.endurance_ssm)?,
+            ssa_mpa: num("Endurance Ssa (MPa)", &form.endurance_ssa)?,
+            ssm_mpa: num("Endurance Ssm (MPa)", &form.endurance_ssm)?,
             peened: form.endurance_peened,
         })
     } else {
@@ -143,7 +145,7 @@ pub fn build_draft(form: &MaterialsFormState) -> Result<MaterialDraft> {
     };
 
     let max_service_temp_c = if form.has_max_temp {
-        Some(num("max_temp_c", &form.max_temp_c)?)
+        Some(num("Max temp (°C)", &form.max_temp_c)?)
     } else {
         None
     };
@@ -155,14 +157,14 @@ pub fn build_draft(form: &MaterialsFormState) -> Result<MaterialDraft> {
         mts_form: form.mts_form,
         mts_units: form.mts_units,
         mts_coefficients,
-        valid_dia_min_mm: num("valid_dia_min", &form.valid_dia_min)?,
-        valid_dia_max_mm: num("valid_dia_max", &form.valid_dia_max)?,
-        youngs_modulus_gpa: num("youngs_modulus", &form.youngs_modulus)?,
-        shear_modulus_gpa: num("shear_modulus", &form.shear_modulus)?,
-        density_kg_per_m3: num("density", &form.density)?,
-        allowable_pct_torsion: num("allowable_torsion", &form.allowable_torsion)?,
-        allowable_pct_bending: num("allowable_bending", &form.allowable_bending)?,
-        allowable_pct_set: num("allowable_set", &form.allowable_set)?,
+        valid_dia_min_mm: num("Min diameter (mm)", &form.valid_dia_min)?,
+        valid_dia_max_mm: num("Max diameter (mm)", &form.valid_dia_max)?,
+        youngs_modulus_gpa: num("Young's modulus (GPa)", &form.youngs_modulus)?,
+        shear_modulus_gpa: num("Shear modulus (GPa)", &form.shear_modulus)?,
+        density_kg_per_m3: num("Density (kg/m³)", &form.density)?,
+        allowable_pct_torsion: num("Allowable torsion", &form.allowable_torsion)?,
+        allowable_pct_bending: num("Allowable bending", &form.allowable_bending)?,
+        allowable_pct_set: num("Allowable set", &form.allowable_set)?,
         endurance,
         max_service_temp_c,
     })
