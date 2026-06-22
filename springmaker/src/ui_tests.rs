@@ -56,7 +56,7 @@ fn type_into(app: &mut App, field: Field, text: &str) {
     let id = iced_test::core::widget::Id::from(crate::view::calc_field_id(field));
     let mut sim = ui(app);
     sim.click(id)
-        .unwrap_or_else(|_| panic!("no input for field {field:?}"));
+        .unwrap_or_else(|e| panic!("could not focus input for field {field:?}: {e}"));
     sim.typewrite(text);
     for message in sim.into_messages() {
         app.update(message);
