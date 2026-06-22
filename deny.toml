@@ -1,6 +1,6 @@
 # cargo-deny configuration — supply-chain policy enforced in CI.
 #
-# Run locally with: cargo deny --all-features check all
+# Run locally with: cargo deny check all --all-features
 # CI: .github/workflows/deny.yml (EmbarkStudios/cargo-deny-action, `check all --all-features`).
 
 [graph]
