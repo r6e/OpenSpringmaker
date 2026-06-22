@@ -6,7 +6,7 @@ const MM_PER_M: f64 = 1000.0;
 use springcore::units::{Force, Length, SpringRate};
 use springcore::UnitSystem;
 use springcore::{
-    analyze_fatigue, evaluate_status, DesignStatus, FatigueResult, MaterialSet, Result,
+    analyze_fatigue, evaluate_status, DesignStatus, FatigueResult, MaterialStore, Result,
     SavedDesign, ScenarioSpec, SpringDesign, SpringError,
 };
 
@@ -491,7 +491,7 @@ fn compute_fatigue(
 /// supplied) compute fatigue. Blank cycle-force fields yield [`FatigueStatus::Skipped`];
 /// cycle forces supplied but no endurance data in the material yield
 /// [`FatigueStatus::NoData`].
-pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<FormOutcome> {
+pub fn parse_and_solve(form: &FormState, materials: &MaterialStore) -> Result<FormOutcome> {
     if form.scenario == ScenarioKind::MinWeight {
         let material = materials.get(&form.material)?;
         let spec = build_spec(form)?;
@@ -510,13 +510,17 @@ pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<Form
         });
     }
 
+    // Preserve the original error precedence for the calculator paths: parse the
+    // form first, then resolve the material (both unreachable failures in the GUI,
+    // since the picker only offers valid names, but keeps behavior identical).
+    let spec = build_spec(form)?;
+    let material = materials.get(&form.material)?;
     let saved = SavedDesign {
         material: form.material.clone(),
         unit_system: form.unit_system,
-        scenario: build_spec(form)?,
+        scenario: spec,
     };
-    let design = saved.solve(materials)?;
-    let material = materials.get(&form.material)?;
+    let design = saved.solve_with_material(material)?;
     let status = evaluate_status(&design, material);
     let fatigue = compute_fatigue(form, material, &design)?;
 
@@ -532,7 +536,11 @@ pub fn parse_and_solve(form: &FormState, materials: &MaterialSet) -> Result<Form
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use springcore::MaterialSet;
+    use springcore::{MaterialSet, MaterialStore};
+
+    fn default_store() -> MaterialStore {
+        MaterialStore::new(MaterialSet::load_default())
+    }
 
     fn rate_based_metric() -> FormState {
         FormState {
@@ -554,7 +562,7 @@ mod tests {
 
     #[test]
     fn solves_rate_based_metric() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let out = parse_and_solve(&rate_based_metric(), &set).unwrap();
         assert_relative_eq!(
             out.design.rate.newtons_per_meter(),
@@ -567,7 +575,7 @@ mod tests {
 
     #[test]
     fn us_units_are_converted() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.unit_system = springcore::UnitSystem::Us;
         form.wire_dia = "0.08".into(); // inches
@@ -585,7 +593,7 @@ mod tests {
     /// Rate field "10" lbf/in (US) must remain unchanged via SpringRate conversion.
     #[test]
     fn rate_conversion_direction() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
 
         // Metric: typing "2" into an N/mm-labeled field → 2000 N/m stored
         let metric_form = rate_based_metric(); // rate = "2.0" N/mm
@@ -617,7 +625,7 @@ mod tests {
 
     #[test]
     fn bad_number_is_an_error() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "abc".into();
         assert!(parse_and_solve(&form, &set).is_err());
@@ -625,7 +633,7 @@ mod tests {
 
     #[test]
     fn zero_wire_diameter_is_an_error() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -634,7 +642,7 @@ mod tests {
 
     #[test]
     fn negative_wire_diameter_is_an_error() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "-1.0".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -644,7 +652,7 @@ mod tests {
     #[test]
     fn zero_load_is_accepted() {
         // A zero operating load is physically valid (unloaded check).
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.loads = "0".into();
         // Should not error on the zero load itself (may still fail for other reasons,
@@ -661,7 +669,7 @@ mod tests {
     #[test]
     fn negative_load_is_rejected_by_positivity_guard() {
         // Negative loads are unphysical; the non_negative_force_n guard must reject them.
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.loads = "-5".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -680,7 +688,7 @@ mod tests {
     fn wire_dia_zero_triggers_greater_than_zero_error() {
         // Exercises the positivity guard on a dimensional field; wire_dia = "0"
         // must produce an error mentioning "greater than zero".
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -698,7 +706,7 @@ mod tests {
     #[test]
     fn nan_in_field_is_an_error() {
         // Rust's f64 parse accepts "nan"; the form layer must reject it.
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "nan".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -708,7 +716,7 @@ mod tests {
     #[test]
     fn inf_in_field_is_an_error() {
         // Rust's f64 parse accepts "inf"; the form layer must reject it.
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "inf".into();
         let err = parse_and_solve(&form, &set).unwrap_err();
@@ -719,7 +727,7 @@ mod tests {
     fn fatigue_no_data_for_material_without_endurance() {
         // Stainless 302 has no cited endurance data; when cycle forces are
         // supplied the result must be NoData, not Skipped.
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.material = "Stainless 302".into();
         // rate_based_metric already sets fatigue_min/max, so forces are present.
@@ -734,7 +742,7 @@ mod tests {
     #[test]
     fn fatigue_skipped_when_cycle_forces_blank() {
         // Leaving both cycle-force fields blank must yield Skipped, not NoData.
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = rate_based_metric();
         form.fatigue_min = String::new();
         form.fatigue_max = String::new();
@@ -748,7 +756,7 @@ mod tests {
 
     #[test]
     fn solves_min_weight_with_extras() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let form = FormState {
             material: "Music Wire".into(),
             unit_system: springcore::UnitSystem::Metric,
@@ -822,7 +830,7 @@ mod tests {
 
     #[test]
     fn empty_candidate_diameters_is_an_error() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let mut form = min_weight_metric();
         form.candidate_diameters = String::new();
         assert!(parse_and_solve(&form, &set).is_err());
@@ -831,7 +839,7 @@ mod tests {
     #[test]
     fn min_weight_binding_constraint_is_valid() {
         use springcore::BindingConstraint;
-        let set = MaterialSet::load_default();
+        let set = default_store();
         let out = parse_and_solve(&min_weight_metric(), &set).unwrap();
         let mw = out.min_weight.unwrap();
         assert!(matches!(
@@ -847,7 +855,7 @@ mod tests {
     /// inches (not metres) and must not contain " m" as a unit suffix.
     #[test]
     fn format_error_us_uses_inches() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         // Music Wire valid range: 0.10 mm – 6.5 mm (≈ 0.00394 – 0.256 in).
         // 0.001 in ≈ 0.0254 mm — well below 0.10 mm minimum.
         let form = FormState {
@@ -898,8 +906,15 @@ mod tests {
     /// A metric form whose wire diameter is above the valid range produces a
     /// DiameterOutOfRange error. format_error(…, Metric) must render mm.
     #[test]
+    fn parse_and_solve_accepts_material_store() {
+        let store = springcore::MaterialStore::new(MaterialSet::load_default());
+        let form = rate_based_metric();
+        assert!(parse_and_solve(&form, &store).is_ok());
+    }
+
+    #[test]
     fn format_error_metric_uses_mm() {
-        let set = MaterialSet::load_default();
+        let set = default_store();
         // Music Wire valid max: 6.5 mm. Use 100 mm — far out of range.
         let form = FormState {
             material: "Music Wire".into(),

@@ -1,5 +1,7 @@
 mod app;
 mod form;
+mod materials_form;
+mod materials_view;
 mod plot;
 mod view;
 

@@ -31,6 +31,26 @@ pub enum StrengthUnits {
     SiMpaMm,
 }
 
+impl std::fmt::Display for MtsForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MtsForm::Constant => "Constant",
+            MtsForm::PowerLaw => "Power law",
+            MtsForm::Polynomial => "Polynomial",
+            MtsForm::Rational => "Rational",
+        })
+    }
+}
+
+impl std::fmt::Display for StrengthUnits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            StrengthUnits::UsKpsiInch => "US (kpsi, in)",
+            StrengthUnits::SiMpaMm => "SI (MPa, mm)",
+        })
+    }
+}
+
 impl StrengthUnits {
     /// Express a diameter in this system's native length unit.
     pub fn length_native(self, d: Length) -> f64 {
@@ -108,6 +128,90 @@ pub struct Endurance {
     pub peened: bool,
 }
 
+/// A mutable editing DTO for constructing or modifying a [`Material`].
+///
+/// Mirrors the internal raw material record but exposes typed enums for
+/// `mts_form` and `mts_units` instead of raw strings. Call [`MaterialDraft::build`]
+/// to validate and convert to a [`Material`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialDraft {
+    /// Material name (unique identity key; trimmed and rejected if blank on build).
+    pub name: String,
+    /// Specification / standard designation.
+    pub specification: String,
+    /// Source citations for the constants.
+    pub citations: String,
+    /// Minimum-tensile-strength equation form.
+    pub mts_form: MtsForm,
+    /// Unit system the coefficients are expressed in.
+    pub mts_units: StrengthUnits,
+    /// Strength coefficients, interpreted per `mts_form` and `mts_units`.
+    pub mts_coefficients: Vec<f64>,
+    /// Smallest valid wire diameter, in mm.
+    pub valid_dia_min_mm: f64,
+    /// Largest valid wire diameter, in mm.
+    pub valid_dia_max_mm: f64,
+    /// Young's modulus, in GPa.
+    pub youngs_modulus_gpa: f64,
+    /// Shear modulus, in GPa.
+    pub shear_modulus_gpa: f64,
+    /// Density, in kg/m³.
+    pub density_kg_per_m3: f64,
+    /// Allowable torsional stress as a fraction of MTS.
+    pub allowable_pct_torsion: f64,
+    /// Allowable bending stress as a fraction of MTS.
+    pub allowable_pct_bending: f64,
+    /// Allowable stress before permanent set, as a fraction of MTS.
+    pub allowable_pct_set: f64,
+    /// Optional cited endurance data.
+    pub endurance: Option<EnduranceDraft>,
+    /// Optional maximum service temperature, in °C (informational).
+    pub max_service_temp_c: Option<f64>,
+}
+
+/// Editable endurance data within a [`MaterialDraft`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnduranceDraft {
+    /// Alternating shear endurance strength, in MPa.
+    pub ssa_mpa: f64,
+    /// Mean shear endurance strength, in MPa.
+    pub ssm_mpa: f64,
+    /// Whether the data is for shot-peened wire.
+    pub peened: bool,
+}
+
+impl MaterialDraft {
+    /// Validate this draft and build a [`Material`].
+    ///
+    /// Returns `SpringError::DataFile` on invalid data (wrong coefficient
+    /// count, out-of-range allowable fractions, etc.).
+    pub fn build(&self) -> crate::error::Result<Material> {
+        let raw = RawMaterial {
+            name: self.name.clone(),
+            specification: self.specification.clone(),
+            citations: self.citations.clone(),
+            mts_form: mts_form_str(self.mts_form).to_string(),
+            mts_units: strength_units_str(self.mts_units).to_string(),
+            mts_coefficients: self.mts_coefficients.clone(),
+            valid_dia_min_mm: self.valid_dia_min_mm,
+            valid_dia_max_mm: self.valid_dia_max_mm,
+            youngs_modulus_gpa: self.youngs_modulus_gpa,
+            shear_modulus_gpa: self.shear_modulus_gpa,
+            density_kg_per_m3: self.density_kg_per_m3,
+            allowable_pct_torsion: self.allowable_pct_torsion,
+            allowable_pct_bending: self.allowable_pct_bending,
+            allowable_pct_set: self.allowable_pct_set,
+            endurance: self.endurance.as_ref().map(|e| RawEndurance {
+                ssa_mpa: e.ssa_mpa,
+                ssm_mpa: e.ssm_mpa,
+                peened: e.peened,
+            }),
+            max_service_temp_c: self.max_service_temp_c,
+        };
+        Material::try_from_raw(raw)
+    }
+}
+
 /// A spring-wire material.
 #[derive(Debug, Clone)]
 pub struct Material {
@@ -136,6 +240,41 @@ impl Material {
     /// Minimum tensile strength at wire diameter `d`, in SI (pascals).
     pub fn min_tensile_strength(&self, d: Length) -> Result<Stress> {
         self.mts.evaluate(d)
+    }
+
+    /// Convert this material to an editable [`MaterialDraft`].
+    ///
+    /// The draft can be modified and then rebuilt via [`MaterialDraft::build`].
+    /// Panics if the material's internal form/units strings are somehow
+    /// inconsistent (impossible for materials that have been validated).
+    pub fn to_draft(&self) -> MaterialDraft {
+        let raw = self.to_raw();
+        let mts_form =
+            mts_form_from_str(&raw.mts_form).expect("valid material has parseable mts_form");
+        let mts_units = strength_units_from_str(&raw.mts_units)
+            .expect("valid material has parseable mts_units");
+        MaterialDraft {
+            name: raw.name,
+            specification: raw.specification,
+            citations: raw.citations,
+            mts_form,
+            mts_units,
+            mts_coefficients: raw.mts_coefficients,
+            valid_dia_min_mm: raw.valid_dia_min_mm,
+            valid_dia_max_mm: raw.valid_dia_max_mm,
+            youngs_modulus_gpa: raw.youngs_modulus_gpa,
+            shear_modulus_gpa: raw.shear_modulus_gpa,
+            density_kg_per_m3: raw.density_kg_per_m3,
+            allowable_pct_torsion: raw.allowable_pct_torsion,
+            allowable_pct_bending: raw.allowable_pct_bending,
+            allowable_pct_set: raw.allowable_pct_set,
+            endurance: raw.endurance.map(|e| EnduranceDraft {
+                ssa_mpa: e.ssa_mpa,
+                ssm_mpa: e.ssm_mpa,
+                peened: e.peened,
+            }),
+            max_service_temp_c: raw.max_service_temp_c,
+        }
     }
 }
 
@@ -265,6 +404,15 @@ fn coefficients_ok(form: MtsForm, n: usize) -> bool {
 
 impl Material {
     pub(crate) fn try_from_raw(r: RawMaterial) -> Result<Self> {
+        // Name is the identity key; reject empty/whitespace-only and normalize
+        // surrounding whitespace so near-duplicate names (e.g. "Music Wire ") can't sit
+        // beside curated names.
+        let name = r.name.trim().to_string();
+        if name.is_empty() {
+            return Err(SpringError::DataFile(
+                "material name must not be empty".to_string(),
+            ));
+        }
         let form = mts_form_from_str(&r.mts_form)?;
         let units = strength_units_from_str(&r.mts_units)?;
         if !coefficients_ok(form, r.mts_coefficients.len()) {
@@ -354,7 +502,7 @@ impl Material {
             }
         }
         Ok(Material {
-            name: r.name,
+            name,
             specification: r.specification,
             mts: MtsEquation {
                 form,
@@ -1041,6 +1189,137 @@ allowable_pct_set = 0.60
         let mut r = good_raw();
         r.allowable_pct_set = 1.5;
         assert_data_err(r);
+    }
+
+    // --- MaterialDraft API tests ---
+
+    fn good_draft() -> MaterialDraft {
+        MaterialDraft {
+            name: "Draft Wire".into(),
+            specification: "ASTM A999".into(),
+            citations: "synthetic".into(),
+            mts_form: MtsForm::PowerLaw,
+            mts_units: StrengthUnits::SiMpaMm,
+            mts_coefficients: vec![2000.0, 0.15],
+            valid_dia_min_mm: 0.5,
+            valid_dia_max_mm: 6.0,
+            youngs_modulus_gpa: 200.0,
+            shear_modulus_gpa: 79.0,
+            density_kg_per_m3: 7850.0,
+            allowable_pct_torsion: 0.45,
+            allowable_pct_bending: 0.75,
+            allowable_pct_set: 0.60,
+            endurance: None,
+            max_service_temp_c: Some(120.0),
+        }
+    }
+
+    #[test]
+    fn draft_builds_valid_material() {
+        let draft = good_draft();
+        let mat = draft.build().unwrap();
+        // PowerLaw: Sut = 2000 / d^0.15 MPa. At d=1mm -> 2000/1^0.15 = 2000 MPa.
+        assert_relative_eq!(
+            mat.min_tensile_strength(Length::from_millimeters(1.0))
+                .unwrap()
+                .megapascals(),
+            2000.0,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn draft_build_rejects_bad_coeff_count() {
+        let mut draft = good_draft();
+        draft.mts_coefficients = vec![2000.0]; // PowerLaw needs 2
+        let err = draft.build().unwrap_err();
+        assert!(matches!(err, SpringError::DataFile(_)));
+    }
+
+    #[test]
+    fn draft_build_rejects_allowable_over_one() {
+        let mut draft = good_draft();
+        draft.allowable_pct_torsion = 1.5;
+        let err = draft.build().unwrap_err();
+        assert!(matches!(err, SpringError::DataFile(_)));
+    }
+
+    #[test]
+    fn to_draft_round_trips_through_build() {
+        let set = MaterialSet::load_default();
+        let mw = set.get("Music Wire").unwrap();
+        let draft = mw.to_draft();
+        let rebuilt = draft.build().unwrap();
+
+        assert_eq!(rebuilt.name, mw.name);
+        assert_relative_eq!(
+            rebuilt
+                .min_tensile_strength(Length::from_millimeters(2.0))
+                .unwrap()
+                .megapascals(),
+            mw.min_tensile_strength(Length::from_millimeters(2.0))
+                .unwrap()
+                .megapascals(),
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            rebuilt.youngs_modulus.pascals(),
+            mw.youngs_modulus.pascals(),
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn to_draft_preserves_polynomial_phosphor_bronze() {
+        let set = MaterialSet::load_default();
+        let pb = set.get("Phosphor Bronze").unwrap();
+        let draft = pb.to_draft();
+        assert_eq!(draft.mts_form, MtsForm::Polynomial);
+        assert_eq!(draft.mts_coefficients.len(), 3);
+    }
+
+    #[test]
+    fn display_labels_are_stable() {
+        // These strings are the GUI pick-list labels; pin them.
+        assert_eq!(MtsForm::Constant.to_string(), "Constant");
+        assert_eq!(MtsForm::PowerLaw.to_string(), "Power law");
+        assert_eq!(MtsForm::Polynomial.to_string(), "Polynomial");
+        assert_eq!(MtsForm::Rational.to_string(), "Rational");
+        assert_eq!(StrengthUnits::SiMpaMm.to_string(), "SI (MPa, mm)");
+        assert_eq!(StrengthUnits::UsKpsiInch.to_string(), "US (kpsi, in)");
+    }
+
+    #[test]
+    fn draft_build_rejects_blank_name() {
+        let mut d = good_draft();
+        d.name = "   ".into();
+        assert!(matches!(d.build(), Err(SpringError::DataFile(_))));
+    }
+
+    #[test]
+    fn draft_build_trims_name() {
+        let mut d = good_draft();
+        d.name = "  Padded Wire  ".into();
+        assert_eq!(d.build().unwrap().name, "Padded Wire");
+    }
+
+    #[test]
+    fn draft_build_preserves_endurance() {
+        // Guards the build() endurance->RawEndurance mapping: a dropped or
+        // incorrectly mapped field would otherwise go undetected.
+        let mut d = good_draft();
+        d.endurance = Some(EnduranceDraft {
+            ssa_mpa: 241.0,
+            ssm_mpa: 379.0,
+            peened: true,
+        });
+        let m = d.build().unwrap();
+        let e = m.endurance.expect("endurance preserved through build");
+        assert_relative_eq!(e.ssa.megapascals(), 241.0, max_relative = 1e-9);
+        assert_relative_eq!(e.ssm.megapascals(), 379.0, max_relative = 1e-9);
+        assert!(e.peened);
+        // And it survives a full to_draft round-trip.
+        assert_eq!(m.to_draft().endurance, d.endurance);
     }
 
     #[test]

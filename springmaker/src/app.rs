@@ -1,10 +1,10 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
 use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind};
-use crate::view;
+use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
-use springcore::{MaterialSet, SavedDesign, UnitSystem};
+use springcore::{LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits, UnitSystem};
 
 // --------------------------------------------------------------------------
 // Design tokens — single source of truth for colours used in view.rs
@@ -86,6 +86,52 @@ impl C {
     };
 }
 
+// --------------------------------------------------------------------------
+// Screen routing
+// --------------------------------------------------------------------------
+
+/// Top-level navigation screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Calculator,
+    Materials,
+}
+
+// --------------------------------------------------------------------------
+// Materials editor state types
+// --------------------------------------------------------------------------
+
+/// Whether the editor is creating a new material or editing an existing one.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditTarget {
+    New,
+    Existing(String),
+}
+
+/// Which text field a [`Message::MatField`] targets in the material editor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MatField {
+    Name,
+    Spec,
+    Citations,
+    Coefficients,
+    ValidDiaMin,
+    ValidDiaMax,
+    Youngs,
+    Shear,
+    Density,
+    AllowTorsion,
+    AllowBending,
+    AllowSet,
+    EnduranceSsa,
+    EnduranceSsm,
+    MaxTemp,
+}
+
+// --------------------------------------------------------------------------
+// Calculator field enum
+// --------------------------------------------------------------------------
+
 /// Which text field a [`Message::Field`] targets.
 #[derive(Debug, Clone, Copy)]
 pub enum Field {
@@ -114,6 +160,7 @@ pub enum Field {
 /// All UI events.
 #[derive(Debug, Clone)]
 pub enum Message {
+    // Calculator screen
     Field(Field, String),
     Material(String),
     Scenario(ScenarioKind),
@@ -122,24 +169,63 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
+    // Navigation and materials-editor variants.
+    NavigateTo(Screen),
+    MatField(MatField, String),
+    MatFormKind(MtsForm),
+    MatUnits(StrengthUnits),
+    MatToggleEndurance(bool),
+    MatTogglePeened(bool),
+    MatToggleMaxTemp(bool),
+    MatNew,
+    MatClone(String),
+    MatEdit(String),
+    MatCommit,
+    MatCancel,
+    MatDelete(String),
+    MatPersist,
 }
 
 /// Top-level application state.
 pub struct App {
     pub form: FormState,
-    pub materials: MaterialSet,
+    pub materials: MaterialStore,
+    pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
     pub error: Option<String>,
+    // Screen routing
+    pub screen: Screen,
+    // Materials editor
+    pub mat_form: MaterialsFormState,
+    pub editing: Option<EditTarget>,
+    pub mat_error: Option<String>,
+    pub mat_status: Option<String>,
+}
+
+impl App {
+    /// Build an `App` around a given store, performing no filesystem IO.
+    /// `Default` wraps this with the on-disk user overlay loaded; tests use it
+    /// directly with a curated-only store for deterministic, hermetic behavior.
+    pub(crate) fn from_store(materials: MaterialStore, load_warnings: Vec<LoadWarning>) -> Self {
+        Self {
+            form: FormState::default(),
+            materials,
+            load_warnings,
+            outcome: None,
+            error: None,
+            screen: Screen::Calculator,
+            mat_form: MaterialsFormState::default(),
+            editing: None,
+            mat_error: None,
+            mat_status: None,
+        }
+    }
 }
 
 impl Default for App {
     fn default() -> Self {
-        Self {
-            form: FormState::default(),
-            materials: MaterialSet::load_default(),
-            outcome: None,
-            error: None,
-        }
+        let (materials, load_warnings) = MaterialStore::load();
+        Self::from_store(materials, load_warnings)
     }
 }
 
@@ -156,6 +242,21 @@ impl App {
                 self.error = Some(format_error(&e, self.form.unit_system));
             }
         }
+    }
+
+    /// Set a materials-editor error and clear any stale success status, so a
+    /// prior "saved"/"cloned" message can't linger after a failed action.
+    fn set_mat_error(&mut self, msg: impl Into<String>) {
+        self.mat_error = Some(msg.into());
+        self.mat_status = None;
+    }
+
+    /// Set a materials-editor success status and clear any stale error, so a
+    /// prior error can't linger after a successful action (the view shows error
+    /// over status).
+    fn set_mat_status(&mut self, msg: impl Into<String>) {
+        self.mat_status = Some(msg.into());
+        self.mat_error = None;
     }
 
     /// Process a UI event, updating state and re-solving the design where needed.
@@ -192,6 +293,158 @@ impl App {
             }
             // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+
+            // ── Navigation ──────────────────────────────────────────────────
+            Message::NavigateTo(s) => {
+                self.screen = s;
+                self.mat_error = None;
+                self.mat_status = None;
+                // Returning to the calculator: re-solve in case the selected
+                // material was edited in the editor (stale outcome otherwise).
+                matches!(s, Screen::Calculator)
+            }
+
+            // ── Materials editor ─────────────────────────────────────────────
+            Message::MatField(f, v) => {
+                self.set_mat_field(f, v);
+                self.mat_error = None;
+                false
+            }
+            Message::MatFormKind(k) => {
+                self.mat_form.mts_form = k;
+                self.mat_error = None;
+                false
+            }
+            Message::MatUnits(u) => {
+                self.mat_form.mts_units = u;
+                self.mat_error = None;
+                false
+            }
+            Message::MatToggleEndurance(b) => {
+                self.mat_form.has_endurance = b;
+                self.mat_error = None;
+                false
+            }
+            Message::MatTogglePeened(b) => {
+                self.mat_form.endurance_peened = b;
+                self.mat_error = None;
+                false
+            }
+            Message::MatToggleMaxTemp(b) => {
+                self.mat_form.has_max_temp = b;
+                self.mat_error = None;
+                false
+            }
+            Message::MatNew => {
+                self.mat_form = MaterialsFormState::default();
+                self.editing = Some(EditTarget::New);
+                self.mat_error = None;
+                self.mat_status = None;
+                false
+            }
+            Message::MatEdit(name) => {
+                if self.materials.is_curated(&name) {
+                    self.set_mat_error("curated materials are read-only");
+                } else {
+                    match self.materials.get(&name) {
+                        Ok(m) => {
+                            populate_from_material(&mut self.mat_form, m);
+                            self.editing = Some(EditTarget::Existing(name));
+                            self.mat_error = None;
+                            self.mat_status = None;
+                        }
+                        Err(e) => self.set_mat_error(format!("{e}")),
+                    }
+                }
+                false
+            }
+            Message::MatClone(name) => {
+                // Clone adds the "(copy)" immediately and opens it for editing
+                // (an instant copy you then refine); cancelling leaves the copy,
+                // which the user can Remove — unlike New, which adds only on commit.
+                match self.materials.clone_material(&name) {
+                    Ok(copy) => {
+                        let copy_name = copy.name.clone();
+                        match self.materials.add(copy) {
+                            Ok(()) => match self.materials.get(&copy_name) {
+                                Ok(m) => {
+                                    populate_from_material(&mut self.mat_form, m);
+                                    self.editing = Some(EditTarget::Existing(copy_name));
+                                    self.set_mat_status("cloned");
+                                }
+                                Err(e) => self.set_mat_error(format!("{e}")),
+                            },
+                            Err(e) => self.set_mat_error(format!("{e}")),
+                        }
+                    }
+                    Err(e) => self.set_mat_error(format!("{e}")),
+                }
+                false
+            }
+            Message::MatCommit => {
+                match build_draft(&self.mat_form).and_then(|d| d.build()) {
+                    Ok(m) => {
+                        let new_name = m.name.clone();
+                        let target = self.editing.clone();
+                        let res = match &target {
+                            Some(EditTarget::New) => self.materials.add(m),
+                            Some(EditTarget::Existing(orig)) => self.materials.update(orig, m),
+                            None => return,
+                        };
+                        match res {
+                            Ok(()) => {
+                                // If editing renamed the material the calculator had
+                                // selected, follow the rename so the selection stays valid.
+                                if let Some(EditTarget::Existing(orig)) = &target {
+                                    if self.form.material == *orig && new_name != *orig {
+                                        self.form.material = new_name;
+                                    }
+                                }
+                                self.editing = None;
+                                self.set_mat_status("saved entry");
+                            }
+                            Err(e) => self.set_mat_error(format!("{e}")),
+                        }
+                    }
+                    Err(e) => self.set_mat_error(format!("{e}")),
+                }
+                false
+            }
+            Message::MatCancel => {
+                self.editing = None;
+                self.mat_error = None;
+                self.mat_status = None;
+                false
+            }
+            Message::MatDelete(name) => {
+                match self.materials.remove(&name) {
+                    Ok(()) => {
+                        self.set_mat_status(format!("deleted '{name}'"));
+                        // Close the editor if it was editing the deleted material.
+                        if matches!(&self.editing, Some(EditTarget::Existing(n)) if *n == name) {
+                            self.editing = None;
+                        }
+                        // If the calculator had it selected, fall back to a valid
+                        // remaining material so navigating back doesn't error.
+                        if self.form.material == name {
+                            if let Some(first) =
+                                self.materials.names().first().map(|s| s.to_string())
+                            {
+                                self.form.material = first;
+                            }
+                        }
+                    }
+                    Err(e) => self.set_mat_error(format!("{e}")),
+                }
+                false
+            }
+            Message::MatPersist => {
+                match self.materials.save() {
+                    Ok(()) => self.set_mat_status("saved to disk"),
+                    Err(e) => self.set_mat_error(format!("{e}")),
+                }
+                false
+            }
         };
         if should_recompute {
             self.recompute();
@@ -200,7 +453,10 @@ impl App {
 
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
-        view::view(self)
+        match self.screen {
+            Screen::Calculator => crate::view::view(self),
+            Screen::Materials => crate::materials_view::view(self),
+        }
     }
 
     /// Supply the custom dark theme to the iced application builder.
@@ -239,6 +495,27 @@ impl App {
             Field::MaxOuterDia => f.max_outer_dia = value,
             Field::CandidateDiameters => f.candidate_diameters = value,
             Field::ClashAllowance => f.clash_allowance = value,
+        }
+    }
+
+    fn set_mat_field(&mut self, field: MatField, value: String) {
+        let f = &mut self.mat_form;
+        match field {
+            MatField::Name => f.name = value,
+            MatField::Spec => f.specification = value,
+            MatField::Citations => f.citations = value,
+            MatField::Coefficients => f.coefficients = value,
+            MatField::ValidDiaMin => f.valid_dia_min = value,
+            MatField::ValidDiaMax => f.valid_dia_max = value,
+            MatField::Youngs => f.youngs_modulus = value,
+            MatField::Shear => f.shear_modulus = value,
+            MatField::Density => f.density = value,
+            MatField::AllowTorsion => f.allowable_torsion = value,
+            MatField::AllowBending => f.allowable_bending = value,
+            MatField::AllowSet => f.allowable_set = value,
+            MatField::EnduranceSsa => f.endurance_ssa = value,
+            MatField::EnduranceSsm => f.endurance_ssm = value,
+            MatField::MaxTemp => f.max_temp_c = value,
         }
     }
 
@@ -295,11 +572,28 @@ impl App {
 mod tests {
     use super::*;
 
+    /// An `App` with a curated-only store (no on-disk user overlay), so the
+    /// materials-CRUD tests are hermetic regardless of the developer's saved
+    /// materials. `App::default()` loads the real overlay from the OS config dir.
+    fn test_app() -> App {
+        // No filesystem IO: a curated-only store, no on-disk user overlay.
+        App::from_store(
+            MaterialStore::new(springcore::MaterialSet::load_default()),
+            Vec::new(),
+        )
+    }
+
     #[test]
     fn default_app_has_no_outcome_until_filled() {
         let app = App::default();
         assert!(app.outcome.is_none());
         assert_eq!(app.form.material, "Music Wire");
+    }
+
+    #[test]
+    fn default_app_loads_material_store_with_curated() {
+        let app = App::default();
+        assert!(app.materials.names().contains(&"Music Wire"));
     }
 
     #[test]
@@ -324,5 +618,154 @@ mod tests {
         app.recompute();
         assert!(app.outcome.is_none());
         assert!(app.error.is_some());
+    }
+
+    // ── Materials CRUD tests ──────────────────────────────────────────────────
+
+    fn fill_valid_power_law(app: &mut App) {
+        app.update(Message::MatField(MatField::Name, "New Wire".into()));
+        app.update(Message::MatField(MatField::Spec, "x".into()));
+        app.update(Message::MatField(MatField::Citations, "x".into()));
+        app.update(Message::MatField(
+            MatField::Coefficients,
+            "2000, 0.15".into(),
+        ));
+        app.update(Message::MatField(MatField::ValidDiaMin, "0.5".into()));
+        app.update(Message::MatField(MatField::ValidDiaMax, "6".into()));
+        app.update(Message::MatField(MatField::Youngs, "200".into()));
+        app.update(Message::MatField(MatField::Shear, "79".into()));
+        app.update(Message::MatField(MatField::Density, "7850".into()));
+        app.update(Message::MatField(MatField::AllowTorsion, "0.45".into()));
+        app.update(Message::MatField(MatField::AllowBending, "0.75".into()));
+        app.update(Message::MatField(MatField::AllowSet, "0.6".into()));
+    }
+
+    /// The user material the editor opened after a clone (deterministic,
+    /// regardless of any pre-existing user overlay).
+    fn editing_name(a: &App) -> String {
+        match &a.editing {
+            Some(EditTarget::Existing(n)) => n.clone(),
+            other => panic!("expected an Existing edit target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_user_material_via_messages() {
+        let mut a = test_app();
+        a.update(Message::MatNew);
+        fill_valid_power_law(&mut a);
+        a.update(Message::MatCommit);
+        assert!(a.mat_error.is_none());
+        assert!(a.materials.names().contains(&"New Wire"));
+        assert!(!a.materials.is_curated("New Wire"));
+        assert!(a.editing.is_none());
+    }
+
+    #[test]
+    fn commit_invalid_sets_error_not_panic() {
+        let mut a = test_app();
+        a.update(Message::MatNew);
+        // power_law needs 2 coefficients; supply only 1
+        a.update(Message::MatField(MatField::Coefficients, "2000".into()));
+        a.update(Message::MatCommit);
+        assert!(a.mat_error.is_some());
+        // The editor stays open after a failed commit so the user can fix input.
+        assert!(a.editing.is_some());
+    }
+
+    #[test]
+    fn editing_curated_is_rejected() {
+        let mut a = test_app();
+        a.update(Message::MatEdit("Music Wire".into()));
+        assert!(a.mat_error.is_some());
+        assert!(a.editing.is_none());
+    }
+
+    #[test]
+    fn delete_curated_is_rejected() {
+        let mut a = test_app();
+        a.update(Message::MatDelete("Music Wire".into()));
+        assert!(a.mat_error.is_some());
+        assert!(a.materials.names().contains(&"Music Wire"));
+    }
+
+    #[test]
+    fn clone_creates_user_copy() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        assert!(a.materials.names().iter().any(|n| n.contains("(copy)")));
+    }
+
+    #[test]
+    fn navigate_switches_screen() {
+        let mut a = test_app();
+        a.update(Message::NavigateTo(Screen::Materials));
+        assert_eq!(a.screen, Screen::Materials);
+    }
+
+    #[test]
+    fn navigate_clears_materials_feedback() {
+        let mut a = test_app();
+        a.update(Message::MatDelete("Music Wire".into())); // sets mat_error (curated)
+        assert!(a.mat_error.is_some());
+        a.update(Message::NavigateTo(Screen::Calculator));
+        assert!(a.mat_error.is_none() && a.mat_status.is_none());
+    }
+
+    #[test]
+    fn edit_then_commit_updates_user_material() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        let copy_name = editing_name(&a);
+        a.update(Message::MatEdit(copy_name.clone()));
+        a.update(Message::MatField(MatField::Density, "8000".into()));
+        a.update(Message::MatCommit);
+        assert!(a.mat_error.is_none());
+        assert!(a.editing.is_none()); // editor closes on success
+                                      // The edited value is persisted in the store.
+        let updated = a.materials.get(&copy_name).unwrap();
+        assert!((updated.density.kg_per_m3() - 8000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn deleting_active_and_selected_material_resets_state() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        let copy_name = editing_name(&a); // editor is open on the clone
+        a.form.material = copy_name.clone(); // calculator selects it too
+        a.update(Message::MatDelete(copy_name.clone()));
+        assert!(a.mat_error.is_none());
+        assert!(!a.materials.names().contains(&copy_name.as_str()));
+        // Editor closed and calculator selection moved to a valid material.
+        assert!(a.editing.is_none());
+        assert_ne!(a.form.material, copy_name);
+        assert!(a.materials.names().contains(&a.form.material.as_str()));
+    }
+
+    #[test]
+    fn successful_action_clears_stale_error() {
+        // The view prioritizes mat_error over mat_status, so a successful action
+        // must clear a prior error (regression guard for MatPersist/clone/etc).
+        let mut a = test_app();
+        a.mat_error = Some("stale error from a prior failed action".into());
+        a.update(Message::MatClone("Music Wire".into())); // succeeds, in-memory
+        assert!(a.mat_error.is_none(), "success must clear a stale error");
+        assert!(a.mat_status.is_some());
+    }
+
+    #[test]
+    fn renaming_selected_material_follows_the_rename() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        let orig = editing_name(&a); // the editor is open on the clone
+        a.form.material = orig.clone(); // calculator selects it
+                                        // Rename it via the editor and commit.
+        a.update(Message::MatField(MatField::Name, "Renamed Wire".into()));
+        a.update(Message::MatCommit);
+        assert!(a.mat_error.is_none());
+        assert!(a.materials.names().contains(&"Renamed Wire"));
+        assert!(!a.materials.names().contains(&orig.as_str()));
+        // The calculator selection followed the rename (no stale MaterialNotFound).
+        assert_eq!(a.form.material, "Renamed Wire");
     }
 }

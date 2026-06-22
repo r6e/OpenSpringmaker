@@ -19,9 +19,9 @@ use springcore::UnitSystem;
 // --------------------------------------------------------------------------
 
 const SZ_CAPTION: u16 = 11;
-const SZ_LABEL: u16 = 13;
-const SZ_BODY: u16 = 14;
-const SZ_TITLE: u16 = 18;
+pub(crate) const SZ_LABEL: u16 = 13;
+pub(crate) const SZ_BODY: u16 = 14;
+pub(crate) const SZ_TITLE: u16 = 18;
 const SZ_HERO: u16 = 22;
 
 // --------------------------------------------------------------------------
@@ -94,7 +94,9 @@ fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
 // Style helpers
 // --------------------------------------------------------------------------
 
-fn panel_container<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+pub(crate) fn panel_container<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     container(content)
         .padding(20)
         .style(|_theme| iced::widget::container::Style {
@@ -109,7 +111,7 @@ fn panel_container<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, 
         .into()
 }
 
-fn styled_pick_list<'a, T, L>(
+pub(crate) fn styled_pick_list<'a, T, L>(
     options: L,
     selected: Option<T>,
     on_select: impl Fn(T) -> Message + 'a,
@@ -146,35 +148,41 @@ where
         .into()
 }
 
+/// Shared text-input style used by both the calculator and materials editor.
+pub(crate) fn text_input_style(
+    _theme: &iced::Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input::Status;
+    let focused = matches!(status, Status::Focused);
+    iced::widget::text_input::Style {
+        background: Background::Color(C::RAISED),
+        border: Border {
+            color: if focused { C::ACCENT } else { C::LINE },
+            width: if focused { 1.5 } else { 1.0 },
+            radius: 4.0.into(),
+        },
+        icon: C::MUTED,
+        placeholder: C::MUTED,
+        value: C::TEXT,
+        selection: Color {
+            a: 0.3,
+            ..C::ACCENT
+        },
+    }
+}
+
 fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
     text_input(placeholder, value)
         .on_input(move |s| Message::Field(field, s))
         .size(SZ_BODY)
         .font(Font::MONOSPACE)
-        .style(|_theme, status| {
-            use iced::widget::text_input::Status;
-            let focused = matches!(status, Status::Focused);
-            iced::widget::text_input::Style {
-                background: Background::Color(C::RAISED),
-                border: Border {
-                    color: if focused { C::ACCENT } else { C::LINE },
-                    width: if focused { 1.5 } else { 1.0 },
-                    radius: 4.0.into(),
-                },
-                icon: C::MUTED,
-                placeholder: C::MUTED,
-                value: C::TEXT,
-                selection: Color {
-                    a: 0.3,
-                    ..C::ACCENT
-                },
-            }
-        })
+        .style(text_input_style)
         .into()
 }
 
 /// A field label in the muted color at 13px.
-fn field_label(label: impl Into<String>) -> Element<'static, Message> {
+pub(crate) fn field_label(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into()).size(SZ_LABEL).color(C::MUTED).into()
 }
 
@@ -189,7 +197,11 @@ fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Mess
 }
 
 /// A mono-spaced data value with color control.
-fn mono_value(value: impl Into<String>, color: Color, size: u16) -> Element<'static, Message> {
+pub(crate) fn mono_value(
+    value: impl Into<String>,
+    color: Color,
+    size: u16,
+) -> Element<'static, Message> {
     text(value.into())
         .font(Font::MONOSPACE)
         .size(size)
@@ -235,7 +247,7 @@ fn result_row<'a>(
     result_row_colored(label, value, unit, C::TEXT)
 }
 
-fn section_divider() -> Element<'static, Message> {
+pub(crate) fn section_divider() -> Element<'static, Message> {
     horizontal_rule(1)
         .style(|_theme| iced::widget::rule::Style {
             color: C::LINE,
@@ -246,7 +258,7 @@ fn section_divider() -> Element<'static, Message> {
         .into()
 }
 
-fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
+pub(crate) fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into())
         .size(SZ_LABEL)
         .color(C::MUTED)
@@ -255,6 +267,102 @@ fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
             ..Font::DEFAULT
         })
         .into()
+}
+
+/// Ghost/outline button style (used for secondary actions).
+pub(crate) fn ghost_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::TEXT
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::TEXT,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Danger/destructive ghost button style (remove actions).
+pub(crate) fn danger_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::DANGER
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::DANGER,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Accent/primary filled button style (save/commit actions).
+pub(crate) fn accent_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let bg = if matches!(status, Status::Hovered) {
+        Color {
+            r: C::ACCENT.r * 0.85,
+            g: C::ACCENT.g * 0.85,
+            b: C::ACCENT.b * 0.85,
+            a: 1.0,
+        }
+    } else {
+        C::ACCENT
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: C::INK,
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Accent-outline nav button style (navigation actions with accent color text/border).
+pub(crate) fn nav_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::ACCENT
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::ACCENT,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -323,10 +431,20 @@ fn build_header(app: &App) -> Element<'_, Message> {
     )
     .text_size(SZ_LABEL);
 
-    row![app_name, horizontal_space(), unit_metric, unit_us,]
-        .spacing(16)
-        .align_y(iced::Alignment::Center)
-        .into()
+    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
+        .on_press(Message::NavigateTo(crate::app::Screen::Materials))
+        .style(nav_button_style);
+
+    row![
+        app_name,
+        horizontal_space(),
+        materials_btn,
+        unit_metric,
+        unit_us,
+    ]
+    .spacing(16)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
 
 // --------------------------------------------------------------------------
@@ -848,18 +966,33 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
 fn build_status_panel(app: &App) -> Element<'_, Message> {
     use springcore::Severity;
 
-    // Only render when there's something to say.
-    let has_messages = app
+    let has_design_messages = app
         .outcome
         .as_ref()
         .map(|o| !o.status.messages.is_empty())
         .unwrap_or(false);
+    let has_load_warnings = !app.load_warnings.is_empty();
 
-    if !has_messages {
+    if !has_design_messages && !has_load_warnings {
         return column![].into();
     }
 
-    let mut col = column![section_heading("Design status")].spacing(6);
+    // Neutral heading: this panel carries both startup material-load warnings
+    // (which can appear before any design is computed) and design-status messages.
+    let mut col = column![section_heading("Status")].spacing(6);
+
+    // Surface any startup material-load warnings first.
+    for warn in &app.load_warnings {
+        let warn_row = row![
+            text("Warning:")
+                .size(SZ_LABEL)
+                .color(C::WARN)
+                .width(Length::Fixed(72.0)),
+            text(warn.message.as_str()).size(SZ_LABEL).color(C::WARN),
+        ]
+        .spacing(8);
+        col = col.push(warn_row);
+    }
 
     if let Some(out) = &app.outcome {
         for msg in &out.status.messages {
@@ -890,49 +1023,11 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
 fn build_footer() -> Element<'static, Message> {
     let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
         .on_press(Message::Save)
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let base_bg = if matches!(status, Status::Hovered) {
-                Color {
-                    r: C::ACCENT.r * 0.85,
-                    g: C::ACCENT.g * 0.85,
-                    b: C::ACCENT.b * 0.85,
-                    a: 1.0,
-                }
-            } else {
-                C::ACCENT
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(base_bg)),
-                text_color: C::INK,
-                border: Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(accent_button_style);
 
     let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
         .on_press(Message::Load)
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let border_color = if matches!(status, Status::Hovered) {
-                C::TEXT
-            } else {
-                C::LINE
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
-                text_color: C::TEXT,
-                border: Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(ghost_button_style);
 
     row![save_btn, load_btn].spacing(12).into()
 }

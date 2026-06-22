@@ -3,7 +3,7 @@
 
 use crate::design::SpringDesign;
 use crate::end_type::EndType;
-use crate::material::MaterialSet;
+use crate::material::{Material, MaterialSet};
 use crate::mechanics::EndFixity;
 use crate::optimize::{solve_min_weight, MinWeightRequest};
 use crate::scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
@@ -240,9 +240,20 @@ impl SavedDesign {
         Self::from_toml(&text)
     }
 
-    /// Re-compute the spring design from the stored scenario inputs and the given material set.
-    pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
-        let material = materials.get(&self.material)?;
+    /// Re-compute the spring design from the stored scenario inputs and an already-resolved
+    /// material reference. Callers that hold a `MaterialStore` (or any other lookup source)
+    /// can call `.get(name)?` themselves and pass the result here.
+    ///
+    /// `material` must be the one named by `self.material`; otherwise the computed design
+    /// and the design's recorded material name would silently disagree. The mismatch is
+    /// rejected at runtime (not merely `debug_assert!`) since this is a public API.
+    pub fn solve_with_material(&self, material: &Material) -> Result<SpringDesign> {
+        if self.material != material.name {
+            return Err(SpringError::InconsistentInputs(format!(
+                "solve_with_material: material '{}' does not match SavedDesign.material '{}'",
+                material.name, self.material
+            )));
+        }
         match &self.scenario {
             ScenarioSpec::PowerUser {
                 end_type,
@@ -327,6 +338,12 @@ impl SavedDesign {
                 solve_min_weight(material, &req).map(|s| s.design)
             }
         }
+    }
+
+    /// Re-compute the spring design from the stored scenario inputs and the given material set.
+    pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
+        let material = materials.get(&self.material)?;
+        self.solve_with_material(material)
     }
 }
 
@@ -539,6 +556,20 @@ mod tests {
         let set = MaterialSet::load_default();
         let design = sample().solve(&set).unwrap();
         assert_relative_eq!(design.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
+    }
+
+    #[test]
+    fn solve_with_material_rejects_mismatched_material() {
+        // sample().material == "Music Wire"; passing a different material errors.
+        let set = MaterialSet::load_default();
+        let wrong = set.get("Stainless 302").unwrap();
+        assert!(matches!(
+            sample().solve_with_material(wrong),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+        // The matching material still solves.
+        let right = set.get("Music Wire").unwrap();
+        assert!(sample().solve_with_material(right).is_ok());
     }
 
     #[test]
