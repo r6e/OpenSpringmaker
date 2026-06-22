@@ -1,0 +1,61 @@
+# cargo-deny configuration — supply-chain policy enforced in CI.
+#
+# Run locally with: cargo deny --all-features check all
+# CI: .github/workflows/deny.yml (EmbarkStudios/cargo-deny-action, `check all --all-features`).
+
+[graph]
+# Mirror CI, which passes --all-features.
+all-features = true
+
+# ── Security advisories ──────────────────────────────────────────────────────
+[advisories]
+version = 2
+# Vulnerabilities fail the build by default. Make the configurable knobs strict
+# too: fail on yanked crates and on unmaintained advisories anywhere in the tree
+# (including transitive). The one accepted exception is listed in `ignore`.
+yanked = "deny"
+unmaintained = "all"
+ignore = [
+    # `paste` — unmaintained (archived upstream), informational (no CVE). A
+    # transitive proc-macro pulled only on the macOS Apple path
+    # (metal → wgpu → iced); we have no direct use and no reachable replacement.
+    # Accepted in docs/adr/0010-accept-transitive-paste-advisory.md.
+    "RUSTSEC-2024-0436",
+]
+
+# ── Licenses ─────────────────────────────────────────────────────────────────
+# Allow only permissive licenses, compatible with this project's MIT OR Apache-2.0.
+# Crates offering a choice (e.g. "X OR Apache-2.0") pass via an allowed operand,
+# so weak-copyleft operands that appear only inside OR expressions need not be
+# listed. No bare GPL/LGPL/AGPL crate is present.
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+# ── Bans ─────────────────────────────────────────────────────────────────────
+[bans]
+# Duplicate versions are common in a large GUI tree (wgpu/winit) and are not a
+# supply-chain risk on their own — surface them as warnings, don't fail.
+multiple-versions = "warn"
+# Forbid wildcard ("*") version requirements on external crates, but allow them
+# for internal workspace path deps (springmaker → springcore).
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# ── Sources ──────────────────────────────────────────────────────────────────
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
