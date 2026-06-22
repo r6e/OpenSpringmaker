@@ -785,6 +785,7 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
 
 fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
     let (prefix, color) = match line.kind {
+        StatusKind::ActionError => ("Error:", C::DANGER),
         StatusKind::LoadWarning => ("Warning:", C::WARN),
         StatusKind::Info => ("Info:", C::MUTED),
         StatusKind::Caution => ("Caution:", C::WARN),
