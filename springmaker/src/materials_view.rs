@@ -6,13 +6,14 @@
 use iced::widget::{
     button, checkbox, column, container, horizontal_space, row, scrollable, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Font, Length};
+use iced::{Background, Element, Font, Length};
 
 use crate::app::{App, EditTarget, MatField, Message, Screen, C};
 use crate::materials_form::coefficient_labels;
 use crate::view::{
-    field_label, mono_value, panel_container, section_divider, section_heading, styled_pick_list,
-    SZ_BODY, SZ_LABEL, SZ_TITLE,
+    accent_button_style, danger_button_style, field_label, ghost_button_style, mono_value,
+    nav_button_style, panel_container, section_divider, section_heading, styled_pick_list,
+    text_input_style, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 use springcore::{MtsForm, StrengthUnits};
 
@@ -27,25 +28,7 @@ fn mat_text_input<'a>(placeholder: &str, value: &str, field: MatField) -> Elemen
         .on_input(move |s| Message::MatField(field, s))
         .size(SZ_BODY)
         .font(Font::MONOSPACE)
-        .style(|_theme, status| {
-            use iced::widget::text_input::Status;
-            let focused = matches!(status, Status::Focused);
-            iced::widget::text_input::Style {
-                background: Background::Color(C::RAISED),
-                border: Border {
-                    color: if focused { C::ACCENT } else { C::LINE },
-                    width: if focused { 1.5 } else { 1.0 },
-                    radius: 4.0.into(),
-                },
-                icon: C::MUTED,
-                placeholder: C::MUTED,
-                value: C::TEXT,
-                selection: Color {
-                    a: 0.3,
-                    ..C::ACCENT
-                },
-            }
-        })
+        .style(text_input_style)
         .into()
 }
 
@@ -57,79 +40,6 @@ fn labeled_mat_input<'a>(label: &str, value: &str, field: MatField) -> Element<'
     ]
     .spacing(4)
     .into()
-}
-
-/// Ghost/outline button style (used for secondary actions).
-fn ghost_button_style(
-    _theme: &iced::Theme,
-    status: iced::widget::button::Status,
-) -> iced::widget::button::Style {
-    use iced::widget::button::Status;
-    let border_color = if matches!(status, Status::Hovered) {
-        C::TEXT
-    } else {
-        C::LINE
-    };
-    iced::widget::button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: C::TEXT,
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        shadow: Default::default(),
-    }
-}
-
-/// Danger/destructive ghost button style (remove actions).
-fn danger_button_style(
-    _theme: &iced::Theme,
-    status: iced::widget::button::Status,
-) -> iced::widget::button::Style {
-    use iced::widget::button::Status;
-    let border_color = if matches!(status, Status::Hovered) {
-        C::DANGER
-    } else {
-        C::LINE
-    };
-    iced::widget::button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: C::DANGER,
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        shadow: Default::default(),
-    }
-}
-
-/// Accent/primary button style (save/commit actions).
-fn accent_button_style(
-    _theme: &iced::Theme,
-    status: iced::widget::button::Status,
-) -> iced::widget::button::Style {
-    use iced::widget::button::Status;
-    let bg = if matches!(status, Status::Hovered) {
-        Color {
-            r: C::ACCENT.r * 0.85,
-            g: C::ACCENT.g * 0.85,
-            b: C::ACCENT.b * 0.85,
-            a: 1.0,
-        }
-    } else {
-        C::ACCENT
-    };
-    iced::widget::button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: C::INK,
-        border: Border {
-            radius: 4.0.into(),
-            ..Default::default()
-        },
-        shadow: Default::default(),
-    }
 }
 
 // --------------------------------------------------------------------------
@@ -152,21 +62,20 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
             text("user").size(SZ_LABEL).color(C::ACCENT).into()
         };
 
-        let edit_btn = button(text("Edit").size(SZ_LABEL).color(C::TEXT))
-            .on_press(Message::MatEdit(name_str.clone()))
-            .style(ghost_button_style);
-
         let clone_btn = button(text("Clone").size(SZ_LABEL).color(C::TEXT))
             .on_press(Message::MatClone(name_str.clone()))
             .style(ghost_button_style);
 
-        let mut btn_row = row![badge, horizontal_space(), edit_btn, clone_btn].spacing(6);
+        let mut btn_row = row![badge, horizontal_space(), clone_btn].spacing(6);
 
         if !app.materials.is_curated(name) {
+            let edit_btn = button(text("Edit").size(SZ_LABEL).color(C::TEXT))
+                .on_press(Message::MatEdit(name_str.clone()))
+                .style(ghost_button_style);
             let remove_btn = button(text("Remove").size(SZ_LABEL).color(C::DANGER))
                 .on_press(Message::MatDelete(name_str))
                 .style(danger_button_style);
-            btn_row = btn_row.push(remove_btn);
+            btn_row = btn_row.push(edit_btn).push(remove_btn);
         }
 
         let entry = column![
@@ -333,15 +242,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
 
     form_col = form_col.push(section_divider()).push(action_row);
 
-    // Status / error feedback
-    if let Some(err) = &app.mat_error {
-        form_col = form_col.push(text(err.as_str()).size(SZ_LABEL).color(C::DANGER));
-    }
-    if let Some(status) = &app.mat_status {
-        form_col = form_col.push(text(status.as_str()).size(SZ_LABEL).color(C::SUCCESS));
-    }
-
-    let scrolled = scrollable(form_col.spacing(10)).height(Length::Fill);
+    let scrolled = scrollable(form_col).height(Length::Fill);
 
     container(panel_container(scrolled))
         .width(Length::FillPortion(1))
@@ -354,27 +255,10 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 /// Build the materials editor screen.
-pub fn view(app: &App) -> Element<'_, Message> {
+pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let back_btn = button(text("\u{2190} Calculator").size(SZ_LABEL).color(C::ACCENT))
         .on_press(Message::NavigateTo(Screen::Calculator))
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let border_color = if matches!(status, Status::Hovered) {
-                C::ACCENT
-            } else {
-                C::LINE
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
-                text_color: C::ACCENT,
-                border: Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(nav_button_style);
 
     let title = text("Materials").size(SZ_TITLE).color(C::TEXT).font(Font {
         weight: iced::font::Weight::Semibold,
@@ -392,10 +276,18 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .spacing(16)
         .height(Length::Fill);
 
-    let content = column![header, section_divider(), panels]
+    let mut content = column![header, section_divider()]
         .spacing(16)
         .max_width(1200)
         .height(Length::Fill);
+
+    if let Some(err) = &app.mat_error {
+        content = content.push(text(err.as_str()).size(SZ_LABEL).color(C::DANGER));
+    } else if let Some(status) = &app.mat_status {
+        content = content.push(text(status.as_str()).size(SZ_LABEL).color(C::SUCCESS));
+    }
+
+    let content = content.push(panels);
 
     let root = container(
         container(content)

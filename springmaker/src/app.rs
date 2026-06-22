@@ -273,6 +273,8 @@ impl App {
             // ── Navigation ──────────────────────────────────────────────────
             Message::NavigateTo(s) => {
                 self.screen = s;
+                self.mat_error = None;
+                self.mat_status = None;
                 false
             }
 
@@ -627,6 +629,15 @@ mod tests {
         let mut a = App::default();
         a.update(Message::NavigateTo(Screen::Materials));
         assert_eq!(a.screen, Screen::Materials);
+    }
+
+    #[test]
+    fn navigate_clears_materials_feedback() {
+        let mut a = App::default();
+        a.update(Message::MatDelete("Music Wire".into())); // sets mat_error (curated)
+        assert!(a.mat_error.is_some());
+        a.update(Message::NavigateTo(Screen::Calculator));
+        assert!(a.mat_error.is_none() && a.mat_status.is_none());
     }
 
     #[test]

@@ -148,30 +148,36 @@ where
         .into()
 }
 
+/// Shared text-input style used by both the calculator and materials editor.
+pub(crate) fn text_input_style(
+    _theme: &iced::Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input::Status;
+    let focused = matches!(status, Status::Focused);
+    iced::widget::text_input::Style {
+        background: Background::Color(C::RAISED),
+        border: Border {
+            color: if focused { C::ACCENT } else { C::LINE },
+            width: if focused { 1.5 } else { 1.0 },
+            radius: 4.0.into(),
+        },
+        icon: C::MUTED,
+        placeholder: C::MUTED,
+        value: C::TEXT,
+        selection: Color {
+            a: 0.3,
+            ..C::ACCENT
+        },
+    }
+}
+
 fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
     text_input(placeholder, value)
         .on_input(move |s| Message::Field(field, s))
         .size(SZ_BODY)
         .font(Font::MONOSPACE)
-        .style(|_theme, status| {
-            use iced::widget::text_input::Status;
-            let focused = matches!(status, Status::Focused);
-            iced::widget::text_input::Style {
-                background: Background::Color(C::RAISED),
-                border: Border {
-                    color: if focused { C::ACCENT } else { C::LINE },
-                    width: if focused { 1.5 } else { 1.0 },
-                    radius: 4.0.into(),
-                },
-                icon: C::MUTED,
-                placeholder: C::MUTED,
-                value: C::TEXT,
-                selection: Color {
-                    a: 0.3,
-                    ..C::ACCENT
-                },
-            }
-        })
+        .style(text_input_style)
         .into()
 }
 
@@ -263,6 +269,102 @@ pub(crate) fn section_heading(label: impl Into<String>) -> Element<'static, Mess
         .into()
 }
 
+/// Ghost/outline button style (used for secondary actions).
+pub(crate) fn ghost_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::TEXT
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::TEXT,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Danger/destructive ghost button style (remove actions).
+pub(crate) fn danger_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::DANGER
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::DANGER,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Accent/primary filled button style (save/commit actions).
+pub(crate) fn accent_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let bg = if matches!(status, Status::Hovered) {
+        Color {
+            r: C::ACCENT.r * 0.85,
+            g: C::ACCENT.g * 0.85,
+            b: C::ACCENT.b * 0.85,
+            a: 1.0,
+        }
+    } else {
+        C::ACCENT
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: C::INK,
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        shadow: Default::default(),
+    }
+}
+
+/// Accent-outline nav button style (navigation actions with accent color text/border).
+pub(crate) fn nav_button_style(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::widget::button::Status;
+    let border_color = if matches!(status, Status::Hovered) {
+        C::ACCENT
+    } else {
+        C::LINE
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: C::ACCENT,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        shadow: Default::default(),
+    }
+}
+
 // --------------------------------------------------------------------------
 // Top-level view
 // --------------------------------------------------------------------------
@@ -331,24 +433,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
 
     let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
         .on_press(Message::NavigateTo(crate::app::Screen::Materials))
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let border_color = if matches!(status, Status::Hovered) {
-                C::ACCENT
-            } else {
-                C::LINE
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(iced::Color::TRANSPARENT)),
-                text_color: C::ACCENT,
-                border: Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(nav_button_style);
 
     row![
         app_name,
@@ -936,49 +1021,11 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
 fn build_footer() -> Element<'static, Message> {
     let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
         .on_press(Message::Save)
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let base_bg = if matches!(status, Status::Hovered) {
-                Color {
-                    r: C::ACCENT.r * 0.85,
-                    g: C::ACCENT.g * 0.85,
-                    b: C::ACCENT.b * 0.85,
-                    a: 1.0,
-                }
-            } else {
-                C::ACCENT
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(base_bg)),
-                text_color: C::INK,
-                border: Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(accent_button_style);
 
     let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
         .on_press(Message::Load)
-        .style(|_theme, status| {
-            use iced::widget::button::Status;
-            let border_color = if matches!(status, Status::Hovered) {
-                C::TEXT
-            } else {
-                C::LINE
-            };
-            iced::widget::button::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
-                text_color: C::TEXT,
-                border: Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                shadow: Default::default(),
-            }
-        });
+        .style(ghost_button_style);
 
     row![save_btn, load_btn].spacing(12).into()
 }
