@@ -10,8 +10,11 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Field, Message, C};
-use crate::form::{FatigueStatus, ScenarioKind, ALL_SCENARIOS};
-use springcore::BindingConstraint;
+use crate::form::ALL_SCENARIOS;
+use crate::view_model::{
+    inputs_view, results_view, status_view, Emphasis, FatigueView, FieldDescriptor, GoverningRate,
+    LoadTable, MinWeightView, PopulatedResults, ResultRow, ResultsView, StatusKind, StatusLine,
+};
 use springcore::UnitSystem;
 
 // --------------------------------------------------------------------------
@@ -515,238 +518,99 @@ fn build_design_panel(app: &App) -> Element<'_, Message> {
 }
 
 fn build_inputs_group(app: &App) -> Element<'_, Message> {
-    let s = app.form.scenario;
-    let us_label = unit_length_label(app.form.unit_system);
-    let us_force = unit_force_label(app.form.unit_system);
-    let us_rate = unit_rate_label(app.form.unit_system);
+    // The presenter decides which fields appear for the scenario and their
+    // unit-aware labels; the live value for each field is bound here from
+    // `app.form` (iced's `text_input` borrows its value).
+    let inputs = inputs_view(app);
 
-    let heading = section_heading("Inputs");
+    let mut col = column![section_heading("Inputs")].spacing(12);
+    for fd in &inputs.primary {
+        col = col.push(render_input(app, fd));
+    }
 
-    let col: iced::widget::Column<'_, Message> = if s == ScenarioKind::MinWeight {
-        column![
-            heading,
-            labeled_input(
-                &format!("Required rate ({us_rate})"),
-                &app.form.rate,
-                Field::Rate
-            ),
-            labeled_input(
-                &format!("Max force ({us_force})"),
-                &app.form.max_force,
-                Field::MaxForce
-            ),
-            labeled_input("Index min", &app.form.index_min, Field::IndexMin),
-            labeled_input("Index max", &app.form.index_max, Field::IndexMax),
-            labeled_input(
-                &format!("Max outer diameter ({us_label}, optional)"),
-                &app.form.max_outer_dia,
-                Field::MaxOuterDia,
-            ),
-            labeled_input(
-                &format!("Candidate wire diameters ({us_label}), comma-separated"),
-                &app.form.candidate_diameters,
-                Field::CandidateDiameters,
-            ),
-            labeled_input(
-                "Clash allowance (fraction)",
-                &app.form.clash_allowance,
-                Field::ClashAllowance
-            ),
-        ]
-        .spacing(12)
-    } else {
-        let wire_field = labeled_input(
-            &format!("Wire diameter ({us_label})"),
-            &app.form.wire_dia,
-            Field::WireDia,
-        );
-        let mean_field = labeled_input(
-            &format!("Mean diameter ({us_label})"),
-            &app.form.mean_dia,
-            Field::MeanDia,
-        );
-
-        let mut col = column![heading, wire_field].spacing(12);
-
-        match s {
-            ScenarioKind::PowerUser => {
-                col = col
-                    .push(mean_field)
-                    .push(labeled_input(
-                        "Active coils",
-                        &app.form.active,
-                        Field::Active,
-                    ))
-                    .push(labeled_input(
-                        &format!("Free length ({us_label})"),
-                        &app.form.free_length,
-                        Field::FreeLength,
-                    ))
-                    .push(labeled_input(
-                        &format!("Loads ({us_force}), comma-separated"),
-                        &app.form.loads,
-                        Field::Loads,
-                    ));
-            }
-            ScenarioKind::TwoLoad => {
-                col = col
-                    .push(mean_field)
-                    .push(labeled_input(
-                        &format!("Force 1 ({us_force})"),
-                        &app.form.force1,
-                        Field::Force1,
-                    ))
-                    .push(labeled_input(
-                        &format!("Length 1 ({us_label})"),
-                        &app.form.length1,
-                        Field::Length1,
-                    ))
-                    .push(labeled_input(
-                        &format!("Force 2 ({us_force})"),
-                        &app.form.force2,
-                        Field::Force2,
-                    ))
-                    .push(labeled_input(
-                        &format!("Length 2 ({us_label})"),
-                        &app.form.length2,
-                        Field::Length2,
-                    ));
-            }
-            ScenarioKind::RateBased => {
-                col = col
-                    .push(mean_field)
-                    .push(labeled_input(
-                        &format!("Spring rate ({us_rate})"),
-                        &app.form.rate,
-                        Field::Rate,
-                    ))
-                    .push(labeled_input(
-                        &format!("Free length ({us_label})"),
-                        &app.form.free_length,
-                        Field::FreeLength,
-                    ))
-                    .push(labeled_input(
-                        &format!("Loads ({us_force}), comma-separated"),
-                        &app.form.loads,
-                        Field::Loads,
-                    ));
-            }
-            ScenarioKind::Dimensional => {
-                col = col
-                    .push(labeled_input(
-                        &format!("Outer diameter ({us_label})"),
-                        &app.form.outer_dia,
-                        Field::OuterDia,
-                    ))
-                    .push(labeled_input(
-                        "Active coils",
-                        &app.form.active,
-                        Field::Active,
-                    ))
-                    .push(labeled_input(
-                        &format!("Free length ({us_label})"),
-                        &app.form.free_length,
-                        Field::FreeLength,
-                    ))
-                    .push(labeled_input(
-                        &format!("Loads ({us_force}), comma-separated"),
-                        &app.form.loads,
-                        Field::Loads,
-                    ));
-            }
-            ScenarioKind::MinWeight => unreachable!("MinWeight handled by early-return guard"),
-        }
-
+    if !inputs.fatigue.is_empty() {
         col = col
             .push(section_divider())
-            .push(section_heading("Fatigue cycle (leave blank to skip)"))
-            .push(labeled_input(
-                &format!("Min cycle force ({us_force})"),
-                &app.form.fatigue_min,
-                Field::FatigueMin,
-            ))
-            .push(labeled_input(
-                &format!("Max cycle force ({us_force})"),
-                &app.form.fatigue_max,
-                Field::FatigueMax,
-            ));
-
-        col
-    };
+            .push(section_heading("Fatigue cycle (leave blank to skip)"));
+        for fd in &inputs.fatigue {
+            col = col.push(render_input(app, fd));
+        }
+    }
 
     col.into()
 }
 
+/// Render one descriptor as a labeled input, binding the live value from `app.form`.
+fn render_input<'a>(app: &'a App, fd: &FieldDescriptor) -> Element<'a, Message> {
+    labeled_input(&fd.label, field_value(&app.form, fd.field), fd.field)
+}
+
+/// Map a [`Field`] to its current string value in the form state.
+fn field_value(form: &crate::form::FormState, field: Field) -> &str {
+    match field {
+        Field::WireDia => &form.wire_dia,
+        Field::MeanDia => &form.mean_dia,
+        Field::OuterDia => &form.outer_dia,
+        Field::Active => &form.active,
+        Field::FreeLength => &form.free_length,
+        Field::Rate => &form.rate,
+        Field::Loads => &form.loads,
+        Field::Force1 => &form.force1,
+        Field::Length1 => &form.length1,
+        Field::Force2 => &form.force2,
+        Field::Length2 => &form.length2,
+        Field::FatigueMin => &form.fatigue_min,
+        Field::FatigueMax => &form.fatigue_max,
+        Field::MaxForce => &form.max_force,
+        Field::IndexMin => &form.index_min,
+        Field::IndexMax => &form.index_max,
+        Field::MaxOuterDia => &form.max_outer_dia,
+        Field::CandidateDiameters => &form.candidate_diameters,
+        Field::ClashAllowance => &form.clash_allowance,
+    }
+}
+
 // --------------------------------------------------------------------------
-// Results (right) panel — section builders
+// Results (right) panel — renderers (data from view_model::results_view)
 // --------------------------------------------------------------------------
 
-fn build_governing_rate<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element<'a, Message> {
+/// Render one result row, mapping the presenter's emphasis to a color.
+fn render_result_row(r: &ResultRow) -> Element<'static, Message> {
+    match r.emphasis {
+        Emphasis::Normal => result_row(r.label.clone(), r.value.clone(), r.unit.clone()),
+        Emphasis::Danger => {
+            result_row_colored(r.label.clone(), r.value.clone(), r.unit.clone(), C::DANGER)
+        }
+    }
+}
+
+/// A heading followed by result rows (spacing 6), as used by every readout section.
+fn rows_section(heading: &str, rows: &[ResultRow]) -> iced::widget::Column<'static, Message> {
+    let mut col = column![section_heading(heading)].spacing(6);
+    for r in rows {
+        col = col.push(render_result_row(r));
+    }
+    col
+}
+
+/// A divider, a heading, then result rows (spacing 6) — the fatigue/min-weight
+/// section shape. Built flat (not by wrapping `rows_section`) so the
+/// divider→heading gap stays at the section's own spacing of 6.
+fn divided_result_section(heading: &str, rows: &[ResultRow]) -> Element<'static, Message> {
+    let mut col = column![section_divider(), section_heading(heading)].spacing(6);
+    for r in rows {
+        col = col.push(render_result_row(r));
+    }
+    col.into()
+}
+
+fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Message> {
     let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
-    let rate_value = mono_value(
-        format!("{:.4} {}", display_rate(d.rate, us), unit_rate_label(us)),
-        C::ACCENT,
-        SZ_HERO,
-    );
+    let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), C::ACCENT, SZ_HERO);
     column![rate_label, rate_value].spacing(6).into()
 }
 
-fn build_geometry_section<'a>(
-    d: &springcore::SpringDesign,
-    us: UnitSystem,
-) -> Element<'a, Message> {
-    let buckling_color = if d.buckling_stable {
-        C::TEXT
-    } else {
-        C::DANGER
-    };
-    let buckling_text = if d.buckling_stable {
-        "Stable".to_string()
-    } else {
-        "UNSTABLE".to_string()
-    };
-    column![
-        section_heading("Geometry"),
-        result_row("Spring index", format!("{:.3}", d.index), ""),
-        result_row("Active coils", format!("{:.3}", d.active_coils), ""),
-        result_row("Total coils", format!("{:.3}", d.total_coils), ""),
-        result_row(
-            "Free length",
-            format!("{:.4}", display_len(d.free_length, us)),
-            unit_length_label(us),
-        ),
-        result_row(
-            "Solid length",
-            format!("{:.4}", display_len(d.solid_length, us)),
-            unit_length_label(us),
-        ),
-        result_row(
-            "Outer diameter",
-            format!("{:.4}", display_len(d.outer_dia, us)),
-            unit_length_label(us),
-        ),
-        result_row(
-            "Inner diameter",
-            format!("{:.4}", display_len(d.inner_dia, us)),
-            unit_length_label(us),
-        ),
-        result_row(
-            "Natural frequency",
-            format!("{:.2}", d.natural_frequency.hertz()),
-            "Hz",
-        ),
-        result_row_colored("Buckling", buckling_text, "", buckling_color),
-    ]
-    .spacing(6)
-    .into()
-}
-
-fn build_load_table<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element<'a, Message> {
-    let stress_unit = if us == UnitSystem::Metric {
-        "MPa"
-    } else {
-        "ksi"
-    };
+fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
     let mut load_col = column![section_heading("Load points")].spacing(4);
 
     load_col = load_col.push(
@@ -767,7 +631,7 @@ fn build_load_table<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(2)),
-            text(format!("Stress ({stress_unit})"))
+            text(format!("Stress ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(2)),
@@ -779,47 +643,34 @@ fn build_load_table<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element
         .spacing(4),
     );
 
-    for (i, lp) in d.load_points.iter().enumerate() {
-        let (stress_val, _stress_lbl) = display_stress(lp.shear_stress, us);
+    for lp in &lt.rows {
         let load_row = row![
-            text(format!("{}", i + 1))
+            text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(C::MUTED)
                 .width(Length::Fixed(24.0)),
-            text(format!(
-                "{:.3} {}",
-                display_force(lp.force, us),
-                unit_force_label(us)
-            ))
-            .font(Font::MONOSPACE)
-            .size(SZ_LABEL)
-            .color(C::TEXT)
-            .width(Length::FillPortion(2)),
-            text(format!(
-                "{:.4} {}",
-                display_len(lp.deflection, us),
-                unit_length_label(us)
-            ))
-            .font(Font::MONOSPACE)
-            .size(SZ_LABEL)
-            .color(C::TEXT)
-            .width(Length::FillPortion(2)),
-            text(format!(
-                "{:.4} {}",
-                display_len(lp.length, us),
-                unit_length_label(us)
-            ))
-            .font(Font::MONOSPACE)
-            .size(SZ_LABEL)
-            .color(C::TEXT)
-            .width(Length::FillPortion(2)),
-            text(format!("{stress_val:.3}"))
+            text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(C::TEXT)
                 .width(Length::FillPortion(2)),
-            text(format!("{:.1}%", lp.pct_mts * 100.0))
+            text(lp.deflection.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.length.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.stress.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(C::TEXT)
@@ -832,76 +683,22 @@ fn build_load_table<'a>(d: &springcore::SpringDesign, us: UnitSystem) -> Element
     load_col.into()
 }
 
-fn build_fatigue_section<'a>(
-    out: &crate::form::FormOutcome,
-    us: UnitSystem,
-) -> Element<'a, Message> {
-    if out.min_weight.is_some() {
-        return column![].into();
-    }
-    match &out.fatigue {
-        FatigueStatus::Computed(fat) => {
-            let (alt_val, alt_lbl) = display_stress(fat.alternating_stress, us);
-            let (mean_val, mean_lbl) = display_stress(fat.mean_stress, us);
-            let (endurance_val, endurance_lbl) = display_stress(fat.fully_reversed_endurance, us);
-            let (ssu_val, ssu_lbl) = display_stress(fat.ultimate_shear, us);
-            column![
-                section_divider(),
-                section_heading("Fatigue analysis"),
-                result_row("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
-                result_row("Mean stress", format!("{mean_val:.2}"), mean_lbl),
-                result_row(
-                    "Endurance (S\u{2032}\u{2032}se)",
-                    format!("{endurance_val:.2}"),
-                    endurance_lbl,
-                ),
-                result_row("Ultimate shear (Ssu)", format!("{ssu_val:.2}"), ssu_lbl),
-                result_row(
-                    "Goodman FOS",
-                    format!("{:.3}", fat.goodman_factor_of_safety),
-                    "",
-                ),
-            ]
-            .spacing(6)
-            .into()
+fn render_fatigue(fv: &FatigueView) -> Element<'static, Message> {
+    match fv {
+        FatigueView::Hidden => column![].into(),
+        FatigueView::Computed(rows) => divided_result_section("Fatigue analysis", rows),
+        FatigueView::Note(msg) => {
+            column![section_divider(), text(*msg).size(SZ_LABEL).color(C::MUTED),]
+                .spacing(8)
+                .into()
         }
-        FatigueStatus::NoData => column![
-            section_divider(),
-            text("No fatigue data for this material.")
-                .size(SZ_LABEL)
-                .color(C::MUTED),
-        ]
-        .spacing(8)
-        .into(),
-        FatigueStatus::Skipped => column![
-            section_divider(),
-            text("Enter min and max cycle forces to compute fatigue.")
-                .size(SZ_LABEL)
-                .color(C::MUTED),
-        ]
-        .spacing(8)
-        .into(),
     }
 }
 
-fn build_min_weight_section<'a>(out: &crate::form::FormOutcome) -> Element<'a, Message> {
-    match &out.min_weight {
-        Some(mw) => {
-            let binding_label = match mw.binding {
-                BindingConstraint::Stress => "stress",
-                BindingConstraint::Index => "index",
-                BindingConstraint::OuterDiameter => "outer diameter",
-            };
-            column![
-                section_divider(),
-                section_heading("Min-weight optimisation"),
-                result_row("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
-                result_row("Binding constraint", binding_label, ""),
-            ]
-            .spacing(6)
-            .into()
-        }
-        None => column![].into(),
+fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
+    match mv {
+        MinWeightView::Hidden => column![].into(),
+        MinWeightView::Shown(rows) => divided_result_section("Min-weight optimisation", rows),
     }
 }
 
@@ -912,45 +709,31 @@ fn build_min_weight_section<'a>(out: &crate::form::FormOutcome) -> Element<'a, M
 fn build_results_panel(app: &App) -> Element<'_, Message> {
     let us = app.form.unit_system;
 
-    let content: Element<'_, Message> = match &app.outcome {
-        None => {
-            if let Some(err) = &app.error {
-                column![
-                    section_heading("Results"),
-                    text(err.as_str()).size(SZ_LABEL).color(C::DANGER),
-                ]
-                .spacing(12)
-                .into()
-            } else {
-                column![
-                    section_heading("Results"),
-                    text("Enter design parameters to see results.")
-                        .size(SZ_BODY)
-                        .color(C::MUTED),
-                ]
-                .spacing(12)
-                .into()
-            }
-        }
-        Some(out) => {
-            let d = &out.design;
-            let chart = crate::plot::results_chart(d, us);
+    let content: Element<'_, Message> = match results_view(app) {
+        ResultsView::Error(msg) => column![
+            section_heading("Results"),
+            text(msg).size(SZ_LABEL).color(C::DANGER),
+        ]
+        .spacing(12)
+        .into(),
+        ResultsView::Empty => column![
+            section_heading("Results"),
+            text("Enter design parameters to see results.")
+                .size(SZ_BODY)
+                .color(C::MUTED),
+        ]
+        .spacing(12)
+        .into(),
+        ResultsView::Populated(p) => {
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            let chart = app
+                .outcome
+                .as_ref()
+                .map(|o| crate::plot::results_chart(&o.design, us))
+                .expect("ResultsView::Populated implies app.outcome is Some");
 
-            column![
-                section_heading("Results"),
-                section_divider(),
-                build_governing_rate(d, us),
-                section_divider(),
-                build_geometry_section(d, us),
-                section_divider(),
-                build_load_table(d, us),
-                build_fatigue_section(out, us),
-                build_min_weight_section(out),
-                section_divider(),
-                chart,
-            ]
-            .spacing(6)
-            .into()
+            render_populated(&p, chart)
         }
     };
 
@@ -959,61 +742,63 @@ fn build_results_panel(app: &App) -> Element<'_, Message> {
         .into()
 }
 
+/// Assemble the populated results column from the presenter data plus the chart.
+fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> Element<'a, Message> {
+    column![
+        section_heading("Results"),
+        section_divider(),
+        render_governing_rate(&p.governing_rate),
+        section_divider(),
+        rows_section("Geometry", &p.geometry),
+        section_divider(),
+        render_load_table(&p.load_table),
+        render_fatigue(&p.fatigue),
+        render_min_weight(&p.min_weight),
+        section_divider(),
+        chart,
+    ]
+    .spacing(6)
+    .into()
+}
+
 // --------------------------------------------------------------------------
 // Status panel
 // --------------------------------------------------------------------------
 
 fn build_status_panel(app: &App) -> Element<'_, Message> {
-    use springcore::Severity;
-
-    let has_design_messages = app
-        .outcome
-        .as_ref()
-        .map(|o| !o.status.messages.is_empty())
-        .unwrap_or(false);
-    let has_load_warnings = !app.load_warnings.is_empty();
-
-    if !has_design_messages && !has_load_warnings {
+    // The presenter decides suppression, ordering (load warnings first), and
+    // each line's severity class; the view maps that class to prefix and color.
+    let lines = status_view(app);
+    if lines.is_empty() {
         return column![].into();
     }
 
     // Neutral heading: this panel carries both startup material-load warnings
     // (which can appear before any design is computed) and design-status messages.
     let mut col = column![section_heading("Status")].spacing(6);
-
-    // Surface any startup material-load warnings first.
-    for warn in &app.load_warnings {
-        let warn_row = row![
-            text("Warning:")
-                .size(SZ_LABEL)
-                .color(C::WARN)
-                .width(Length::Fixed(72.0)),
-            text(warn.message.as_str()).size(SZ_LABEL).color(C::WARN),
-        ]
-        .spacing(8);
-        col = col.push(warn_row);
-    }
-
-    if let Some(out) = &app.outcome {
-        for msg in &out.status.messages {
-            let (prefix, color) = match msg.severity {
-                Severity::Info => ("Info:", C::MUTED),
-                Severity::Caution => ("Caution:", C::WARN),
-                Severity::Warning => ("Warning:", C::DANGER),
-            };
-            let status_row = row![
-                text(prefix)
-                    .size(SZ_LABEL)
-                    .color(color)
-                    .width(Length::Fixed(72.0)),
-                text(msg.message.as_str()).size(SZ_LABEL).color(color),
-            ]
-            .spacing(8);
-            col = col.push(status_row);
-        }
+    for line in &lines {
+        col = col.push(render_status_line(line));
     }
 
     panel_container(col)
+}
+
+fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
+    let (prefix, color) = match line.kind {
+        StatusKind::LoadWarning => ("Warning:", C::WARN),
+        StatusKind::Info => ("Info:", C::MUTED),
+        StatusKind::Caution => ("Caution:", C::WARN),
+        StatusKind::DesignWarning => ("Warning:", C::DANGER),
+    };
+    row![
+        text(prefix)
+            .size(SZ_LABEL)
+            .color(color)
+            .width(Length::Fixed(72.0)),
+        text(line.text.clone()).size(SZ_LABEL).color(color),
+    ]
+    .spacing(8)
+    .into()
 }
 
 // --------------------------------------------------------------------------
@@ -1030,64 +815,4 @@ fn build_footer() -> Element<'static, Message> {
         .style(ghost_button_style);
 
     row![save_btn, load_btn].spacing(12).into()
-}
-
-// --------------------------------------------------------------------------
-// Unit display helpers
-// --------------------------------------------------------------------------
-
-fn unit_length_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "mm",
-        UnitSystem::Us => "in",
-    }
-}
-
-fn unit_force_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N",
-        UnitSystem::Us => "lbf",
-    }
-}
-
-fn unit_rate_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N/mm",
-        UnitSystem::Us => "lbf/in",
-    }
-}
-
-fn display_len(l: springcore::Length, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => l.millimeters(),
-        UnitSystem::Us => l.inches(),
-    }
-}
-
-fn display_force(f: springcore::Force, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => f.newtons(),
-        UnitSystem::Us => f.pounds_force(),
-    }
-}
-
-/// Conversion factor: N/mm displayed ↔ N/m stored internally.
-const MM_PER_M: f64 = 1000.0;
-
-fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
-    match us {
-        // Display in N/mm (= N/m ÷ MM_PER_M) so rate is consistent with mm lengths and
-        // the chart axes (deflection in mm, force in N → slope in N/mm).
-        UnitSystem::Metric => r.newtons_per_meter() / MM_PER_M,
-        UnitSystem::Us => r.pounds_per_inch(),
-    }
-}
-
-/// Returns `(value, label)` for a stress in the active unit system.
-/// Metric → MPa; US → ksi.
-fn display_stress(s: springcore::Stress, us: UnitSystem) -> (f64, &'static str) {
-    match us {
-        UnitSystem::Metric => (s.megapascals(), "MPa"),
-        UnitSystem::Us => (s.psi() / 1000.0, "ksi"),
-    }
 }

@@ -5,6 +5,7 @@ mod materials_view;
 mod materials_view_model;
 mod plot;
 mod view;
+mod view_model;
 
 use app::App;
 use iced::window;

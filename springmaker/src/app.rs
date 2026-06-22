@@ -133,7 +133,7 @@ pub enum MatField {
 // --------------------------------------------------------------------------
 
 /// Which text field a [`Message::Field`] targets.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     WireDia,
     MeanDia,
