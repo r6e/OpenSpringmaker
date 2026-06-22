@@ -18,11 +18,11 @@ use springcore::UnitSystem;
 // Font-size constants
 // --------------------------------------------------------------------------
 
-pub(crate) const SZ_CAPTION: u16 = 11;
+const SZ_CAPTION: u16 = 11;
 pub(crate) const SZ_LABEL: u16 = 13;
 pub(crate) const SZ_BODY: u16 = 14;
 pub(crate) const SZ_TITLE: u16 = 18;
-pub(crate) const SZ_HERO: u16 = 22;
+const SZ_HERO: u16 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items

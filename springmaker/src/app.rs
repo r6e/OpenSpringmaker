@@ -169,7 +169,7 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
-    // Navigation and materials editor variants — consumed by view in Task 5.
+    // Navigation and materials-editor variants.
     NavigateTo(Screen),
     MatField(MatField, String),
     MatFormKind(MtsForm),
