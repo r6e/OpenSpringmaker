@@ -275,7 +275,9 @@ impl App {
                 self.screen = s;
                 self.mat_error = None;
                 self.mat_status = None;
-                false
+                // Returning to the calculator: re-solve in case the selected
+                // material was edited in the editor (stale outcome otherwise).
+                matches!(s, Screen::Calculator)
             }
 
             // ── Materials editor ─────────────────────────────────────────────
@@ -333,6 +335,9 @@ impl App {
                 false
             }
             Message::MatClone(name) => {
+                // Clone adds the "(copy)" immediately and opens it for editing
+                // (an instant copy you then refine); cancelling leaves the copy,
+                // which the user can Remove — unlike New, which adds only on commit.
                 match self.materials.clone_material(&name) {
                     Ok(copy) => {
                         let copy_name = copy.name.clone();

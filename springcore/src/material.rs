@@ -135,29 +135,48 @@ pub struct Endurance {
 /// to validate and convert to a [`Material`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialDraft {
+    /// Material name (unique identity key; trimmed and rejected if blank on build).
     pub name: String,
+    /// Specification / standard designation.
     pub specification: String,
+    /// Source citations for the constants.
     pub citations: String,
+    /// Minimum-tensile-strength equation form.
     pub mts_form: MtsForm,
+    /// Unit system the coefficients are expressed in.
     pub mts_units: StrengthUnits,
+    /// Strength coefficients, interpreted per `mts_form` and `mts_units`.
     pub mts_coefficients: Vec<f64>,
+    /// Smallest valid wire diameter, in mm.
     pub valid_dia_min_mm: f64,
+    /// Largest valid wire diameter, in mm.
     pub valid_dia_max_mm: f64,
+    /// Young's modulus, in GPa.
     pub youngs_modulus_gpa: f64,
+    /// Shear modulus, in GPa.
     pub shear_modulus_gpa: f64,
+    /// Density, in kg/m³.
     pub density_kg_per_m3: f64,
+    /// Allowable torsional stress as a fraction of MTS.
     pub allowable_pct_torsion: f64,
+    /// Allowable bending stress as a fraction of MTS.
     pub allowable_pct_bending: f64,
+    /// Allowable stress before permanent set, as a fraction of MTS.
     pub allowable_pct_set: f64,
+    /// Optional cited endurance data.
     pub endurance: Option<EnduranceDraft>,
+    /// Optional maximum service temperature, in °C (informational).
     pub max_service_temp_c: Option<f64>,
 }
 
 /// Editable endurance data within a [`MaterialDraft`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnduranceDraft {
+    /// Alternating shear endurance strength, in MPa.
     pub ssa_mpa: f64,
+    /// Mean shear endurance strength, in MPa.
     pub ssm_mpa: f64,
+    /// Whether the data is for shot-peened wire.
     pub peened: bool,
 }
 
@@ -385,6 +404,15 @@ fn coefficients_ok(form: MtsForm, n: usize) -> bool {
 
 impl Material {
     pub(crate) fn try_from_raw(r: RawMaterial) -> Result<Self> {
+        // Name is the identity key; reject empty/whitespace-only and normalize
+        // surrounding whitespace so look-alikes (e.g. "Music Wire ") can't sit
+        // beside curated names.
+        let name = r.name.trim().to_string();
+        if name.is_empty() {
+            return Err(SpringError::DataFile(
+                "material name must not be empty".to_string(),
+            ));
+        }
         let form = mts_form_from_str(&r.mts_form)?;
         let units = strength_units_from_str(&r.mts_units)?;
         if !coefficients_ok(form, r.mts_coefficients.len()) {
@@ -474,7 +502,7 @@ impl Material {
             }
         }
         Ok(Material {
-            name: r.name,
+            name,
             specification: r.specification,
             mts: MtsEquation {
                 form,
@@ -1259,6 +1287,20 @@ allowable_pct_set = 0.60
         assert_eq!(MtsForm::Rational.to_string(), "Rational");
         assert_eq!(StrengthUnits::SiMpaMm.to_string(), "SI (MPa, mm)");
         assert_eq!(StrengthUnits::UsKpsiInch.to_string(), "US (kpsi, in)");
+    }
+
+    #[test]
+    fn draft_build_rejects_blank_name() {
+        let mut d = good_draft();
+        d.name = "   ".into();
+        assert!(matches!(d.build(), Err(SpringError::DataFile(_))));
+    }
+
+    #[test]
+    fn draft_build_trims_name() {
+        let mut d = good_draft();
+        d.name = "  Padded Wire  ".into();
+        assert_eq!(d.build().unwrap().name, "Padded Wire");
     }
 
     #[test]

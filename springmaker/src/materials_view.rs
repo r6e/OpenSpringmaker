@@ -52,8 +52,9 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
     let mut list_col = column![].spacing(6);
     for name in &names {
         let name_str = name.to_string();
+        let curated = app.materials.is_curated(name);
 
-        let badge: Element<'_, Message> = if app.materials.is_curated(name) {
+        let badge: Element<'_, Message> = if curated {
             text("curated \u{1f512}")
                 .size(SZ_LABEL)
                 .color(C::MUTED)
@@ -68,7 +69,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
 
         let mut btn_row = row![badge, horizontal_space(), clone_btn].spacing(6);
 
-        if !app.materials.is_curated(name) {
+        if !curated {
             let edit_btn = button(text("Edit").size(SZ_LABEL).color(C::TEXT))
                 .on_press(Message::MatEdit(name_str.clone()))
                 .style(ghost_button_style);
