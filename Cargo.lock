@@ -1909,6 +1909,7 @@ dependencies = [
  "iced_core 0.14.0",
  "iced_futures 0.14.0",
  "log",
+ "lyon_path",
  "raw-window-handle",
  "rustc-hash 2.1.2",
  "thiserror 2.0.18",
@@ -2046,6 +2047,7 @@ dependencies = [
  "iced_debug",
  "iced_graphics 0.14.0",
  "log",
+ "lyon",
  "rustc-hash 2.1.2",
  "thiserror 2.0.18",
  "wgpu 27.0.1",
@@ -3445,6 +3447,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "plotters-iced2"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b1039c8645f00d8a217cefe8ad37f3a8b268a51f7de5eff429b78920ad1a9ea"
+dependencies = [
+ "iced_graphics 0.14.0",
+ "iced_widget 0.14.2",
+ "once_cell",
+ "plotters",
+ "plotters-backend",
+]
+
+[[package]]
 name = "plotters-svg"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4245,6 +4260,7 @@ dependencies = [
  "iced",
  "plotters",
  "plotters-iced",
+ "plotters-iced2",
  "rfd",
  "springcore",
 ]
