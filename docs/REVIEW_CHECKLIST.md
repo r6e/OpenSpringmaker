@@ -53,7 +53,21 @@ runtime** for library code (we're a library; `SavedDesign::solve_with_material`
 returns `SpringError` on a material/name mismatch), or document an intentional
 relaxation. Can a caller pass inconsistent arguments?
 
-## 6. Verify findings empirically — don't cargo-cult
+## 6. View/presenter separation (GUI)
+
+Per [ADR 0008](adr/0008-humble-view-presenter-pattern.md), every GUI screen
+splits a **pure presenter** (a `*_view_model` module, no iced) from a **humble
+view** (the matching view module — `materials_view`, or `view` for the
+calculator, which also hosts the shared style toolkit; see the ADR's file-layout
+note). Check both directions: the view must hold no decision logic
+(mode/section/field selection, conversion, formatting, severity/emphasis
+mapping all live in the presenter), and the presenter must build no widgets.
+Correctness-bearing logic goes in the presenter with a hermetic test
+(`App::from_store`, never `App::default`); only cosmetic concerns (color, font,
+layout) and iced glue (message closures, borrowed `text_input` values) stay in
+the view. A new or edited screen that decides things inline is a finding.
+
+## 7. Verify findings empirically — don't cargo-cult
 
 Give every reviewer (human or tool) serious weight, but **validate each finding
 against primary sources before acting**. A green multi-platform build refutes a
