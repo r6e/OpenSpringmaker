@@ -8,7 +8,7 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
-use crate::app::{App, Message, Screen};
+use crate::app::{App, Field, Message, Screen};
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{MaterialSet, MaterialStore};
@@ -47,6 +47,20 @@ fn click(app: &mut App, label: &str) {
 /// Whether a widget matching `label` is present in the current render.
 fn shows(app: &App, label: &str) -> bool {
     ui(app).find(label).is_ok()
+}
+
+/// Focus a calculator field's input by its stable id and type `text` into it,
+/// then apply the resulting messages. Focus is UI-internal (not in `App`), so
+/// the focusing click and the `typewrite` must share one simulator instance.
+fn type_into(app: &mut App, field: Field, text: &str) {
+    let id = iced_test::core::widget::Id::from(crate::view::calc_field_id(field));
+    let mut sim = ui(app);
+    sim.click(id)
+        .unwrap_or_else(|_| panic!("no input for field {field:?}"));
+    sim.typewrite(text);
+    for message in sim.into_messages() {
+        app.update(message);
+    }
 }
 
 /// Number of user (non-curated) materials currently in the store.
@@ -123,6 +137,35 @@ fn remove_deletes_a_user_material() {
         0,
         "Remove deletes the user material"
     );
+}
+
+#[test]
+fn typing_a_valid_power_user_design_renders_results() {
+    let mut app = test_app();
+    // Calculator opens on the empty PowerUser form → results show the prompt.
+    assert!(shows(&app, "Enter design parameters to see results."));
+
+    // Type a valid design field by field (each input targeted by its stable id).
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    // typewrite accumulates the full string into the focused input (not just the
+    // last keystroke) — assert the form captured each value verbatim.
+    assert_eq!(app.form.wire_dia, "2.0");
+    assert_eq!(app.form.mean_dia, "20.0");
+    assert_eq!(app.form.loads, "10, 30");
+
+    // The full input → Field → recompute → results-render path now produces a
+    // solved design in the UI.
+    assert!(
+        shows(&app, "Spring rate"),
+        "a valid design should render the results panel"
+    );
+    assert!(shows(&app, "Geometry"));
+    assert!(!shows(&app, "Enter design parameters to see results."));
 }
 
 #[test]

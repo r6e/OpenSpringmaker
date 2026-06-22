@@ -177,11 +177,22 @@ pub(crate) fn text_input_style(
 
 fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
     text_input(placeholder, value)
+        .id(calc_field_id(field))
         .on_input(move |s| Message::Field(field, s))
         .size(SZ_BODY)
         .font(Font::MONOSPACE)
         .style(text_input_style)
         .into()
+}
+
+/// Stable widget id (as a string) for a calculator field's text input. The
+/// inputs are empty by default, so headless Simulator tests can't target them by
+/// text content and select by this id instead. Single source of truth shared by
+/// the view and the tests, derived from the `Field` variant name so the two
+/// can't drift. Assumes each `Field` renders at most one input per frame (true
+/// today: the scenario-driven input set never repeats a field).
+pub(crate) fn calc_field_id(field: Field) -> String {
+    format!("calc-{field:?}")
 }
 
 /// A field label in the muted color at 13px.
