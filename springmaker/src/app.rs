@@ -384,16 +384,22 @@ impl App {
             Message::MatCommit => {
                 match build_draft(&self.mat_form).and_then(|d| d.build()) {
                     Ok(m) => {
-                        let res = match &self.editing {
+                        let new_name = m.name.clone();
+                        let target = self.editing.clone();
+                        let res = match &target {
                             Some(EditTarget::New) => self.materials.add(m),
-                            Some(EditTarget::Existing(orig)) => {
-                                let orig = orig.clone();
-                                self.materials.update(&orig, m)
-                            }
+                            Some(EditTarget::Existing(orig)) => self.materials.update(orig, m),
                             None => return,
                         };
                         match res {
                             Ok(()) => {
+                                // If editing renamed the material the calculator had
+                                // selected, follow the rename so the selection stays valid.
+                                if let Some(EditTarget::Existing(orig)) = &target {
+                                    if self.form.material == *orig && new_name != *orig {
+                                        self.form.material = new_name;
+                                    }
+                                }
                                 self.editing = None;
                                 self.set_mat_status("saved entry");
                             }
@@ -745,5 +751,21 @@ mod tests {
         a.update(Message::MatClone("Music Wire".into())); // succeeds, in-memory
         assert!(a.mat_error.is_none(), "success must clear a stale error");
         assert!(a.mat_status.is_some());
+    }
+
+    #[test]
+    fn renaming_selected_material_follows_the_rename() {
+        let mut a = test_app();
+        a.update(Message::MatClone("Music Wire".into()));
+        let orig = editing_name(&a); // the editor is open on the clone
+        a.form.material = orig.clone(); // calculator selects it
+                                        // Rename it via the editor and commit.
+        a.update(Message::MatField(MatField::Name, "Renamed Wire".into()));
+        a.update(Message::MatCommit);
+        assert!(a.mat_error.is_none());
+        assert!(a.materials.names().contains(&"Renamed Wire"));
+        assert!(!a.materials.names().contains(&orig.as_str()));
+        // The calculator selection followed the rename (no stale MaterialNotFound).
+        assert_eq!(a.form.material, "Renamed Wire");
     }
 }
