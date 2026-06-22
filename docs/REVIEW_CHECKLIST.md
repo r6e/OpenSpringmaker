@@ -56,8 +56,10 @@ relaxation. Can a caller pass inconsistent arguments?
 ## 6. View/presenter separation (GUI)
 
 Per [ADR 0008](adr/0008-humble-view-presenter-pattern.md), every GUI screen
-splits a **pure presenter** (`*_view_model.rs`, no iced) from a **humble view**
-(`*_view.rs`). Check both directions: the view must hold no decision logic
+splits a **pure presenter** (a `*_view_model` module, no iced) from a **humble
+view** (the matching view module — `materials_view`, or `view` for the
+calculator, which also hosts the shared style toolkit; see the ADR's file-layout
+note). Check both directions: the view must hold no decision logic
 (mode/section/field selection, conversion, formatting, severity/emphasis
 mapping all live in the presenter), and the presenter must build no widgets.
 Correctness-bearing logic goes in the presenter with a hermetic test

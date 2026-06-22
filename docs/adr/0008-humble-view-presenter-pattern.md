@@ -32,17 +32,19 @@ renderer. That worked, so we are standardizing it.
 **Every GUI screen separates a pure presenter (view-model) from a humble
 view.**
 
-- The **presenter** (`*_view_model.rs`) is pure: it takes `&App` (or a piece of
+- The **presenter** (a `*_view_model` module — `view_model` for the calculator,
+  `materials_view_model` for the editor) is pure: it takes `&App` (or a piece of
   app state) and returns plain data — structs and enums describing *what* to
   show. It has **no iced dependency**. It owns every correctness-bearing
   decision: which mode/section/fields appear, value and unit conversions,
   pre-formatted display strings, and classification enums (e.g. severity →
   `StatusKind`, value emphasis → `Emphasis`).
-- The **view** (`*_view.rs`) is humble: it maps the presenter's data to iced
-  widgets and nothing else. It owns only **cosmetic** concerns — colors, fonts,
-  widths, spacing, layout — plus the glue iced forces into the view (message
-  closures, and binding a `text_input`'s borrowed value from `app` state, since
-  iced borrows it for the widget's lifetime).
+- The **view** (the matching view module — `view` for the calculator,
+  `materials_view` for the editor) is humble: it maps the presenter's data to
+  iced widgets and nothing else. It owns only **cosmetic** concerns — colors,
+  fonts, widths, spacing, layout — plus the glue iced forces into the view
+  (message closures, and binding a `text_input`'s borrowed value from `app`
+  state, since iced borrows it for the widget's lifetime).
 
 The dividing principle: **if getting it wrong is a correctness bug, it belongs
 in the presenter and gets a test; if it is purely visual, it stays in the
@@ -58,6 +60,17 @@ entry-point functions and the data types the view consumes are `pub`; helpers
 and conversions stay private to the presenter module. (The materials editor,
 written before this convention, uses `list_rows` / `feedback` / `edit_panel`;
 it is grandfathered, and new screens follow the `_view` form.)
+
+**File layout.** A new screen's pair is `<screen>_view.rs` (humble view) and
+`<screen>_view_model.rs` (presenter) — as the materials editor already is
+(`materials_view.rs` / `materials_view_model.rs`). The calculator is the
+exception: its presenter is `view_model.rs`, and its humble view is `view.rs`,
+which also hosts the **shared style toolkit** (`panel_container`,
+`section_heading`, `section_divider`, the button/input styles, `mono_value`,
+`result_row`) that *every* screen imports — so it keeps a generic name rather
+than `calculator_view.rs`. Splitting that toolkit into its own module and
+renaming the calculator pair to `calculator_view{,_model}.rs` is a worthwhile
+future cleanup, not a blocker for this convention.
 
 This applies to existing screens (calculator `view` / `view_model`, materials
 editor `materials_view` / `materials_view_model`) and to every screen added
