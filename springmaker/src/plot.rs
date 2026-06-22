@@ -2,7 +2,7 @@
 
 use crate::app::{Message, C};
 use plotters::prelude::*;
-use plotters_iced::{Chart, ChartWidget};
+use plotters_iced2::{Chart, ChartWidget};
 use springcore::{SpringDesign, UnitSystem};
 
 /// Convert an iced palette colour to a plotters `RGBColor`.

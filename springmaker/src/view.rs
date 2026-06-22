@@ -21,11 +21,11 @@ use springcore::UnitSystem;
 // Font-size constants
 // --------------------------------------------------------------------------
 
-const SZ_CAPTION: u16 = 11;
-pub(crate) const SZ_LABEL: u16 = 13;
-pub(crate) const SZ_BODY: u16 = 14;
-pub(crate) const SZ_TITLE: u16 = 18;
-const SZ_HERO: u16 = 22;
+const SZ_CAPTION: u32 = 11;
+pub(crate) const SZ_LABEL: u32 = 13;
+pub(crate) const SZ_BODY: u32 = 14;
+pub(crate) const SZ_TITLE: u32 = 18;
+const SZ_HERO: u32 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -203,7 +203,7 @@ fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Mess
 pub(crate) fn mono_value(
     value: impl Into<String>,
     color: Color,
-    size: u16,
+    size: u32,
 ) -> Element<'static, Message> {
     text(value.into())
         .font(Font::MONOSPACE)
