@@ -243,7 +243,16 @@ impl SavedDesign {
     /// Re-compute the spring design from the stored scenario inputs and an already-resolved
     /// material reference. Callers that hold a `MaterialStore` (or any other lookup source)
     /// can call `.get(name)?` themselves and pass the result here.
+    ///
+    /// `material` is expected to be the one named by `self.material`; a mismatch means the
+    /// computed design and the design's recorded material name would disagree. This is
+    /// guarded by a `debug_assert!` (callers resolve the material from `self.material`).
     pub fn solve_with_material(&self, material: &Material) -> Result<SpringDesign> {
+        debug_assert_eq!(
+            self.material, material.name,
+            "solve_with_material: material '{}' does not match SavedDesign.material '{}'",
+            material.name, self.material
+        );
         match &self.scenario {
             ScenarioSpec::PowerUser {
                 end_type,
