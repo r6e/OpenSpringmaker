@@ -202,9 +202,11 @@ pub struct App {
     pub mat_status: Option<String>,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let (materials, load_warnings) = MaterialStore::load();
+impl App {
+    /// Build an `App` around a given store, performing no filesystem IO.
+    /// `Default` wraps this with the on-disk user overlay loaded; tests use it
+    /// directly with a curated-only store for deterministic, hermetic behavior.
+    pub(crate) fn from_store(materials: MaterialStore, load_warnings: Vec<LoadWarning>) -> Self {
         Self {
             form: FormState::default(),
             materials,
@@ -217,6 +219,13 @@ impl Default for App {
             mat_error: None,
             mat_status: None,
         }
+    }
+}
+
+impl Default for App {
+    fn default() -> Self {
+        let (materials, load_warnings) = MaterialStore::load();
+        Self::from_store(materials, load_warnings)
     }
 }
 
@@ -233,6 +242,13 @@ impl App {
                 self.error = Some(format_error(&e, self.form.unit_system));
             }
         }
+    }
+
+    /// Set a materials-editor error and clear any stale success status, so a
+    /// prior "saved"/"cloned" message can't linger after a failed action.
+    fn set_mat_error(&mut self, msg: impl Into<String>) {
+        self.mat_error = Some(msg.into());
+        self.mat_status = None;
     }
 
     /// Process a UI event, updating state and re-solving the design where needed.
@@ -320,7 +336,7 @@ impl App {
             }
             Message::MatEdit(name) => {
                 if self.materials.is_curated(&name) {
-                    self.mat_error = Some("curated materials are read-only".into());
+                    self.set_mat_error("curated materials are read-only");
                 } else {
                     match self.materials.get(&name) {
                         Ok(m) => {
@@ -329,7 +345,7 @@ impl App {
                             self.mat_error = None;
                             self.mat_status = None;
                         }
-                        Err(e) => self.mat_error = Some(format!("{e}")),
+                        Err(e) => self.set_mat_error(format!("{e}")),
                     }
                 }
                 false
@@ -349,12 +365,12 @@ impl App {
                                     self.mat_status = Some("cloned".into());
                                     self.mat_error = None;
                                 }
-                                Err(e) => self.mat_error = Some(format!("{e}")),
+                                Err(e) => self.set_mat_error(format!("{e}")),
                             },
-                            Err(e) => self.mat_error = Some(format!("{e}")),
+                            Err(e) => self.set_mat_error(format!("{e}")),
                         }
                     }
-                    Err(e) => self.mat_error = Some(format!("{e}")),
+                    Err(e) => self.set_mat_error(format!("{e}")),
                 }
                 false
             }
@@ -375,10 +391,10 @@ impl App {
                                 self.mat_error = None;
                                 self.mat_status = Some("saved entry".into());
                             }
-                            Err(e) => self.mat_error = Some(format!("{e}")),
+                            Err(e) => self.set_mat_error(format!("{e}")),
                         }
                     }
-                    Err(e) => self.mat_error = Some(format!("{e}")),
+                    Err(e) => self.set_mat_error(format!("{e}")),
                 }
                 false
             }
@@ -407,14 +423,14 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => self.mat_error = Some(format!("{e}")),
+                    Err(e) => self.set_mat_error(format!("{e}")),
                 }
                 false
             }
             Message::MatPersist => {
                 match self.materials.save() {
                     Ok(()) => self.mat_status = Some("saved to disk".into()),
-                    Err(e) => self.mat_error = Some(format!("{e}")),
+                    Err(e) => self.set_mat_error(format!("{e}")),
                 }
                 false
             }
@@ -549,10 +565,11 @@ mod tests {
     /// materials-CRUD tests are hermetic regardless of the developer's saved
     /// materials. `App::default()` loads the real overlay from the OS config dir.
     fn test_app() -> App {
-        App {
-            materials: MaterialStore::new(springcore::MaterialSet::load_default()),
-            ..App::default()
-        }
+        // No filesystem IO: a curated-only store, no on-disk user overlay.
+        App::from_store(
+            MaterialStore::new(springcore::MaterialSet::load_default()),
+            Vec::new(),
+        )
     }
 
     #[test]

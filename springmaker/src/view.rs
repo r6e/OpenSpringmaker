@@ -977,7 +977,9 @@ fn build_status_panel(app: &App) -> Element<'_, Message> {
         return column![].into();
     }
 
-    let mut col = column![section_heading("Design status")].spacing(6);
+    // Neutral heading: this panel carries both startup material-load warnings
+    // (which can appear before any design is computed) and design-status messages.
+    let mut col = column![section_heading("Status")].spacing(6);
 
     // Surface any startup material-load warnings first.
     for warn in &app.load_warnings {
