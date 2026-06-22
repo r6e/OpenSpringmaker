@@ -8,8 +8,8 @@ use iced::widget::{
 };
 use iced::{Background, Element, Font, Length};
 
-use crate::app::{App, EditTarget, MatField, Message, Screen, C};
-use crate::materials_form::coefficient_labels;
+use crate::app::{App, MatField, Message, Screen, C};
+use crate::materials_view_model::{edit_panel, feedback, list_rows, Badge, FeedbackKind};
 use crate::view::{
     accent_button_style, danger_button_style, field_label, ghost_button_style, mono_value,
     nav_button_style, panel_container, section_divider, section_heading, styled_pick_list,
@@ -47,40 +47,41 @@ fn labeled_mat_input<'a>(label: &str, value: &str, field: MatField) -> Element<'
 // --------------------------------------------------------------------------
 
 fn build_list_panel(app: &App) -> Element<'_, Message> {
-    let names = app.materials.names();
-
     let mut list_col = column![].spacing(6);
-    for name in &names {
-        let name_str = name.to_string();
-        let curated = app.materials.is_curated(name);
-
-        let badge: Element<'_, Message> = if curated {
-            text("curated \u{1f512}")
-                .size(SZ_LABEL)
-                .color(C::MUTED)
-                .into()
-        } else {
-            text("user").size(SZ_LABEL).color(C::ACCENT).into()
+    // Rendering is driven entirely by the presenter (materials_view_model);
+    // which actions a row offers is decided there and unit-tested.
+    for r in list_rows(app) {
+        let (badge_text, badge_color) = match r.badge {
+            Badge::Curated => ("curated \u{1f512}", C::MUTED),
+            Badge::User => ("user", C::ACCENT),
         };
+        let badge = text(badge_text).size(SZ_LABEL).color(badge_color);
 
-        let clone_btn = button(text("Clone").size(SZ_LABEL).color(C::TEXT))
-            .on_press(Message::MatClone(name_str.clone()))
-            .style(ghost_button_style);
-
-        let mut btn_row = row![badge, horizontal_space(), clone_btn].spacing(6);
-
-        if !curated {
-            let edit_btn = button(text("Edit").size(SZ_LABEL).color(C::TEXT))
-                .on_press(Message::MatEdit(name_str.clone()))
-                .style(ghost_button_style);
-            let remove_btn = button(text("Remove").size(SZ_LABEL).color(C::DANGER))
-                .on_press(Message::MatDelete(name_str))
-                .style(danger_button_style);
-            btn_row = btn_row.push(edit_btn).push(remove_btn);
+        let mut btn_row = row![badge, horizontal_space()].spacing(6);
+        if r.can_clone {
+            btn_row = btn_row.push(
+                button(text("Clone").size(SZ_LABEL).color(C::TEXT))
+                    .on_press(Message::MatClone(r.name.clone()))
+                    .style(ghost_button_style),
+            );
+        }
+        if r.can_edit {
+            btn_row = btn_row.push(
+                button(text("Edit").size(SZ_LABEL).color(C::TEXT))
+                    .on_press(Message::MatEdit(r.name.clone()))
+                    .style(ghost_button_style),
+            );
+        }
+        if r.can_remove {
+            btn_row = btn_row.push(
+                button(text("Remove").size(SZ_LABEL).color(C::DANGER))
+                    .on_press(Message::MatDelete(r.name.clone()))
+                    .style(danger_button_style),
+            );
         }
 
         let entry = column![
-            mono_value(name.to_string(), C::TEXT, SZ_BODY),
+            mono_value(r.name, C::TEXT, SZ_BODY),
             btn_row,
             section_divider(),
         ]
@@ -117,15 +118,21 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
 }
 
 fn build_edit_panel(app: &App) -> Element<'_, Message> {
-    if app.editing.is_none() {
-        let hint = text("Select a material to edit, or New.")
-            .size(SZ_BODY)
-            .color(C::MUTED);
-        return container(panel_container(hint))
-            .width(Length::FillPortion(1))
-            .height(Length::Fill)
-            .into();
-    }
+    // The presenter decides whether the panel is shown and what it contains
+    // (coefficient hint, section visibility, new-vs-editing); the values bound
+    // to the inputs come from app.mat_form.
+    let panel = match edit_panel(app) {
+        None => {
+            let hint = text("Select a material to edit, or New.")
+                .size(SZ_BODY)
+                .color(C::MUTED);
+            return container(panel_container(hint))
+                .width(Length::FillPortion(1))
+                .height(Length::Fill)
+                .into();
+        }
+        Some(p) => p,
+    };
 
     let f = &app.mat_form;
 
@@ -140,9 +147,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
     // StrengthUnits options
     const STRENGTH_UNITS: &[StrengthUnits] = &[StrengthUnits::SiMpaMm, StrengthUnits::UsKpsiInch];
 
-    // Coefficient hint label
-    let coeff_labels = coefficient_labels(f.mts_form).join(", ");
-    let coeff_hint = format!("Coefficients ({coeff_labels})");
+    let coeff_hint = panel.coefficient_hint.as_str();
 
     // Endurance section
     let endurance_toggle = checkbox("Endurance data", f.has_endurance)
@@ -165,7 +170,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
             styled_pick_list(STRENGTH_UNITS, Some(f.mts_units), Message::MatUnits),
         ]
         .spacing(4),
-        labeled_mat_input(&coeff_hint, &f.coefficients, MatField::Coefficients),
+        labeled_mat_input(coeff_hint, &f.coefficients, MatField::Coefficients),
         section_divider(),
         section_heading("Diameter range (mm)"),
         row![
@@ -188,7 +193,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
     ]
     .spacing(10);
 
-    if f.has_endurance {
+    if panel.show_endurance_fields {
         form_col = form_col
             .push(labeled_mat_input(
                 "Endurance Ssa (MPa)",
@@ -213,7 +218,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
 
     form_col = form_col.push(section_divider()).push(max_temp_toggle);
 
-    if f.has_max_temp {
+    if panel.show_max_temp_field {
         form_col = form_col.push(labeled_mat_input(
             "Max temp (°C)",
             &f.max_temp_c,
@@ -230,8 +235,11 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
         .on_press(Message::MatCancel)
         .style(ghost_button_style);
 
-    let is_new = matches!(app.editing, Some(EditTarget::New));
-    let action_label = if is_new { "New material" } else { "Editing" };
+    let action_label = if panel.is_new {
+        "New material"
+    } else {
+        "Editing"
+    };
     let action_row = row![
         text(action_label).size(SZ_LABEL).color(C::MUTED),
         horizontal_space(),
@@ -282,10 +290,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .max_width(1200)
         .height(Length::Fill);
 
-    if let Some(err) = &app.mat_error {
-        content = content.push(text(err.as_str()).size(SZ_LABEL).color(C::DANGER));
-    } else if let Some(status) = &app.mat_status {
-        content = content.push(text(status.as_str()).size(SZ_LABEL).color(C::SUCCESS));
+    if let Some(fb) = feedback(app) {
+        let color = match fb.kind {
+            FeedbackKind::Error => C::DANGER,
+            FeedbackKind::Status => C::SUCCESS,
+        };
+        content = content.push(text(fb.text).size(SZ_LABEL).color(color));
     }
 
     let content = content.push(panels);
