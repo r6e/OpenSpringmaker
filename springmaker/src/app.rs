@@ -768,4 +768,60 @@ mod tests {
         // The calculator selection followed the rename (no stale MaterialNotFound).
         assert_eq!(a.form.material, "Renamed Wire");
     }
+
+    // ── Cross-state invariants ──────────────────────────────────────────────
+    //
+    // The class of bugs surfaced in review (delete/rename of the edited or
+    // calculator-selected material; stale error/status) all violate one of two
+    // invariants that must hold after EVERY `update`. Driving a representative
+    // message sequence and checking after each step turns "did we think of case
+    // X?" into "the invariant fails on any unhandled case".
+
+    /// INV1: the calculator's selected material always names one that exists in
+    /// the store (holds for `Message::Material` carrying a valid name, which the
+    /// view's pick list guarantees — it only offers names from the store). INV2:
+    /// editor error and success status are never shown together (the view
+    /// prioritizes error, so a lingering error would mask a success).
+    fn assert_editor_invariants(a: &App) {
+        assert!(
+            a.materials.names().contains(&a.form.material.as_str()),
+            "INV1 violated: form.material '{}' is not in the store",
+            a.form.material
+        );
+        assert!(
+            !(a.mat_error.is_some() && a.mat_status.is_some()),
+            "INV2 violated: mat_error and mat_status are both set"
+        );
+    }
+
+    #[test]
+    fn editor_message_sequence_preserves_invariants() {
+        let mut a = test_app();
+        assert_editor_invariants(&a);
+
+        macro_rules! step {
+            ($msg:expr) => {{
+                a.update($msg);
+                assert_editor_invariants(&a);
+            }};
+        }
+
+        step!(Message::NavigateTo(Screen::Materials));
+        step!(Message::MatClone("Music Wire".into())); // adds "(copy)", opens editor
+        let copy = editing_name(&a);
+        step!(Message::Material(copy.clone())); // calculator selects the user copy
+        step!(Message::MatEdit(copy.clone()));
+        step!(Message::MatField(MatField::Name, "Renamed".into()));
+        step!(Message::MatCommit); // rename the SELECTED material -> selection must follow
+        step!(Message::Material("Renamed".into()));
+        step!(Message::MatDelete("Renamed".into())); // delete the SELECTED material -> fallback
+        step!(Message::MatNew);
+        step!(Message::MatField(
+            MatField::Coefficients,
+            "not-a-number".into()
+        ));
+        step!(Message::MatCommit); // invalid -> error set, status must be clear
+        step!(Message::MatCancel);
+        step!(Message::NavigateTo(Screen::Calculator));
+    }
 }
