@@ -4,9 +4,6 @@
 //! by the user) and [`MaterialDraft`] (validated, typed DTO).  No iced
 //! imports — this module is pure logic.
 
-// The public API is not yet wired into the GUI layer (future tasks).
-#![allow(dead_code)]
-
 use springcore::{
     EnduranceDraft, Material, MaterialDraft, MtsForm, Result, SpringError, StrengthUnits,
 };

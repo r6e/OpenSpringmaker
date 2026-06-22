@@ -31,6 +31,26 @@ pub enum StrengthUnits {
     SiMpaMm,
 }
 
+impl std::fmt::Display for MtsForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MtsForm::Constant => "Constant",
+            MtsForm::PowerLaw => "Power law",
+            MtsForm::Polynomial => "Polynomial",
+            MtsForm::Rational => "Rational",
+        })
+    }
+}
+
+impl std::fmt::Display for StrengthUnits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            StrengthUnits::UsKpsiInch => "US (kpsi, in)",
+            StrengthUnits::SiMpaMm => "SI (MPa, mm)",
+        })
+    }
+}
+
 impl StrengthUnits {
     /// Express a diameter in this system's native length unit.
     pub fn length_native(self, d: Length) -> f64 {

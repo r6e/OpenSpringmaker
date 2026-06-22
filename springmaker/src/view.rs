@@ -18,11 +18,11 @@ use springcore::UnitSystem;
 // Font-size constants
 // --------------------------------------------------------------------------
 
-const SZ_CAPTION: u16 = 11;
-const SZ_LABEL: u16 = 13;
-const SZ_BODY: u16 = 14;
-const SZ_TITLE: u16 = 18;
-const SZ_HERO: u16 = 22;
+pub(crate) const SZ_CAPTION: u16 = 11;
+pub(crate) const SZ_LABEL: u16 = 13;
+pub(crate) const SZ_BODY: u16 = 14;
+pub(crate) const SZ_TITLE: u16 = 18;
+pub(crate) const SZ_HERO: u16 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -94,7 +94,9 @@ fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
 // Style helpers
 // --------------------------------------------------------------------------
 
-fn panel_container<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+pub(crate) fn panel_container<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
     container(content)
         .padding(20)
         .style(|_theme| iced::widget::container::Style {
@@ -109,7 +111,7 @@ fn panel_container<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, 
         .into()
 }
 
-fn styled_pick_list<'a, T, L>(
+pub(crate) fn styled_pick_list<'a, T, L>(
     options: L,
     selected: Option<T>,
     on_select: impl Fn(T) -> Message + 'a,
@@ -174,7 +176,7 @@ fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Elemen
 }
 
 /// A field label in the muted color at 13px.
-fn field_label(label: impl Into<String>) -> Element<'static, Message> {
+pub(crate) fn field_label(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into()).size(SZ_LABEL).color(C::MUTED).into()
 }
 
@@ -189,7 +191,11 @@ fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Mess
 }
 
 /// A mono-spaced data value with color control.
-fn mono_value(value: impl Into<String>, color: Color, size: u16) -> Element<'static, Message> {
+pub(crate) fn mono_value(
+    value: impl Into<String>,
+    color: Color,
+    size: u16,
+) -> Element<'static, Message> {
     text(value.into())
         .font(Font::MONOSPACE)
         .size(size)
@@ -235,7 +241,7 @@ fn result_row<'a>(
     result_row_colored(label, value, unit, C::TEXT)
 }
 
-fn section_divider() -> Element<'static, Message> {
+pub(crate) fn section_divider() -> Element<'static, Message> {
     horizontal_rule(1)
         .style(|_theme| iced::widget::rule::Style {
             color: C::LINE,
@@ -246,7 +252,7 @@ fn section_divider() -> Element<'static, Message> {
         .into()
 }
 
-fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
+pub(crate) fn section_heading(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into())
         .size(SZ_LABEL)
         .color(C::MUTED)
@@ -323,10 +329,37 @@ fn build_header(app: &App) -> Element<'_, Message> {
     )
     .text_size(SZ_LABEL);
 
-    row![app_name, horizontal_space(), unit_metric, unit_us,]
-        .spacing(16)
-        .align_y(iced::Alignment::Center)
-        .into()
+    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
+        .on_press(Message::NavigateTo(crate::app::Screen::Materials))
+        .style(|_theme, status| {
+            use iced::widget::button::Status;
+            let border_color = if matches!(status, Status::Hovered) {
+                C::ACCENT
+            } else {
+                C::LINE
+            };
+            iced::widget::button::Style {
+                background: Some(Background::Color(iced::Color::TRANSPARENT)),
+                text_color: C::ACCENT,
+                border: Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                shadow: Default::default(),
+            }
+        });
+
+    row![
+        app_name,
+        horizontal_space(),
+        materials_btn,
+        unit_metric,
+        unit_us,
+    ]
+    .spacing(16)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
 
 // --------------------------------------------------------------------------

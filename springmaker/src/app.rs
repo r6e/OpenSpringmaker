@@ -2,7 +2,6 @@
 
 use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind};
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
-use crate::view;
 use iced::theme::Palette;
 use iced::{Color, Theme};
 use springcore::{LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits, UnitSystem};
@@ -92,8 +91,6 @@ impl C {
 // --------------------------------------------------------------------------
 
 /// Top-level navigation screen.
-// Consumed by view in Task 5.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Calculator,
@@ -112,8 +109,6 @@ pub enum EditTarget {
 }
 
 /// Which text field a [`Message::MatField`] targets in the material editor.
-// Consumed by view in Task 5.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MatField {
     Name,
@@ -175,33 +170,19 @@ pub enum Message {
     Save,
     Load,
     // Navigation and materials editor variants — consumed by view in Task 5.
-    #[allow(dead_code)]
     NavigateTo(Screen),
-    #[allow(dead_code)]
     MatField(MatField, String),
-    #[allow(dead_code)]
     MatFormKind(MtsForm),
-    #[allow(dead_code)]
     MatUnits(StrengthUnits),
-    #[allow(dead_code)]
     MatToggleEndurance(bool),
-    #[allow(dead_code)]
     MatTogglePeened(bool),
-    #[allow(dead_code)]
     MatToggleMaxTemp(bool),
-    #[allow(dead_code)]
     MatNew,
-    #[allow(dead_code)]
     MatClone(String),
-    #[allow(dead_code)]
     MatEdit(String),
-    #[allow(dead_code)]
     MatCommit,
-    #[allow(dead_code)]
     MatCancel,
-    #[allow(dead_code)]
     MatDelete(String),
-    #[allow(dead_code)]
     MatPersist,
 }
 
@@ -418,7 +399,10 @@ impl App {
 
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
-        view::view(self)
+        match self.screen {
+            Screen::Calculator => crate::view::view(self),
+            Screen::Materials => crate::materials_view::view(self),
+        }
     }
 
     /// Supply the custom dark theme to the iced application builder.
