@@ -4,8 +4,7 @@
 //! assembles iced widgets from the current [`App`] state.
 
 use iced::widget::{
-    button, column, container, horizontal_rule, horizontal_space, pick_list, radio, row,
-    scrollable, text, text_input,
+    button, column, container, pick_list, radio, row, rule, scrollable, space, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Font, Length};
 
@@ -21,11 +20,11 @@ use springcore::UnitSystem;
 // Font-size constants
 // --------------------------------------------------------------------------
 
-const SZ_CAPTION: u16 = 11;
-pub(crate) const SZ_LABEL: u16 = 13;
-pub(crate) const SZ_BODY: u16 = 14;
-pub(crate) const SZ_TITLE: u16 = 18;
-const SZ_HERO: u16 = 22;
+const SZ_CAPTION: u32 = 11;
+pub(crate) const SZ_LABEL: u32 = 13;
+pub(crate) const SZ_BODY: u32 = 14;
+pub(crate) const SZ_TITLE: u32 = 18;
+const SZ_HERO: u32 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -147,6 +146,7 @@ where
             text_color: C::TEXT,
             selected_text_color: C::INK,
             selected_background: Background::Color(C::ACCENT),
+            shadow: iced::Shadow::default(),
         })
         .into()
 }
@@ -157,7 +157,7 @@ pub(crate) fn text_input_style(
     status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
     use iced::widget::text_input::Status;
-    let focused = matches!(status, Status::Focused);
+    let focused = matches!(status, Status::Focused { .. });
     iced::widget::text_input::Style {
         background: Background::Color(C::RAISED),
         border: Border {
@@ -203,7 +203,7 @@ fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Mess
 pub(crate) fn mono_value(
     value: impl Into<String>,
     color: Color,
-    size: u16,
+    size: u32,
 ) -> Element<'static, Message> {
     text(value.into())
         .font(Font::MONOSPACE)
@@ -251,12 +251,12 @@ fn result_row<'a>(
 }
 
 pub(crate) fn section_divider() -> Element<'static, Message> {
-    horizontal_rule(1)
+    rule::horizontal(1)
         .style(|_theme| iced::widget::rule::Style {
             color: C::LINE,
-            width: 1,
             radius: 0.0.into(),
             fill_mode: iced::widget::rule::FillMode::Full,
+            snap: true,
         })
         .into()
 }
@@ -292,6 +292,7 @@ pub(crate) fn ghost_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -315,6 +316,7 @@ pub(crate) fn danger_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -342,6 +344,7 @@ pub(crate) fn accent_button_style(
             ..Default::default()
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -365,6 +368,7 @@ pub(crate) fn nav_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -440,7 +444,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
 
     row![
         app_name,
-        horizontal_space(),
+        space().width(Length::Fill),
         materials_btn,
         unit_metric,
         unit_us,

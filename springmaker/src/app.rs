@@ -480,6 +480,7 @@ impl App {
                 text: C::TEXT,
                 primary: C::ACCENT,
                 success: C::SUCCESS,
+                warning: C::WARN,
                 danger: C::DANGER,
             },
         )

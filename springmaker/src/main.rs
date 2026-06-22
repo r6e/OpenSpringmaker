@@ -12,7 +12,8 @@ use iced::window;
 use iced::Size;
 
 fn main() -> iced::Result {
-    iced::application("OpenSpringmaker", App::update, App::view)
+    iced::application(App::default, App::update, App::view)
+        .title("OpenSpringmaker")
         .theme(App::theme)
         .window(window::Settings {
             size: Size::new(1200.0, 820.0),
