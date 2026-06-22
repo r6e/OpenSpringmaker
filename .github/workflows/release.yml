@@ -61,6 +61,8 @@ jobs:
           mkdir -p "${staging}"
           cp target/release/springmaker "${staging}/"
           cp LICENSE-MIT LICENSE-APACHE README.md "${staging}/"
+          # The binary embeds DejaVu Sans (include_bytes!); ship its license too.
+          cp springmaker/assets/LICENSE-DejaVu.txt "${staging}/"
           tar czf "${staging}.tar.gz" "${staging}"
           shasum -a 256 "${staging}.tar.gz" > "SHA256SUMS-${TARGET}.txt"
       - name: Stage archive contents (Windows)
@@ -73,7 +75,8 @@ jobs:
           $staging = "openspringmaker-${env:TAG}-${env:TARGET}"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           Copy-Item target/release/springmaker.exe -Destination $staging
-          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md -Destination $staging
+          # The binary embeds DejaVu Sans (include_bytes!); ship its license too.
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md, springmaker/assets/LICENSE-DejaVu.txt -Destination $staging
           Compress-Archive -Path $staging -DestinationPath "${staging}.zip"
           $hash = (Get-FileHash -Algorithm SHA256 "${staging}.zip").Hash.ToLower()
           [System.IO.File]::WriteAllText("$pwd/SHA256SUMS-${env:TARGET}.txt", "${hash}  ${staging}.zip`n")

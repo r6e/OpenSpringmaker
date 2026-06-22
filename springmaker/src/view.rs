@@ -4,8 +4,7 @@
 //! assembles iced widgets from the current [`App`] state.
 
 use iced::widget::{
-    button, column, container, horizontal_rule, horizontal_space, pick_list, radio, row,
-    scrollable, text, text_input,
+    button, column, container, pick_list, radio, row, rule, scrollable, space, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Font, Length};
 
@@ -147,6 +146,7 @@ where
             text_color: C::TEXT,
             selected_text_color: C::INK,
             selected_background: Background::Color(C::ACCENT),
+            shadow: iced::Shadow::default(),
         })
         .into()
 }
@@ -157,7 +157,7 @@ pub(crate) fn text_input_style(
     status: iced::widget::text_input::Status,
 ) -> iced::widget::text_input::Style {
     use iced::widget::text_input::Status;
-    let focused = matches!(status, Status::Focused);
+    let focused = matches!(status, Status::Focused { .. });
     iced::widget::text_input::Style {
         background: Background::Color(C::RAISED),
         border: Border {
@@ -251,7 +251,7 @@ fn result_row<'a>(
 }
 
 pub(crate) fn section_divider() -> Element<'static, Message> {
-    horizontal_rule(1)
+    rule::horizontal(1)
         .style(|_theme| iced::widget::rule::Style {
             color: C::LINE,
             radius: 0.0.into(),
@@ -444,7 +444,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
 
     row![
         app_name,
-        horizontal_space(),
+        space().width(Length::Fill),
         materials_btn,
         unit_metric,
         unit_us,

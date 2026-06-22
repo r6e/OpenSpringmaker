@@ -7,9 +7,15 @@ description = "Desktop calculator for helical compression spring design"
 
 [dependencies]
 springcore = { path = "../springcore" }
-iced = "0.14"
-plotters = "0.3"
-plotters-iced2 = "0.14.0"
+iced = { version = "0.14", features = ["image-without-codecs"] }
+# Chart is rendered to an in-memory bitmap (no iced-coupled backend, so no
+# plotters-iced version lag) with a bundled font (ab_glyph) to avoid any
+# system-font lookup. default-features off drops font-kit/svg/image/gif/chrono.
+plotters = { version = "0.3", default-features = false, features = [
+    "bitmap_backend",
+    "line_series",
+    "ab_glyph",
+] }
 rfd = "0.14.1"
 
 [dev-dependencies]

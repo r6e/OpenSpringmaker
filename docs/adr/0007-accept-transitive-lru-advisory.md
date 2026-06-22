@@ -1,6 +1,14 @@
 # ADR 0007: Accept transitive `lru` advisory RUSTSEC-2026-0002
 
-**Status:** Accepted
+**Status:** Resolved (superseded by the iced 0.14 upgrade — see
+[ADR 0009](0009-chart-bitmap-bundled-font.md))
+
+> **Resolution.** The iced 0.13 → 0.14 upgrade lifted the transitive pin: the
+> `iced 0.14` line resolves `lru 0.16.4` (≥ the fixed `0.16.3`), so
+> RUSTSEC-2026-0002 no longer applies. The upgrade was unblocked by dropping the
+> `plotters-iced` bridge (which had pinned iced 0.13); the chart now renders via
+> a plotters bitmap shown through iced's `image` widget. The accept-and-dismiss
+> stance below is retained for the historical record.
 
 ## Context
 
@@ -71,4 +79,5 @@ Alternatives considered and rejected:
   `iced 0.14` already resolves the advisory (`cryoglyph → lru 0.16`). At that
   point, bump `iced`, drop this ADR, and let the upgrade clear the advisory. The
   daily scheduled `cargo-audit` run and Dependabot will keep surfacing it if its
-  status escalates.
+  status escalates. *(Superseded — this is exactly what happened; see the
+  Resolution note at the top. The charting approach was replaced per ADR 0009.)*

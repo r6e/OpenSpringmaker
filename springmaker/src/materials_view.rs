@@ -3,9 +3,7 @@
 //! Pure view logic. No computation here; all business logic lives in
 //! `app.rs`, `materials_form.rs`, and `springcore`.
 
-use iced::widget::{
-    button, checkbox, column, container, horizontal_space, row, scrollable, text, text_input,
-};
+use iced::widget::{button, checkbox, column, container, row, scrollable, space, text, text_input};
 use iced::{Background, Element, Font, Length};
 
 use crate::app::{App, MatField, Message, Screen, C};
@@ -57,7 +55,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
         };
         let badge = text(badge_text).size(SZ_LABEL).color(badge_color);
 
-        let mut btn_row = row![badge, horizontal_space()].spacing(6);
+        let mut btn_row = row![badge, space().width(Length::Fill)].spacing(6);
         if r.can_clone {
             btn_row = btn_row.push(
                 button(text("Clone").size(SZ_LABEL).color(C::TEXT))
@@ -150,7 +148,8 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
     let coeff_hint = panel.coefficient_hint.as_str();
 
     // Endurance section
-    let endurance_toggle = checkbox("Endurance data", f.has_endurance)
+    let endurance_toggle = checkbox(f.has_endurance)
+        .label("Endurance data")
         .on_toggle(Message::MatToggleEndurance)
         .text_size(SZ_LABEL);
 
@@ -206,13 +205,15 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
                 MatField::EnduranceSsm,
             ))
             .push(
-                checkbox("Shot-peened", f.endurance_peened)
+                checkbox(f.endurance_peened)
+                    .label("Shot-peened")
                     .on_toggle(Message::MatTogglePeened)
                     .text_size(SZ_LABEL),
             );
     }
 
-    let max_temp_toggle = checkbox("Max service temperature (informational)", f.has_max_temp)
+    let max_temp_toggle = checkbox(f.has_max_temp)
+        .label("Max service temperature (informational)")
         .on_toggle(Message::MatToggleMaxTemp)
         .text_size(SZ_LABEL);
 
@@ -242,7 +243,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
     };
     let action_row = row![
         text(action_label).size(SZ_LABEL).color(C::MUTED),
-        horizontal_space(),
+        space().width(Length::Fill),
         save_btn,
         cancel_btn,
     ]
@@ -274,7 +275,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ..Font::DEFAULT
     });
 
-    let header = row![title, horizontal_space(), back_btn]
+    let header = row![title, space().width(Length::Fill), back_btn]
         .spacing(16)
         .align_y(iced::Alignment::Center);
 
