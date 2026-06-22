@@ -130,7 +130,7 @@ pub struct Endurance {
 
 /// A mutable editing DTO for constructing or modifying a [`Material`].
 ///
-/// Mirrors the fields of [`RawMaterial`] but exposes typed enums for
+/// Mirrors the internal raw material record but exposes typed enums for
 /// `mts_form` and `mts_units` instead of raw strings. Call [`MaterialDraft::build`]
 /// to validate and convert to a [`Material`].
 #[derive(Debug, Clone, PartialEq)]
@@ -405,7 +405,7 @@ fn coefficients_ok(form: MtsForm, n: usize) -> bool {
 impl Material {
     pub(crate) fn try_from_raw(r: RawMaterial) -> Result<Self> {
         // Name is the identity key; reject empty/whitespace-only and normalize
-        // surrounding whitespace so look-alikes (e.g. "Music Wire ") can't sit
+        // surrounding whitespace so near-duplicate names (e.g. "Music Wire ") can't sit
         // beside curated names.
         let name = r.name.trim().to_string();
         if name.is_empty() {
@@ -1306,7 +1306,7 @@ allowable_pct_set = 0.60
     #[test]
     fn draft_build_preserves_endurance() {
         // Guards the build() endurance->RawEndurance mapping: a dropped or
-        // mis-mapped field would otherwise go undetected.
+        // incorrectly mapped field would otherwise go undetected.
         let mut d = good_draft();
         d.endurance = Some(EnduranceDraft {
             ssa_mpa: 241.0,
