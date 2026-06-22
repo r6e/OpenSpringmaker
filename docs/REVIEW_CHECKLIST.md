@@ -67,6 +67,14 @@ Correctness-bearing logic goes in the presenter with a hermetic test
 layout) and iced glue (message closures, borrowed `text_input` values) stay in
 the view. A new or edited screen that decides things inline is a finding.
 
+GUI testing now has **two layers**: presenter unit tests assert the *decisions*
+(pure functions over `App`); headless `Simulator` tests (`iced_test`, in
+`springmaker/src/ui_tests.rs`) assert the *wiring* — a real click resolving
+against the rendered widget tree, emitting the wired `Message`, through
+`App::update`. New button/navigation flows should get a Simulator test; new
+decisions, a presenter test. (Simulator tests must stay headless: no `Save`/
+`Load` rfd dialogs, no disk writes.)
+
 ## 7. Verify findings empirically — don't cargo-cult
 
 Give every reviewer (human or tool) serious weight, but **validate each finding
