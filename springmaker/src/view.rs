@@ -254,9 +254,9 @@ pub(crate) fn section_divider() -> Element<'static, Message> {
     horizontal_rule(1)
         .style(|_theme| iced::widget::rule::Style {
             color: C::LINE,
-            width: 1,
             radius: 0.0.into(),
             fill_mode: iced::widget::rule::FillMode::Full,
+            snap: true,
         })
         .into()
 }
@@ -292,6 +292,7 @@ pub(crate) fn ghost_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -315,6 +316,7 @@ pub(crate) fn danger_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -342,6 +344,7 @@ pub(crate) fn accent_button_style(
             ..Default::default()
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
@@ -365,6 +368,7 @@ pub(crate) fn nav_button_style(
             radius: 4.0.into(),
         },
         shadow: Default::default(),
+        snap: Default::default(),
     }
 }
 
