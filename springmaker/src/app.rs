@@ -251,6 +251,14 @@ impl App {
         self.mat_status = None;
     }
 
+    /// Set a materials-editor success status and clear any stale error, so a
+    /// prior error can't linger after a successful action (the view shows error
+    /// over status).
+    fn set_mat_status(&mut self, msg: impl Into<String>) {
+        self.mat_status = Some(msg.into());
+        self.mat_error = None;
+    }
+
     /// Process a UI event, updating state and re-solving the design where needed.
     pub fn update(&mut self, message: Message) {
         let should_recompute = match message {
@@ -362,8 +370,7 @@ impl App {
                                 Ok(m) => {
                                     populate_from_material(&mut self.mat_form, m);
                                     self.editing = Some(EditTarget::Existing(copy_name));
-                                    self.mat_status = Some("cloned".into());
-                                    self.mat_error = None;
+                                    self.set_mat_status("cloned");
                                 }
                                 Err(e) => self.set_mat_error(format!("{e}")),
                             },
@@ -388,8 +395,7 @@ impl App {
                         match res {
                             Ok(()) => {
                                 self.editing = None;
-                                self.mat_error = None;
-                                self.mat_status = Some("saved entry".into());
+                                self.set_mat_status("saved entry");
                             }
                             Err(e) => self.set_mat_error(format!("{e}")),
                         }
@@ -407,8 +413,7 @@ impl App {
             Message::MatDelete(name) => {
                 match self.materials.remove(&name) {
                     Ok(()) => {
-                        self.mat_error = None;
-                        self.mat_status = Some(format!("deleted '{name}'"));
+                        self.set_mat_status(format!("deleted '{name}'"));
                         // Close the editor if it was editing the deleted material.
                         if matches!(&self.editing, Some(EditTarget::Existing(n)) if *n == name) {
                             self.editing = None;
@@ -429,7 +434,7 @@ impl App {
             }
             Message::MatPersist => {
                 match self.materials.save() {
-                    Ok(()) => self.mat_status = Some("saved to disk".into()),
+                    Ok(()) => self.set_mat_status("saved to disk"),
                     Err(e) => self.set_mat_error(format!("{e}")),
                 }
                 false
@@ -729,5 +734,16 @@ mod tests {
         assert!(a.editing.is_none());
         assert_ne!(a.form.material, copy_name);
         assert!(a.materials.names().contains(&a.form.material.as_str()));
+    }
+
+    #[test]
+    fn successful_action_clears_stale_error() {
+        // The view prioritizes mat_error over mat_status, so a successful action
+        // must clear a prior error (regression guard for MatPersist/clone/etc).
+        let mut a = test_app();
+        a.mat_error = Some("stale error from a prior failed action".into());
+        a.update(Message::MatClone("Music Wire".into())); // succeeds, in-memory
+        assert!(a.mat_error.is_none(), "success must clear a stale error");
+        assert!(a.mat_status.is_some());
     }
 }
