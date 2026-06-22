@@ -7,7 +7,7 @@ description = "Desktop calculator for helical compression spring design"
 
 [dependencies]
 springcore = { path = "../springcore" }
-iced = "0.13"
+iced = "0.14"
 plotters = "0.3"
 plotters-iced = "0.11"
 rfd = "0.14.1"
