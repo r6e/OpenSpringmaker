@@ -7,6 +7,9 @@ mod plot;
 mod view;
 mod view_model;
 
+#[cfg(test)]
+mod ui_tests;
+
 use app::App;
 use iced::window;
 use iced::Size;

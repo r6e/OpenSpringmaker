@@ -2,6 +2,15 @@
 
 **Status:** Accepted
 
+> **Update (2026-06-22).** The iced 0.14 upgrade has since landed (#22), so the
+> `Simulator` anticipated below is now available. The presenter pattern remains
+> the standard; the Simulator adds a **second, complementary** test layer (see
+> `springmaker/src/ui_tests.rs`): presenter tests assert the *decisions* (pure
+> functions over `App`), Simulator tests assert the *wiring* end to end (a real
+> click resolves against the rendered widget tree, emits the wired `Message`,
+> and flows through `App::update`). The "Context" below is preserved as the
+> original record.
+
 ## Context
 
 The GUI crate (`springmaker`) uses iced 0.13, whose API offers no test
