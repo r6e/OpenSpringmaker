@@ -10,7 +10,7 @@ springcore = { path = "../springcore" }
 iced = "0.13"
 plotters = "0.3"
 plotters-iced = "0.11"
-rfd = "0.17"
+rfd = "0.14.1"
 
 [dev-dependencies]
 approx = { workspace = true }
