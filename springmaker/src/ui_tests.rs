@@ -1,11 +1,11 @@
-//! End-to-end GUI tests driving the real view â message â update loop with
+//! End-to-end GUI tests driving the real view → message → update loop with
 //! iced's headless `Simulator` (iced_test). These complement the presenter unit
 //! tests (`view_model`) by exercising the actual widget tree: a click resolves
 //! against the rendered layout, emits the wired `Message`, and we feed it back
 //! through `App::update` exactly as the runtime would.
 //!
 //! Tests avoid the `Save design` / `Load design` buttons (which open native
-//! `rfd` dialogs) and `Save to disk` (which writes the user overlay) â those
+//! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
 use crate::app::{App, Message, Screen};
@@ -13,10 +13,10 @@ use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{MaterialSet, MaterialStore};
 
-/// A viewport large enough that no widget is clipped: wider than the app's
+/// A viewport large enough that no widget is clipped: as wide as the app's
 /// 1200px design width and tall enough for the full materials edit-form
 /// scrollable. `Simulator::click` only hits laid-out widgets, so the bottom
-/// action buttons ("Save entry"/"Cancel") must fall within this height â they
+/// action buttons ("Save entry"/"Cancel") must fall within this height — they
 /// sit below the default 1024x768 fold. 2400px clears the worst case (the
 /// endurance-expanded edit form, ~1700px); bump it if the form grows taller.
 const VIEWPORT: iced::Size = iced::Size {
@@ -34,7 +34,7 @@ fn ui(app: &App) -> Simulator<'_, Message> {
 }
 
 /// Render the app, click the widget matching `label`, and apply every message
-/// the interaction produced â the headless equivalent of one runtime cycle.
+/// the interaction produced — the headless equivalent of one runtime cycle.
 fn click(app: &mut App, label: &str) {
     let mut sim = ui(app);
     sim.click(label)
