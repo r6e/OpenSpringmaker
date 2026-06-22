@@ -344,6 +344,8 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 /// Severity class of a status line; the view maps this to a prefix and color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
+    /// A failed save/load action ([`App::action_error`]).
+    ActionError,
     /// Startup material-load warning (can appear before any design is solved).
     LoadWarning,
     Info,
@@ -368,10 +370,17 @@ fn status_kind(severity: Severity) -> StatusKind {
     }
 }
 
-/// Status lines to show, load warnings first then design messages. An empty
-/// vector means the status panel is suppressed entirely.
+/// Status lines to show: a save/load action error first (most recent), then
+/// load warnings, then design messages. An empty vector means the status panel
+/// is suppressed entirely.
 pub fn status_view(app: &App) -> Vec<StatusLine> {
     let mut lines = Vec::new();
+    if let Some(text) = &app.action_error {
+        lines.push(StatusLine {
+            kind: StatusKind::ActionError,
+            text: text.clone(),
+        });
+    }
     for warn in &app.load_warnings {
         lines.push(StatusLine {
             kind: StatusKind::LoadWarning,
@@ -771,6 +780,29 @@ mod tests {
     fn status_suppressed_when_clean() {
         let app = App::from_store(store(), Vec::new());
         assert!(status_view(&app).is_empty());
+    }
+
+    #[test]
+    fn status_surfaces_action_error() {
+        let mut app = App::from_store(store(), Vec::new());
+        app.action_error = Some("could not save design".into());
+        let lines = status_view(&app);
+        assert_eq!(lines[0].kind, StatusKind::ActionError);
+        assert_eq!(lines[0].text, "could not save design");
+    }
+
+    #[test]
+    fn action_error_precedes_load_warnings() {
+        let mut app = App::from_store(
+            store(),
+            vec![LoadWarning {
+                message: "overlay warning".into(),
+            }],
+        );
+        app.action_error = Some("save failed".into());
+        let lines = status_view(&app);
+        assert_eq!(lines[0].kind, StatusKind::ActionError);
+        assert!(lines.iter().any(|l| l.kind == StatusKind::LoadWarning));
     }
 
     #[test]

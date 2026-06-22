@@ -192,7 +192,14 @@ pub struct App {
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
+    /// Solve error: set/cleared by [`App::recompute`] as an exclusive pair with
+    /// `outcome` (a present `outcome` means the solve succeeded). Surfaced in the
+    /// results panel only when `outcome` is `None`.
     pub error: Option<String>,
+    /// Save/load action error. Independent of `outcome`/`error` so a failed save
+    /// or load is surfaced (in the status panel) without wiping the design the
+    /// user is looking at. Cleared on the next save/load attempt and on recompute.
+    pub action_error: Option<String>,
     // Screen routing
     pub screen: Screen,
     // Materials editor
@@ -213,6 +220,7 @@ impl App {
             load_warnings,
             outcome: None,
             error: None,
+            action_error: None,
             screen: Screen::Calculator,
             mat_form: MaterialsFormState::default(),
             editing: None,
@@ -232,6 +240,9 @@ impl Default for App {
 impl App {
     /// Re-solve from the current form, storing either an outcome or an error string.
     pub fn recompute(&mut self) {
+        // A form edit (or successful load / return to the calculator) dismisses a
+        // stale save/load error.
+        self.action_error = None;
         match parse_and_solve(&self.form, &self.materials) {
             Ok(out) => {
                 self.outcome = Some(out);
@@ -286,7 +297,8 @@ impl App {
                 self.form.fixity = f;
                 true
             }
-            // Save never mutates the form; preserve any error from the dialog.
+            // Save never mutates the form, so it must not recompute — that would
+            // clear the `action_error` a failed save just set.
             Message::Save => {
                 self.save_dialog();
                 false
@@ -520,25 +532,33 @@ impl App {
     }
 
     fn save_dialog(&mut self) {
-        let spec = match crate::form::build_spec(&self.form) {
-            Ok(s) => s,
-            Err(e) => {
-                self.error = Some(e.to_string());
-                return;
-            }
-        };
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("design", &["toml"])
             .save_file()
         {
-            let saved = SavedDesign {
-                material: self.form.material.clone(),
-                unit_system: self.form.unit_system,
-                scenario: spec,
-            };
-            if let Err(e) = saved.save(&path) {
-                self.error = Some(e.to_string());
+            self.save_to(&path);
+        }
+    }
+
+    /// Build and write the current design to `path`, recording any failure in
+    /// `action_error` (not `error`) so a failed save leaves the displayed design
+    /// intact. The leading clear makes a successful save dismiss a prior failure.
+    fn save_to(&mut self, path: &std::path::Path) {
+        self.action_error = None;
+        let spec = match crate::form::build_spec(&self.form) {
+            Ok(s) => s,
+            Err(e) => {
+                self.action_error = Some(e.to_string());
+                return;
             }
+        };
+        let saved = SavedDesign {
+            material: self.form.material.clone(),
+            unit_system: self.form.unit_system,
+            scenario: spec,
+        };
+        if let Err(e) = saved.save(path) {
+            self.action_error = Some(e.to_string());
         }
     }
 
@@ -548,17 +568,26 @@ impl App {
             .add_filter("design", &["toml"])
             .pick_file()
         {
-            match SavedDesign::load(&path) {
-                Ok(saved) => {
-                    self.apply_saved(saved);
-                    return true;
-                }
-                Err(e) => {
-                    self.error = Some(e.to_string());
-                }
-            }
+            return self.load_from(&path);
         }
         false
+    }
+
+    /// Load a design from `path` into the form. On failure, records it in
+    /// `action_error` and returns `false`, leaving the current form untouched.
+    /// Returns `true` (form mutated) on success.
+    fn load_from(&mut self, path: &std::path::Path) -> bool {
+        self.action_error = None;
+        match SavedDesign::load(path) {
+            Ok(saved) => {
+                self.apply_saved(saved);
+                true
+            }
+            Err(e) => {
+                self.action_error = Some(e.to_string());
+                false
+            }
+        }
     }
 
     fn apply_saved(&mut self, saved: SavedDesign) {
@@ -618,6 +647,88 @@ mod tests {
         app.recompute();
         assert!(app.outcome.is_none());
         assert!(app.error.is_some());
+    }
+
+    /// A hermetic app with a valid rate-based design already solved.
+    fn solved_app() -> App {
+        let mut app = test_app();
+        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.rate = "2.0".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.recompute();
+        assert!(app.outcome.is_some(), "fixture should solve");
+        app
+    }
+
+    /// A path every OS rejects (embedded NUL), so save/load IO fails
+    /// deterministically without touching the real filesystem.
+    fn unwritable_path() -> std::path::PathBuf {
+        std::path::PathBuf::from("invalid\0path.toml")
+    }
+
+    #[test]
+    fn save_failure_surfaces_action_error_and_preserves_outcome() {
+        let mut app = solved_app();
+        app.save_to(&unwritable_path());
+        // The displayed design is untouched — a failed save must not wipe it.
+        assert!(
+            app.outcome.is_some(),
+            "a failed save must not clear results"
+        );
+        assert!(
+            app.error.is_none(),
+            "the solve-error channel is not used for IO failures"
+        );
+        // ...and the failure is recorded for the status panel.
+        assert!(app.action_error.is_some(), "save failure must be surfaced");
+    }
+
+    #[test]
+    fn load_failure_surfaces_action_error_and_preserves_form() {
+        let mut app = solved_app();
+        let before_material = app.form.material.clone();
+        let mutated = app.load_from(&unwritable_path());
+        assert!(!mutated, "a failed load reports no form mutation");
+        assert!(app.action_error.is_some(), "load failure must be surfaced");
+        assert!(
+            app.outcome.is_some(),
+            "a failed load must not clear results"
+        );
+        assert_eq!(
+            app.form.material, before_material,
+            "the form is untouched on a failed load"
+        );
+    }
+
+    #[test]
+    fn recompute_clears_stale_action_error() {
+        let mut app = solved_app();
+        app.action_error = Some("stale save failure".into());
+        app.recompute(); // stands in for a subsequent form edit
+        assert!(
+            app.action_error.is_none(),
+            "editing the form dismisses a stale action error"
+        );
+    }
+
+    #[test]
+    fn successful_save_clears_a_prior_action_error() {
+        let mut app = solved_app();
+        app.action_error = Some("a previous save failure".into());
+        // A genuine successful write (unique temp path) must dismiss the prior
+        // banner via the leading clear — Save never recomputes, so nothing else
+        // would clear it.
+        let path = std::env::temp_dir().join(format!("osm_save_ok_{}.toml", std::process::id()));
+        app.save_to(&path);
+        assert!(
+            app.action_error.is_none(),
+            "a successful save dismisses a stale action error"
+        );
+        assert!(path.exists(), "the design was actually written");
+        let _ = std::fs::remove_file(&path);
     }
 
     // ── Materials CRUD tests ──────────────────────────────────────────────────
