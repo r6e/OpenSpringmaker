@@ -296,14 +296,17 @@ impl App {
             }
             Message::MatToggleEndurance(b) => {
                 self.mat_form.has_endurance = b;
+                self.mat_error = None;
                 false
             }
             Message::MatTogglePeened(b) => {
                 self.mat_form.endurance_peened = b;
+                self.mat_error = None;
                 false
             }
             Message::MatToggleMaxTemp(b) => {
                 self.mat_form.has_max_temp = b;
+                self.mat_error = None;
                 false
             }
             Message::MatNew => {
@@ -377,11 +380,15 @@ impl App {
             Message::MatCancel => {
                 self.editing = None;
                 self.mat_error = None;
+                self.mat_status = None;
                 false
             }
             Message::MatDelete(name) => {
                 match self.materials.remove(&name) {
-                    Ok(()) => self.mat_status = Some(format!("deleted '{name}'")),
+                    Ok(()) => {
+                        self.mat_error = None;
+                        self.mat_status = Some(format!("deleted '{name}'"));
+                    }
                     Err(e) => self.mat_error = Some(format!("{e}")),
                 }
                 false

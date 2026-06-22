@@ -1251,6 +1251,17 @@ allowable_pct_set = 0.60
     }
 
     #[test]
+    fn display_labels_are_stable() {
+        // These strings are the GUI pick-list labels; pin them.
+        assert_eq!(MtsForm::Constant.to_string(), "Constant");
+        assert_eq!(MtsForm::PowerLaw.to_string(), "Power law");
+        assert_eq!(MtsForm::Polynomial.to_string(), "Polynomial");
+        assert_eq!(MtsForm::Rational.to_string(), "Rational");
+        assert_eq!(StrengthUnits::SiMpaMm.to_string(), "SI (MPa, mm)");
+        assert_eq!(StrengthUnits::UsKpsiInch.to_string(), "US (kpsi, in)");
+    }
+
+    #[test]
     fn draft_build_preserves_endurance() {
         // Guards the build() endurance->RawEndurance mapping: a dropped or
         // mis-mapped field would otherwise go undetected.
