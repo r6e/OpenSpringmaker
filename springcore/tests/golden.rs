@@ -164,51 +164,69 @@ fn en_13906_1_worked_example() {
 
 // ── Extension springs ─────────────────────────────────────────────────────────
 
+// Independent published-source cross-check for the extension family. Inputs and
+// results are transcribed (not recomputed by us) from Shigley's worked example,
+// so a wrong constant in the extension solver that the formula-based unit tests
+// would share is caught here.
+//
+// Source: Budynas & Nisbett, "Shigley's Mechanical Engineering Design", 10th ed.,
+// Example 10-6 (A227 hard-drawn steel extension spring). Reproduced publicly in
+// the McGraw-Hill "Chapter 10 Mechanical Springs" lecture slides, e.g.
+// https://www.point32.com/jenkins_he/documents/SpringsCh10ExtensionTorsionsprings.pdf
+//
+// The example's hook formulas match our engine's exactly: the bending factor
+// (K)_A = (4C1^2 - C1 - 1)/(4 C1 (C1 - 1)) with C1 = 2 r1/d (Eq. 10-35) and the
+// torsion factor (K)_B = (4C2 - 1)/(4C2 - 4) with C2 = 2 r2/d (Eq. 10-37). The
+// hook stresses sigma_A and tau_B are independent of G, so they assert tightly.
+//
+// GIVEN (US customary): d = 0.035 in, OD = 0.248 in -> D = 0.213 in, body turns
+//   Nb = 12.17, F_i = 1.19 lbf, hook radii r1 = 0.106 in, r2 = 0.089 in; static
+//   service load F = 5.25 lbf. Shigley uses Na = Nb + G/E = 12.17 + 11.6/28.7 =
+//   12.574 (Eq. 10-40); our PowerUser takes active coils directly, so we pass
+//   that Na. L0 = 0.817 in (Eq. 10-39) is supplied as the free length.
+// PUBLISHED: k = 17.91 lbf/in, hook bending sigma_A = 156.9 kpsi, hook torsion
+//   tau_B = 78.4 kpsi, body shear tau = 82.0 kpsi.
+//
+// Tolerances: sigma_A / tau_B are G-independent and reproduce to <0.3% (Shigley's
+// rounding of the K factors), so 1%. k uses a 3% band absorbing the source's
+// G = 11.6e6 psi vs our curated A227 G = 11.5e6 psi (MH Table 20). Body shear
+// uses 2% because Shigley applies the Bergsträsser factor (1.234) while our
+// static path currently applies the Wahl factor (1.249), ~1.2% higher; this
+// band tightens once the selectable curvature-correction model lands.
 #[test]
-#[ignore = "awaiting Shigley extension worked-example values — see PR body"]
 fn extension_shigley_worked_example() {
-    // Inputs and expected values to be transcribed from the Shigley's Mechanical
-    // Engineering Design extension-spring worked example (edition + example number
-    // TBD). Confirm: d, D, Na, L0, F_i, r1, r2, and published k, σ_A, τ_B.
-    //
-    // TODO: Record the given values (d/D/Na/L0/F_i/r1/r2) and published results
-    //       (k, σ_A, τ_B) from the Shigley example, then fill in the zeros below.
     use springcore::extension::{HookEnds, PowerUser, Scenario};
 
     let set = MaterialSet::load_default();
-    let material = set
-        .get(/* material from the example */ "Music Wire")
-        .unwrap();
+    let material = set.get("Hard-Drawn MB").unwrap(); // A227 hard-drawn steel
 
-    let s = PowerUser {
-        wire_dia: Length::from_millimeters(/* d */ 0.0),
-        mean_dia: Length::from_millimeters(/* D */ 0.0),
-        active: /* Na */ 0.0,
-        free_length: Length::from_millimeters(/* L0 */ 0.0),
-        initial_tension: Force::from_newtons(/* F_i */ 0.0),
+    let d = PowerUser {
+        wire_dia: Length::from_inches(0.035),
+        mean_dia: Length::from_inches(0.213), // OD - d = 0.248 - 0.035
+        active: 12.574,                       // Na = Nb + G/E = 12.17 + 11.6/28.7 (Eq. 10-40)
+        free_length: Length::from_inches(0.817), // L0 (Eq. 10-39)
+        initial_tension: Force::from_pounds_force(1.19),
         hooks: HookEnds {
-            r1: Length::from_millimeters(/* r1 */ 0.0),
-            r2: Length::from_millimeters(/* r2 */ 0.0),
+            r1: Length::from_inches(0.106),
+            r2: Length::from_inches(0.089),
         },
-        loads: vec![Force::from_newtons(/* F */ 0.0)],
-    };
-    let d = s.solve(material).unwrap();
+        loads: vec![Force::from_pounds_force(5.25)],
+    }
+    .solve(material)
+    .unwrap();
 
-    assert_relative_eq!(
-        d.rate.newtons_per_meter(),
-        /* k */ 0.0,
-        max_relative = 0.03
-    );
-    assert_relative_eq!(
-        d.load_points[0].hook_bending.megapascals(),
-        /* σ_A */ 0.0,
-        max_relative = 0.03
-    );
-    assert_relative_eq!(
-        d.load_points[0].hook_torsion.megapascals(),
-        /* τ_B */ 0.0,
-        max_relative = 0.03
-    );
+    let lp = &d.load_points[0];
+    // Published spring rate k = 17.91 lbf/in (3% absorbs the G-source difference).
+    assert_relative_eq!(d.rate.pounds_per_inch(), 17.91, max_relative = 0.03);
+    // Hook bending at A: sigma_A = 156.9 kpsi (G-independent).
+    assert_relative_eq!(lp.hook_bending.psi(), 156_900.0, max_relative = 0.01);
+    // Hook torsion at B: tau_B = 78.4 kpsi (G-independent).
+    assert_relative_eq!(lp.hook_torsion.psi(), 78_400.0, max_relative = 0.01);
+    // Body torsional shear tau = 82.0 kpsi (2% absorbs Wahl vs Bergsträsser).
+    assert_relative_eq!(lp.body_shear.psi(), 82_000.0, max_relative = 0.02);
+    // Deflection under the service load: y = (F - F_i)/k = (5.25 - 1.19)/17.91 =
+    // 0.227 in — exercises the initial-tension offset (3% tracks the k tolerance).
+    assert_relative_eq!(lp.deflection.inches(), 0.227, max_relative = 0.03);
 }
 
 // ── PR (b) curated materials: per-material data-correctness goldens ──────────
