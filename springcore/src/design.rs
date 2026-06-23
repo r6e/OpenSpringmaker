@@ -107,6 +107,19 @@ pub fn solve_forward(
             "active coils must be positive".into(),
         ));
     }
+    // Free length must be finite and positive; a non-finite L0 propagates into pitch
+    // and buckling and the per-load lengths.
+    if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "free length must be positive".into(),
+        ));
+    }
+    // Every load must be finite, else deflection and stresses become NaN/Inf.
+    if loads.iter().any(|f| !f.newtons().is_finite()) {
+        return Err(SpringError::InconsistentInputs(
+            "loads must be finite".into(),
+        ));
+    }
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
@@ -690,6 +703,66 @@ mod tests {
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
             "non-finite mean_dia must return InconsistentInputs"
+        );
+    }
+
+    /// free_length = 0 is non-physical; `> 0.0` (not `>= 0.0`) must reject it.
+    #[test]
+    fn solve_forward_rejects_zero_free_length() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(0.0), // free length = 0 → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be positive"),
+            "expected the free-length guard, got {result:?}"
+        );
+    }
+
+    /// Non-finite free length propagates into pitch/buckling/per-load lengths.
+    #[test]
+    fn solve_forward_rejects_non_finite_free_length() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(f64::INFINITY), // free length = +Inf → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "non-finite free_length must return InconsistentInputs"
+        );
+    }
+
+    /// A NaN load would yield NaN deflection and stresses.
+    #[test]
+    fn solve_forward_rejects_non_finite_load() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(f64::NAN)], // NaN load → rejected
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "non-finite load must return InconsistentInputs"
         );
     }
 

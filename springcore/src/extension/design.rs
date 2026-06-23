@@ -124,25 +124,42 @@ pub fn solve_forward(
             "active coils must be positive".into(),
         ));
     }
-    // Initial tension is a built-in preload; negative values are physically meaningless.
-    if initial_tension.newtons() < 0.0 {
+    // Free length must be finite and positive; a non-finite L0 propagates into the
+    // load-point length (L = L0 + y).
+    if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "free length must be positive".into(),
+        ));
+    }
+    // Initial tension is a built-in preload; it must be finite and non-negative.
+    // (`< 0.0` alone would admit NaN and +Inf, which then flow into deflection.)
+    if !(initial_tension.newtons().is_finite() && initial_tension.newtons() >= 0.0) {
         return Err(SpringError::InconsistentInputs(
             "initial tension must be non-negative".into(),
         ));
     }
-    // Hook curvature index C1 = 2·r1/d must exceed 1; at C1 ≤ 1 the bending
-    // factor (K_A) denominator 4·C1·(C1−1) goes to zero or negative.
+    // Every load must be finite, else stresses and deflection become NaN/Inf
+    // (and a NaN deflection would be silently masked to zero by the y clamp).
+    if loads.iter().any(|f| !f.newtons().is_finite()) {
+        return Err(SpringError::InconsistentInputs(
+            "loads must be finite".into(),
+        ));
+    }
+    // Hook curvature index C1 = 2·r1/d must be finite and exceed 1; at C1 ≤ 1 the
+    // bending factor (K_A) denominator 4·C1·(C1−1) goes to zero or negative, and a
+    // non-finite r1 (or the `<= 1.0` comparison failing for NaN/+Inf) must not slip
+    // through to produce NaN/Inf hook stress.
     let c1 = 2.0 * hooks.r1.meters() / wire_dia.meters();
-    if c1 <= 1.0 {
+    if !(c1.is_finite() && c1 > 1.0) {
         return Err(SpringError::InconsistentInputs(
             "hook bend radius r1 must exceed d/2 (curvature index C1 = 2·r1/d must exceed 1)"
                 .into(),
         ));
     }
-    // Hook curvature index C2 = 2·r2/d must exceed 1; at C2 ≤ 1 the torsion
-    // factor (K_B) denominator (4·C2−4) goes to zero or negative.
+    // Hook curvature index C2 = 2·r2/d must be finite and exceed 1; at C2 ≤ 1 the
+    // torsion factor (K_B) denominator (4·C2−4) goes to zero or negative.
     let c2 = 2.0 * hooks.r2.meters() / wire_dia.meters();
-    if c2 <= 1.0 {
+    if !(c2.is_finite() && c2 > 1.0) {
         return Err(SpringError::InconsistentInputs(
             "hook bend radius r2 must exceed d/2 (curvature index C2 = 2·r2/d must exceed 1)"
                 .into(),
@@ -267,6 +284,78 @@ mod tests {
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
+    /// +Inf initial tension passes a bare `< 0.0` check yet flows into deflection.
+    #[test]
+    fn rejects_non_finite_initial_tension() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(f64::INFINITY),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// Non-finite free length propagates into the load-point length L = L0 + y.
+    #[test]
+    fn rejects_non_finite_free_length() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(f64::INFINITY),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A NaN load would yield NaN stresses and a deflection silently masked to 0.
+    #[test]
+    fn rejects_non_finite_load() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(f64::NAN)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A non-finite hook radius makes C1 = 2·r1/d non-finite; `c1 <= 1.0` would not
+    /// reject +Inf, so the finite-and-> 1 guard must catch it.
+    #[test]
+    fn rejects_non_finite_hook_radius() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds {
+                r1: Length::from_millimeters(f64::INFINITY),
+                r2: Length::from_millimeters(5.0),
+            },
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
     /// active ≤ 0 would make spring_rate divide by zero/negative → Inf/negative
     /// rate silently flowing into deflection and stresses.
     #[test]
@@ -286,7 +375,9 @@ mod tests {
     }
 
     /// wire_dia = 0 slips past the mean > wire check yet yields a zero rate
-    /// (d⁴ = 0) → infinite deflection.
+    /// (d⁴ = 0) → infinite deflection. Asserts the wire-specific message so the
+    /// dedicated wire guard is exercised, not the downstream C1 = 2·r1/d guard
+    /// (which would also reject d = 0 but with a misleading hook-radius message).
     #[test]
     fn rejects_zero_wire_dia() {
         let m = crate::test_support::music_wire();
@@ -300,7 +391,30 @@ mod tests {
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
         );
-        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "wire diameter must be positive"),
+            "expected the wire-diameter guard, got {r:?}"
+        );
+    }
+
+    /// free_length = 0 is non-physical; `> 0.0` (not `>= 0.0`) must reject it.
+    #[test]
+    fn rejects_zero_free_length() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(0.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be positive"),
+            "expected the free-length guard, got {r:?}"
+        );
     }
 
     /// Non-finite mean_dia (+Inf) slips past `mean <= wire` yet yields a zero
