@@ -102,6 +102,15 @@ pub fn solve_forward(
             "wire diameter must be positive".into(),
         ));
     }
+    // Mean diameter must be finite; a non-finite dm gives a zero or non-finite
+    // rate (k ∝ 1/dm³). Positivity is enforced by the mean > wire check below
+    // (wire is already finite-positive), but that relational check admits
+    // +Inf/NaN, so guard finiteness explicitly here.
+    if !mean_dia.meters().is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            "mean diameter must be finite".into(),
+        ));
+    }
     // Spring index must exceed 1 (mean_dia > wire_dia) for a physically valid spring.
     if mean_dia.meters() <= wire_dia.meters() {
         return Err(SpringError::InconsistentInputs(
@@ -285,6 +294,24 @@ mod tests {
             &m,
             Length::from_millimeters(0.0),
             Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// Non-finite mean_dia (+Inf) slips past `mean <= wire` yet yields a zero
+    /// rate (k ∝ 1/dm³) → infinite deflection.
+    #[test]
+    fn rejects_non_finite_mean_dia() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(f64::INFINITY),
             10.0,
             Length::from_millimeters(60.0),
             Force::from_newtons(10.0),
