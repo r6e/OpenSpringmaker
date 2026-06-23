@@ -12,7 +12,11 @@ use crate::Result;
 pub trait Scenario {
     /// Compute a complete extension-spring design given this scenario's inputs
     /// and the specified material.
-    fn solve(&self, material: &Material) -> Result<ExtensionDesign>;
+    fn solve(
+        &self,
+        material: &Material,
+        correction: crate::CurvatureCorrection,
+    ) -> Result<ExtensionDesign>;
 }
 
 /// All geometry given; compute performance. The extension-spring counterpart
@@ -30,7 +34,11 @@ pub struct PowerUser {
 }
 
 impl Scenario for PowerUser {
-    fn solve(&self, material: &Material) -> Result<ExtensionDesign> {
+    fn solve(
+        &self,
+        material: &Material,
+        correction: crate::CurvatureCorrection,
+    ) -> Result<ExtensionDesign> {
         solve_forward(
             material,
             self.wire_dia,
@@ -40,6 +48,7 @@ impl Scenario for PowerUser {
             self.initial_tension,
             self.hooks,
             &self.loads,
+            correction,
         )
     }
 }
@@ -62,7 +71,12 @@ mod tests {
             hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
             loads: vec![Force::from_newtons(30.0)],
         };
-        let d = s.solve(&crate::test_support::music_wire()).unwrap();
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                crate::CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
         assert_relative_eq!(
             d.load_points[0].length.millimeters(),
