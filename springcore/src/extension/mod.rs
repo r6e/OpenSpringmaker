@@ -2,4 +2,5 @@
 //! reuses `units`, `material`, and the identical `mechanics::spring_rate` /
 //! `corrected_shear_stress`. Formula sources cited at each call site.
 
+pub mod ends;
 pub mod mechanics;

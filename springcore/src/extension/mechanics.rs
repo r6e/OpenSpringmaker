@@ -1,7 +1,7 @@
 //! Extension-spring-specific mechanics: hook curvature factors and stresses,
 //! and initial-tension deflection. Body rate/stress reuse `crate::mechanics`.
 
-use crate::units::{Force, Length, Stress};
+use crate::units::{Force, Length, SpringRate, Stress};
 use std::f64::consts::PI;
 
 /// Hook bending curvature factor at point A (Shigley, extension springs):
@@ -25,6 +25,13 @@ pub fn hook_bending_stress(force: Force, mean_dia: Length, wire_dia: Length, r1:
     Stress::from_pascals(sigma)
 }
 
+/// Extension deflection at a load: y = max(0, (F − F_i)/k). Coils stay closed
+/// (no deflection) until the force exceeds the built-in initial tension (Shigley).
+pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Length {
+    let net = force.newtons() - initial_tension.newtons();
+    Length::from_meters((net.max(0.0)) / rate.newtons_per_meter())
+}
+
 /// Hook torsional stress at point B (Shigley): τ_B = (K)_B·8FD/(πd³).
 pub fn hook_torsion_stress(force: Force, mean_dia: Length, wire_dia: Length, r2: Length) -> Stress {
     let (f, d, dia) = (force.newtons(), wire_dia.meters(), mean_dia.meters());
@@ -36,6 +43,7 @@ pub fn hook_torsion_stress(force: Force, mean_dia: Length, wire_dia: Length, r2:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::SpringRate;
     use approx::assert_relative_eq;
 
     #[test]
@@ -76,5 +84,26 @@ mod tests {
         );
         // τ_B = (19/16)·8·100·0.02/(π·0.002³) ≈ 7.560e8 Pa.
         assert_relative_eq!(s.pascals(), 7.5599e8, max_relative = 1e-4);
+    }
+
+    #[test]
+    fn deflection_zero_below_initial_tension() {
+        let y = deflection(
+            Force::from_newtons(5.0),
+            Force::from_newtons(10.0),
+            SpringRate::from_newtons_per_meter(2000.0),
+        );
+        assert_relative_eq!(y.meters(), 0.0, epsilon = 1e-12);
+    }
+
+    #[test]
+    fn deflection_above_initial_tension() {
+        // (30 − 10)/2000 = 0.01 m = 10 mm.
+        let y = deflection(
+            Force::from_newtons(30.0),
+            Force::from_newtons(10.0),
+            SpringRate::from_newtons_per_meter(2000.0),
+        );
+        assert_relative_eq!(y.millimeters(), 10.0, max_relative = 1e-9);
     }
 }
