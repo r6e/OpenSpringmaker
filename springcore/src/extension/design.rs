@@ -98,7 +98,7 @@ pub fn solve_forward(
     // Spring index must exceed 1 (mean_dia > wire_dia) for a physically valid spring.
     if mean_dia.meters() <= wire_dia.meters() {
         return Err(SpringError::InconsistentInputs(
-            "mean diameter must exceed wire diameter (spring index must exceed 1)".into(),
+            "mean diameter must be greater than wire diameter (spring index must exceed 1)".into(),
         ));
     }
     // Initial tension is a built-in preload; negative values are physically meaningless.

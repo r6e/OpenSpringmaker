@@ -1,4 +1,8 @@
-//! Engineering calculations for helical compression springs.
+//! Engineering calculations for helical compression and extension springs.
+//!
+//! Compression springs are modeled by the crate-root API (`PowerUser`,
+//! `SpringDesign`, and the scenario types); extension springs — with initial
+//! tension and hook stresses — live in the [`extension`] module.
 //!
 //! All public quantities are stored internally in SI units, with one documented
 //! exception: `Temperature` is informational-only and stored in degrees Celsius
