@@ -1,6 +1,7 @@
 # OpenSpringmaker — Extension Springs
 
-- **Status:** Approved (design), pending implementation plan
+- **Status:** Approved; Phase 1 plan at
+  `docs/superpowers/plans/2026-06-22-extension-springs-phase1.md`
 - **Date:** 2026-06-22
 - **Sub-project:** 3 of the roadmap (builds on the compression solver + materials
   database, both merged to `main`)
