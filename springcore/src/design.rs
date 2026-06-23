@@ -76,6 +76,22 @@ pub fn solve_forward(
     free_length: Length,
     loads: &[Force],
 ) -> Result<SpringDesign> {
+    // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
+    // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
+    if !(wire_dia.meters().is_finite() && wire_dia.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "wire diameter must be a positive finite number".into(),
+        ));
+    }
+    // Mean diameter must be finite; a non-finite dm gives a zero or non-finite
+    // rate (k ∝ 1/dm³). Positivity is enforced by the mean > wire check below
+    // (wire is already finite-positive), but that relational check admits
+    // +Inf/NaN, so guard finiteness explicitly here.
+    if !mean_dia.meters().is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            "mean diameter must be finite".into(),
+        ));
+    }
     // A spring index ≤ 1 is physically meaningless; mean diameter must exceed wire diameter
     // (SMI Handbook; Shigley §10-1). This also guards the Dimensional scenario when
     // outer_dia ≤ wire_dia, which would produce a non-positive mean diameter.
@@ -84,13 +100,52 @@ pub fn solve_forward(
             "mean diameter must be greater than wire diameter (spring index must exceed 1)".into(),
         ));
     }
+    // Active coils must be finite and positive; k ∝ 1/Na, so Na ≤ 0 yields a
+    // non-finite or negative rate.
+    if !(active.is_finite() && active > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "active coils must be a positive finite number".into(),
+        ));
+    }
+    // Free length must be finite and positive; a non-finite L0 propagates into pitch
+    // and buckling and the per-load lengths.
+    if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "free length must be a positive finite number".into(),
+        ));
+    }
+    // Every load must be finite and non-negative. A non-finite load makes deflection
+    // and stresses NaN/Inf; a negative load drives the signed-force stress formulas
+    // to negative stresses and %-allowable ratios that never exceed the limit,
+    // silently hiding overstress. Zero is allowed (a valid free-state reference point).
+    if loads
+        .iter()
+        .any(|f| !f.newtons().is_finite() || f.newtons() < 0.0)
+    {
+        return Err(SpringError::InconsistentInputs(
+            "loads must be finite and non-negative".into(),
+        ));
+    }
+
+    // Validate the wire diameter against the material's manufacturable range before
+    // any geometry-derived check, so an out-of-range diameter surfaces as
+    // DiameterOutOfRange rather than a downstream geometry error.
+    let mts = material.min_tensile_strength(wire_dia)?;
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
     let total_coils = end_type.total_coils(active);
     let solid_length = end_type.solid_length(wire_dia, active);
+    // Free length cannot be below solid length — the coils physically cannot
+    // compress past solid. Beyond being impossible geometry, it makes the
+    // solid force F = k·(L0 − Ls) negative, which yields negative stress and a
+    // negative %-allowable that silently never trips the set/overstress check.
+    if free_length.meters() < solid_length.meters() {
+        return Err(SpringError::InconsistentInputs(
+            "free length must be at least the solid length".into(),
+        ));
+    }
     let pitch = end_type.pitch_from_free_length(wire_dia, active, free_length);
-    let mts = material.min_tensile_strength(wire_dia)?;
     let nat_freq = natural_frequency(
         wire_dia,
         mean_dia,
@@ -605,6 +660,236 @@ mod tests {
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
             "mean == wire must return InconsistentInputs"
         );
+    }
+
+    /// active ≤ 0 makes spring_rate divide by zero/negative → Inf/negative rate
+    /// silently flowing into deflection and stresses.
+    #[test]
+    fn solve_forward_rejects_non_positive_active() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            0.0, // active = 0 → rejected
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "active <= 0 must return InconsistentInputs"
+        );
+    }
+
+    /// wire_dia = 0 slips past the mean > wire check yet yields a zero rate
+    /// (d⁴ = 0) → infinite deflection.
+    #[test]
+    fn solve_forward_rejects_zero_wire_dia() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(0.0), // wire = 0 → rejected
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "wire_dia <= 0 must return InconsistentInputs"
+        );
+    }
+
+    /// Non-finite mean_dia (+Inf) slips past `mean <= wire` (Inf <= wire is false)
+    /// yet yields a zero rate (k ∝ 1/dm³) → infinite deflection.
+    #[test]
+    fn solve_forward_rejects_non_finite_mean_dia() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(f64::INFINITY), // mean = +Inf → rejected
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "non-finite mean_dia must return InconsistentInputs"
+        );
+    }
+
+    /// free_length = 0 is non-physical; `> 0.0` (not `>= 0.0`) must reject it.
+    #[test]
+    fn solve_forward_rejects_zero_free_length() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(0.0), // free length = 0 → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be a positive finite number"),
+            "expected the free-length guard, got {result:?}"
+        );
+    }
+
+    /// Non-finite free length propagates into pitch/buckling/per-load lengths.
+    #[test]
+    fn solve_forward_rejects_non_finite_free_length() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(f64::INFINITY), // free length = +Inf → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "non-finite free_length must return InconsistentInputs"
+        );
+    }
+
+    /// A NaN load would yield NaN deflection and stresses.
+    #[test]
+    fn solve_forward_rejects_non_finite_load() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(f64::NAN)], // NaN load → rejected
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "non-finite load must return InconsistentInputs"
+        );
+    }
+
+    /// free_length below solid length is impossible geometry and makes the solid
+    /// force k·(L0−Ls) negative — negative stress and a %-allowable that can't trip
+    /// the set check. SquaredGround d=2,Na=10 → Ls = d(Na+2) = 24mm; 20 < 24.
+    #[test]
+    fn solve_forward_rejects_free_length_below_solid() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(20.0), // L0 = 20mm < Ls = 24mm → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be at least the solid length"),
+            "free_length < solid_length must be rejected, got {result:?}"
+        );
+    }
+
+    /// An out-of-range wire diameter must surface as DiameterOutOfRange even when
+    /// the geometry is ALSO invalid (free < solid). Pins the `mts` check ordering:
+    /// if `min_tensile_strength` were moved back after the solid-length guard, this
+    /// would return the geometry error instead. d=10mm is out of range for music
+    /// wire AND makes Ls = 10(10+2) = 120mm > free = 50mm.
+    #[test]
+    fn solve_forward_diameter_error_precedes_geometry_error() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(10.0), // out of range for music wire
+            Length::from_millimeters(80.0),
+            10.0,
+            Length::from_millimeters(50.0), // < solid (120mm) — also invalid
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::DiameterOutOfRange { .. })),
+            "out-of-range diameter must win over the geometry error, got {result:?}"
+        );
+    }
+
+    /// free_length == solid length is the boundary: a (degenerate, zero-travel)
+    /// design that must be ACCEPTED, with solid force k·(L0−Ls) = 0. Pins the
+    /// `<` (not `<=`) boundary of the solid-length guard.
+    #[test]
+    fn solve_forward_accepts_free_length_equal_solid() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(24.0), // L0 == Ls = d(Na+2) = 24mm
+            &[Force::from_newtons(10.0)],
+        )
+        .unwrap();
+        assert_relative_eq!(design.at_solid.force.newtons(), 0.0);
+    }
+
+    /// A negative load yields negative stresses and %-allowable ratios that never
+    /// exceed the limit, silently hiding overstress.
+    #[test]
+    fn solve_forward_rejects_negative_load() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(-5.0)], // negative load → rejected
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "loads must be finite and non-negative"),
+            "expected the loads guard, got {result:?}"
+        );
+    }
+
+    /// A zero load is allowed (a valid free-state point). Pins the `< 0.0`
+    /// (not `<= 0.0`) boundary.
+    #[test]
+    fn solve_forward_accepts_zero_load() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(0.0)],
+        )
+        .unwrap();
+        assert_relative_eq!(design.load_points[0].deflection.millimeters(), 0.0);
+        assert_relative_eq!(design.load_points[0].shear_stress.pascals(), 0.0);
     }
 
     /// mean < wire is also rejected.

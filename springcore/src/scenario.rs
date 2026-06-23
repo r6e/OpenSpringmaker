@@ -57,6 +57,17 @@ impl Scenario for TwoLoad {
     fn solve(&self, material: &Material) -> Result<SpringDesign> {
         let (f1, l1) = self.point1;
         let (f2, l2) = self.point2;
+        // Reject non-finite points up front; otherwise NaN slips the `<= 0.0`
+        // comparisons below (NaN compares false) and surfaces later as a confusing
+        // error about a derived quantity the user never entered.
+        if [f1.newtons(), f2.newtons(), l1.meters(), l2.meters()]
+            .iter()
+            .any(|v| !v.is_finite())
+        {
+            return Err(SpringError::InconsistentInputs(
+                "load points must be finite".into(),
+            ));
+        }
         let df = f2.newtons() - f1.newtons();
         let dl = l1.meters() - l2.meters();
         // A valid compression pair has more force at the shorter length.
@@ -98,6 +109,14 @@ pub struct RateBased {
 
 impl Scenario for RateBased {
     fn solve(&self, material: &Material) -> Result<SpringDesign> {
+        // Validate the target rate here; otherwise a non-positive/non-finite rate
+        // makes the derived active-coil count bad and surfaces downstream as a
+        // misleading "active coils must be positive" error.
+        if !(self.rate.newtons_per_meter().is_finite() && self.rate.newtons_per_meter() > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "required rate must be a positive finite number".into(),
+            ));
+        }
         let active = active_coils_for_rate(
             material.shear_modulus,
             self.wire_dia,
@@ -131,6 +150,13 @@ pub struct Dimensional {
 
 impl Scenario for Dimensional {
     fn solve(&self, material: &Material) -> Result<SpringDesign> {
+        // Validate the outer diameter here so a non-finite/non-positive value gives
+        // a clear message rather than a derived "mean diameter" error.
+        if !(self.outer_dia.meters().is_finite() && self.outer_dia.meters() > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "outer diameter must be a positive finite number".into(),
+            ));
+        }
         let mean = Length::from_meters(self.outer_dia.meters() - self.wire_dia.meters());
         solve_forward(
             material,
@@ -273,6 +299,87 @@ mod tests {
                 Err(crate::SpringError::InconsistentInputs(_))
             ),
             "outer_dia < wire_dia must return InconsistentInputs"
+        );
+    }
+
+    /// A non-positive target rate is rejected at the scenario layer with a
+    /// rate-specific message (not the derived "active coils" error).
+    #[test]
+    fn rate_based_rejects_non_positive_rate() {
+        let s = RateBased {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: SpringRate::from_newtons_per_meter(0.0),
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert!(
+            matches!(s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "required rate must be a positive finite number"),
+            "non-positive rate must be rejected with a rate-specific message"
+        );
+    }
+
+    /// A non-finite load point is rejected before it slips the `<= 0.0` checks.
+    #[test]
+    fn two_load_rejects_non_finite_point() {
+        let s = TwoLoad {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            point1: (
+                Force::from_newtons(10.0),
+                Length::from_millimeters(f64::NAN),
+            ),
+            point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
+        };
+        assert!(
+            matches!(s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "load points must be finite"),
+            "a NaN point must be rejected with a points-finite message"
+        );
+    }
+
+    /// A non-finite outer diameter is rejected with an OD-specific message.
+    #[test]
+    fn dimensional_rejects_non_finite_outer() {
+        let s = Dimensional {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(f64::INFINITY),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert!(
+            matches!(s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
+            "non-finite outer_dia must be rejected with an OD-specific message"
+        );
+    }
+
+    /// outer_dia == 0 must be rejected by the OD guard (with the OD message),
+    /// not slip through to a derived "mean diameter" error. Pins the `> 0.0`
+    /// (not `>= 0.0`) boundary.
+    #[test]
+    fn dimensional_rejects_zero_outer() {
+        let s = Dimensional {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(0.0),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert!(
+            matches!(s.solve(&crate::test_support::music_wire()),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
+            "outer_dia == 0 must be rejected with the OD message"
         );
     }
 }
