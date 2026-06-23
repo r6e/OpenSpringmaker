@@ -1,8 +1,6 @@
 //! App-level preferences persisted as `settings.toml` in the platform config
 //! directory (same base as the materials overlay). v1 holds only the curvature-
 //! correction preference; the struct is the home for future preferences.
-// B2 wires these into App; until then suppress dead-code lint on the public API.
-#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 use springcore::CurvatureCorrection;

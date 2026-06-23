@@ -277,6 +277,7 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0), Force::from_newtons(30.0)],
         }
+        // Deliberate: Bergsträsser is the default; this test exercises geometry, not correction choice.
         .solve(&m, springcore::CurvatureCorrection::Bergstrasser)
         .unwrap()
     }

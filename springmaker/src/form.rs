@@ -466,6 +466,7 @@ fn compute_fatigue(
     form: &FormState,
     material: &springcore::Material,
     design: &SpringDesign,
+    correction: springcore::CurvatureCorrection,
 ) -> Result<FatigueStatus> {
     if form.fatigue_min.trim().is_empty() || form.fatigue_max.trim().is_empty() {
         return Ok(FatigueStatus::Skipped);
@@ -480,14 +481,13 @@ fn compute_fatigue(
         &form.fatigue_max,
         form.unit_system,
     )?);
-    // TODO(B2): use App.correction
     match analyze_fatigue(
         material,
         design.wire_dia,
         design.mean_dia,
         fmin,
         fmax,
-        springcore::CurvatureCorrection::Bergstrasser,
+        correction,
     ) {
         Ok(r) => Ok(FatigueStatus::Computed(r)),
         Err(SpringError::NoFatigueData(_)) => Ok(FatigueStatus::NoData),
@@ -499,19 +499,18 @@ fn compute_fatigue(
 /// supplied) compute fatigue. Blank cycle-force fields yield [`FatigueStatus::Skipped`];
 /// cycle forces supplied but no endurance data in the material yield
 /// [`FatigueStatus::NoData`].
-pub fn parse_and_solve(form: &FormState, materials: &MaterialStore) -> Result<FormOutcome> {
+pub fn parse_and_solve(
+    form: &FormState,
+    materials: &MaterialStore,
+    correction: springcore::CurvatureCorrection,
+) -> Result<FormOutcome> {
     if form.scenario == ScenarioKind::MinWeight {
         let material = materials.get(&form.material)?;
         let spec = build_spec(form)?;
         let req = springcore::min_weight_request_from_spec(&spec)?;
-        // TODO(B2): use App.correction
-        let sol = springcore::solve_min_weight(
-            material,
-            &req,
-            springcore::CurvatureCorrection::Bergstrasser,
-        )?;
+        let sol = springcore::solve_min_weight(material, &req, correction)?;
         let status = evaluate_status(&sol.design, material);
-        let fatigue = compute_fatigue(form, material, &sol.design)?;
+        let fatigue = compute_fatigue(form, material, &sol.design, correction)?;
         return Ok(FormOutcome {
             design: sol.design,
             status,
@@ -533,11 +532,9 @@ pub fn parse_and_solve(form: &FormState, materials: &MaterialStore) -> Result<Fo
         unit_system: form.unit_system,
         scenario: spec,
     };
-    // TODO(B2): use App.correction
-    let design =
-        saved.solve_with_material(material, springcore::CurvatureCorrection::Bergstrasser)?;
+    let design = saved.solve_with_material(material, correction)?;
     let status = evaluate_status(&design, material);
-    let fatigue = compute_fatigue(form, material, &design)?;
+    let fatigue = compute_fatigue(form, material, &design, correction)?;
 
     Ok(FormOutcome {
         design,
@@ -578,7 +575,12 @@ mod tests {
     #[test]
     fn solves_rate_based_metric() {
         let set = default_store();
-        let out = parse_and_solve(&rate_based_metric(), &set).unwrap();
+        let out = parse_and_solve(
+            &rate_based_metric(),
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(
             out.design.rate.newtons_per_meter(),
             2000.0,
@@ -600,7 +602,8 @@ mod tests {
         form.loads = "2".into();
         form.fatigue_min = "1".into();
         form.fatigue_max = "2".into();
-        let out = parse_and_solve(&form, &set).unwrap();
+        let out =
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
         assert_relative_eq!(out.design.wire_dia.inches(), 0.08, max_relative = 1e-9);
     }
 
@@ -612,7 +615,12 @@ mod tests {
 
         // Metric: typing "2" into an N/mm-labeled field → 2000 N/m stored
         let metric_form = rate_based_metric(); // rate = "2.0" N/mm
-        let out = parse_and_solve(&metric_form, &set).unwrap();
+        let out = parse_and_solve(
+            &metric_form,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(
             out.design.rate.newtons_per_meter(),
             2000.0,
@@ -629,7 +637,12 @@ mod tests {
         us_form.loads = "2".into();
         us_form.fatigue_min = "1".into();
         us_form.fatigue_max = "2".into();
-        let us_out = parse_and_solve(&us_form, &set).unwrap();
+        let us_out = parse_and_solve(
+            &us_form,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         // 10 lbf/in ≈ 1751.27 N/m
         assert_relative_eq!(
             us_out.design.rate.pounds_per_inch(),
@@ -643,7 +656,9 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "abc".into();
-        assert!(parse_and_solve(&form, &set).is_err());
+        assert!(
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).is_err()
+        );
     }
 
     #[test]
@@ -651,7 +666,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -660,7 +676,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "-1.0".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -672,7 +689,7 @@ mod tests {
         form.loads = "0".into();
         // Should not error on the zero load itself (may still fail for other reasons,
         // but the error must not be about the zero load value).
-        let result = parse_and_solve(&form, &set);
+        let result = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser);
         if let Err(SpringError::InconsistentInputs(msg)) = &result {
             assert!(
                 !msg.contains("load must be zero or greater"),
@@ -687,7 +704,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.loads = "-5".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         match &err {
             SpringError::InconsistentInputs(msg) => {
                 assert!(
@@ -706,7 +724,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         match &err {
             SpringError::InconsistentInputs(msg) => {
                 assert!(
@@ -724,7 +743,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "nan".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -734,7 +754,8 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "inf".into();
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -746,7 +767,8 @@ mod tests {
         let mut form = rate_based_metric();
         form.material = "Stainless 302".into();
         // rate_based_metric already sets fatigue_min/max, so forces are present.
-        let out = parse_and_solve(&form, &set).unwrap();
+        let out =
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
         assert!(
             matches!(out.fatigue, FatigueStatus::NoData),
             "expected NoData for Stainless 302, got: {:?}",
@@ -761,7 +783,8 @@ mod tests {
         let mut form = rate_based_metric();
         form.fatigue_min = String::new();
         form.fatigue_max = String::new();
-        let out = parse_and_solve(&form, &set).unwrap();
+        let out =
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
         assert!(
             matches!(out.fatigue, FatigueStatus::Skipped),
             "expected Skipped when cycle forces are blank, got: {:?}",
@@ -786,7 +809,8 @@ mod tests {
             clash_allowance: "0.15".into(),
             ..Default::default()
         };
-        let out = parse_and_solve(&form, &set).unwrap();
+        let out =
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
         assert!(out.min_weight.is_some());
         assert!(out.min_weight.unwrap().mass_kg > 0.0);
         assert!(out.design.buckling_stable);
@@ -848,14 +872,21 @@ mod tests {
         let set = default_store();
         let mut form = min_weight_metric();
         form.candidate_diameters = String::new();
-        assert!(parse_and_solve(&form, &set).is_err());
+        assert!(
+            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).is_err()
+        );
     }
 
     #[test]
     fn min_weight_binding_constraint_is_valid() {
         use springcore::BindingConstraint;
         let set = default_store();
-        let out = parse_and_solve(&min_weight_metric(), &set).unwrap();
+        let out = parse_and_solve(
+            &min_weight_metric(),
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         let mw = out.min_weight.unwrap();
         assert!(matches!(
             mw.binding,
@@ -886,7 +917,8 @@ mod tests {
             loads: "2".into(),
             ..Default::default()
         };
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(
             matches!(err, SpringError::DiameterOutOfRange { .. }),
             "expected DiameterOutOfRange, got: {err}"
@@ -924,7 +956,9 @@ mod tests {
     fn parse_and_solve_accepts_material_store() {
         let store = springcore::MaterialStore::new(MaterialSet::load_default());
         let form = rate_based_metric();
-        assert!(parse_and_solve(&form, &store).is_ok());
+        assert!(
+            parse_and_solve(&form, &store, springcore::CurvatureCorrection::Bergstrasser).is_ok()
+        );
     }
 
     #[test]
@@ -944,7 +978,8 @@ mod tests {
             loads: "10".into(),
             ..Default::default()
         };
-        let err = parse_and_solve(&form, &set).unwrap_err();
+        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
         assert!(
             matches!(err, SpringError::DiameterOutOfRange { .. }),
             "expected DiameterOutOfRange, got: {err}"

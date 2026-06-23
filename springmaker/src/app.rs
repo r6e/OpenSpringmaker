@@ -4,7 +4,10 @@ use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, Scenari
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
-use springcore::{LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits, UnitSystem};
+use springcore::{
+    CurvatureCorrection, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
+    UnitSystem,
+};
 
 // --------------------------------------------------------------------------
 // Design tokens — single source of truth for colours used in view.rs
@@ -95,6 +98,9 @@ impl C {
 pub enum Screen {
     Calculator,
     Materials,
+    /// Settings screen — navigation wired in B3.
+    #[allow(dead_code)]
+    Settings,
 }
 
 // --------------------------------------------------------------------------
@@ -169,6 +175,9 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
+    // Settings — B3 adds the correction picker that emits this; tests drive it directly.
+    #[allow(dead_code)]
+    SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
     MatField(MatField, String),
@@ -207,12 +216,17 @@ pub struct App {
     pub editing: Option<EditTarget>,
     pub mat_error: Option<String>,
     pub mat_status: Option<String>,
+    /// Curvature-correction factor applied to all solve paths; persisted via
+    /// [`crate::settings::AppSettings`].
+    pub correction: CurvatureCorrection,
 }
 
 impl App {
-    /// Build an `App` around a given store, performing no filesystem IO.
-    /// `Default` wraps this with the on-disk user overlay loaded; tests use it
-    /// directly with a curated-only store for deterministic, hermetic behavior.
+    /// Build an `App` around a given store. Reads `AppSettings` from the
+    /// platform config dir to restore the curvature-correction preference;
+    /// a missing or malformed file silently yields the default (Bergsträsser).
+    /// Tests pass a curated-only store for deterministic material behaviour,
+    /// though the settings read still touches the filesystem.
     pub(crate) fn from_store(materials: MaterialStore, load_warnings: Vec<LoadWarning>) -> Self {
         Self {
             form: FormState::default(),
@@ -226,6 +240,7 @@ impl App {
             editing: None,
             mat_error: None,
             mat_status: None,
+            correction: crate::settings::AppSettings::load().curvature_correction,
         }
     }
 }
@@ -243,7 +258,7 @@ impl App {
         // A form edit (or successful load / return to the calculator) dismisses a
         // stale save/load error.
         self.action_error = None;
-        match parse_and_solve(&self.form, &self.materials) {
+        match parse_and_solve(&self.form, &self.materials, self.correction) {
             Ok(out) => {
                 self.outcome = Some(out);
                 self.error = None;
@@ -305,6 +320,17 @@ impl App {
             }
             // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+
+            // ── Settings ────────────────────────────────────────────────────
+            Message::SetCorrection(c) => {
+                self.correction = c;
+                // Best-effort persist — a save failure must not crash the UI.
+                let _ = crate::settings::AppSettings {
+                    curvature_correction: c,
+                }
+                .save();
+                true
+            }
 
             // ── Navigation ──────────────────────────────────────────────────
             Message::NavigateTo(s) => {
@@ -468,6 +494,8 @@ impl App {
         match self.screen {
             Screen::Calculator => crate::view::view(self),
             Screen::Materials => crate::materials_view::view(self),
+            // TODO(B3): settings_view::view
+            Screen::Settings => crate::view::view(self),
         }
     }
 
@@ -611,6 +639,35 @@ mod tests {
             MaterialStore::new(springcore::MaterialSet::load_default()),
             Vec::new(),
         )
+    }
+
+    #[test]
+    fn changing_correction_recomputes_with_new_factor() {
+        let mut app = App::from_store(
+            MaterialStore::new(springcore::MaterialSet::load_default()),
+            Vec::new(),
+        );
+        // PowerUser design with spring index C = mean_dia / wire_dia = 20 / 2 = 10.
+        app.form.scenario = crate::form::ScenarioKind::PowerUser;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.active = "10".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Bergstrasser,
+        ));
+        let berg = app.outcome.as_ref().unwrap().design.load_points[0]
+            .shear_stress
+            .pascals();
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        let wahl = app.outcome.as_ref().unwrap().design.load_points[0]
+            .shear_stress
+            .pascals();
+        assert!(wahl > berg, "Wahl factor exceeds Bergsträsser at C=10");
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
     }
 
     #[test]
