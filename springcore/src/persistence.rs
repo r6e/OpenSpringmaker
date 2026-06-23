@@ -8,7 +8,7 @@ use crate::mechanics::EndFixity;
 use crate::optimize::{solve_min_weight, MinWeightRequest};
 use crate::scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 use crate::units::{Force, Length, SpringRate};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -247,7 +247,11 @@ impl SavedDesign {
     /// `material` must be the one named by `self.material`; otherwise the computed design
     /// and the design's recorded material name would silently disagree. The mismatch is
     /// rejected at runtime (not merely `debug_assert!`) since this is a public API.
-    pub fn solve_with_material(&self, material: &Material) -> Result<SpringDesign> {
+    pub fn solve_with_material(
+        &self,
+        material: &Material,
+        correction: CurvatureCorrection,
+    ) -> Result<SpringDesign> {
         if self.material != material.name {
             return Err(SpringError::InconsistentInputs(format!(
                 "solve_with_material: material '{}' does not match SavedDesign.material '{}'",
@@ -272,7 +276,7 @@ impl SavedDesign {
                 free_length: Length::from_millimeters(*free_length_mm),
                 loads: forces(loads_n),
             }
-            .solve(material),
+            .solve(material, correction),
             ScenarioSpec::TwoLoad {
                 end_type,
                 fixity,
@@ -296,7 +300,7 @@ impl SavedDesign {
                     Length::from_millimeters(*length2_mm),
                 ),
             }
-            .solve(material),
+            .solve(material, correction),
             ScenarioSpec::RateBased {
                 end_type,
                 fixity,
@@ -314,7 +318,7 @@ impl SavedDesign {
                 free_length: Length::from_millimeters(*free_length_mm),
                 loads: forces(loads_n),
             }
-            .solve(material),
+            .solve(material, correction),
             ScenarioSpec::Dimensional {
                 end_type,
                 fixity,
@@ -332,18 +336,22 @@ impl SavedDesign {
                 free_length: Length::from_millimeters(*free_length_mm),
                 loads: forces(loads_n),
             }
-            .solve(material),
+            .solve(material, correction),
             ScenarioSpec::MinWeight { .. } => {
                 let req = min_weight_request_from_spec(&self.scenario)?;
-                solve_min_weight(material, &req).map(|s| s.design)
+                solve_min_weight(material, &req, correction).map(|s| s.design)
             }
         }
     }
 
     /// Re-compute the spring design from the stored scenario inputs and the given material set.
-    pub fn solve(&self, materials: &MaterialSet) -> Result<SpringDesign> {
+    pub fn solve(
+        &self,
+        materials: &MaterialSet,
+        correction: CurvatureCorrection,
+    ) -> Result<SpringDesign> {
         let material = materials.get(&self.material)?;
-        self.solve_with_material(material)
+        self.solve_with_material(material, correction)
     }
 }
 
@@ -523,7 +531,12 @@ mod tests {
         };
         let parsed = SavedDesign::from_toml(&s.to_toml().unwrap()).unwrap();
         assert_eq!(s, parsed);
-        let design = s.solve(&MaterialSet::load_default()).unwrap();
+        let design = s
+            .solve(
+                &MaterialSet::load_default(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert!(design.buckling_stable);
     }
 
@@ -554,7 +567,9 @@ mod tests {
     #[test]
     fn solve_reproduces_design() {
         let set = MaterialSet::load_default();
-        let design = sample().solve(&set).unwrap();
+        let design = sample()
+            .solve(&set, CurvatureCorrection::Bergstrasser)
+            .unwrap();
         assert_relative_eq!(design.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
     }
 
@@ -564,12 +579,14 @@ mod tests {
         let set = MaterialSet::load_default();
         let wrong = set.get("Stainless 302").unwrap();
         assert!(matches!(
-            sample().solve_with_material(wrong),
+            sample().solve_with_material(wrong, CurvatureCorrection::Bergstrasser),
             Err(SpringError::InconsistentInputs(_))
         ));
         // The matching material still solves.
         let right = set.get("Music Wire").unwrap();
-        assert!(sample().solve_with_material(right).is_ok());
+        assert!(sample()
+            .solve_with_material(right, CurvatureCorrection::Bergstrasser)
+            .is_ok());
     }
 
     #[test]
@@ -578,7 +595,12 @@ mod tests {
         if let ScenarioSpec::RateBased { end_type, .. } = &mut s.scenario {
             *end_type = "banana".into();
         }
-        assert!(s.solve(&MaterialSet::load_default()).is_err());
+        assert!(s
+            .solve(
+                &MaterialSet::load_default(),
+                CurvatureCorrection::Bergstrasser
+            )
+            .is_err());
     }
 
     #[test]

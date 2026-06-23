@@ -25,7 +25,9 @@ fn pipeline_rate_based_music_wire() {
         },
     };
     let set = MaterialSet::load_default();
-    let design = saved.solve(&set).unwrap();
+    let design = saved
+        .solve(&set, springcore::CurvatureCorrection::Bergstrasser)
+        .unwrap();
 
     assert_relative_eq!(design.index, 10.0, max_relative = 1e-9);
     assert_relative_eq!(design.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
@@ -93,7 +95,7 @@ fn comprehensive_spring_design_compression() {
         free_length: Length::from_inches(8.0),
         loads: vec![Force::from_pounds_force(356.0)], // P at 4 in deflection
     }
-    .solve(material)
+    .solve(material, springcore::CurvatureCorrection::Wahl)
     .unwrap();
 
     // Spring index C = D/d = 1.69 / 0.250 = 6.76 (exact).
@@ -147,7 +149,7 @@ fn shigley_10_1_compression() {
         free_length: Length::from_inches(2.06),
         loads: vec![Force::from_pounds_force(6.46)], // load at yield
     }
-    .solve(material)
+    .solve(material, springcore::CurvatureCorrection::Bergstrasser)
     .unwrap();
 
     // Spring index C = D/d = 0.400/0.037 = 10.81 (Shigley rounds to 10.8).
@@ -158,10 +160,11 @@ fn shigley_10_1_compression() {
     // Published rate k = 4.13 lbf/in (3% absorbs the G-source difference).
     assert_relative_eq!(design.rate.pounds_per_inch(), 4.13, max_relative = 0.03);
     // Corrected shear at F = 6.46 lbf: published τ = S_sy = 146 kpsi.
+    // Shigley uses K_B = 1.124 (Bergsträsser); 3e-3 absorbs Shigley's 3-figure rounding.
     assert_relative_eq!(
         design.load_points[0].shear_stress.psi(),
         146_000.0,
-        max_relative = 0.02
+        max_relative = 3e-3
     );
     // Deflection y = F/k = 1.56 in (3% tracks the k tolerance).
     assert_relative_eq!(
