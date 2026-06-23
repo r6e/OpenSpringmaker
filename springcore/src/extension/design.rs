@@ -95,10 +95,24 @@ pub fn solve_forward(
     hooks: HookEnds,
     loads: &[Force],
 ) -> Result<ExtensionDesign> {
+    // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
+    // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
+    if !(wire_dia.meters().is_finite() && wire_dia.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "wire diameter must be positive".into(),
+        ));
+    }
     // Spring index must exceed 1 (mean_dia > wire_dia) for a physically valid spring.
     if mean_dia.meters() <= wire_dia.meters() {
         return Err(SpringError::InconsistentInputs(
             "mean diameter must be greater than wire diameter (spring index must exceed 1)".into(),
+        ));
+    }
+    // Active coils must be finite and positive; k ∝ 1/Na, so Na ≤ 0 yields a
+    // non-finite or negative rate.
+    if !(active.is_finite() && active > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "active coils must be positive".into(),
         ));
     }
     // Initial tension is a built-in preload; negative values are physically meaningless.
@@ -238,6 +252,42 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             Force::from_newtons(-1.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// active ≤ 0 would make spring_rate divide by zero/negative → Inf/negative
+    /// rate silently flowing into deflection and stresses.
+    #[test]
+    fn rejects_non_positive_active() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            0.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// wire_dia = 0 slips past the mean > wire check yet yields a zero rate
+    /// (d⁴ = 0) → infinite deflection.
+    #[test]
+    fn rejects_zero_wire_dia() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(0.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
         );

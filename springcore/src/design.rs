@@ -76,12 +76,26 @@ pub fn solve_forward(
     free_length: Length,
     loads: &[Force],
 ) -> Result<SpringDesign> {
+    // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
+    // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
+    if !(wire_dia.meters().is_finite() && wire_dia.meters() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "wire diameter must be positive".into(),
+        ));
+    }
     // A spring index ≤ 1 is physically meaningless; mean diameter must exceed wire diameter
     // (SMI Handbook; Shigley §10-1). This also guards the Dimensional scenario when
     // outer_dia ≤ wire_dia, which would produce a non-positive mean diameter.
     if mean_dia.meters() <= wire_dia.meters() {
         return Err(SpringError::InconsistentInputs(
             "mean diameter must be greater than wire diameter (spring index must exceed 1)".into(),
+        ));
+    }
+    // Active coils must be finite and positive; k ∝ 1/Na, so Na ≤ 0 yields a
+    // non-finite or negative rate.
+    if !(active.is_finite() && active > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "active coils must be positive".into(),
         ));
     }
 
@@ -604,6 +618,48 @@ mod tests {
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
             "mean == wire must return InconsistentInputs"
+        );
+    }
+
+    /// active ≤ 0 makes spring_rate divide by zero/negative → Inf/negative rate
+    /// silently flowing into deflection and stresses.
+    #[test]
+    fn solve_forward_rejects_non_positive_active() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            0.0, // active = 0 → rejected
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "active <= 0 must return InconsistentInputs"
+        );
+    }
+
+    /// wire_dia = 0 slips past the mean > wire check yet yields a zero rate
+    /// (d⁴ = 0) → infinite deflection.
+    #[test]
+    fn solve_forward_rejects_zero_wire_dia() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(0.0), // wire = 0 → rejected
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
+            "wire_dia <= 0 must return InconsistentInputs"
         );
     }
 
