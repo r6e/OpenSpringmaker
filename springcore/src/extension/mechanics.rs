@@ -6,12 +6,18 @@ use std::f64::consts::PI;
 
 /// Hook bending curvature factor at point A (Shigley, extension springs):
 /// (K)_A = (4·C1² − C1 − 1) / (4·C1·(C1 − 1)), with C1 = 2·r1/d.
+///
+/// Precondition: `c1` must exceed 1.0. The factor diverges (denominator → 0)
+/// as C1 → 1. The caller is responsible for ensuring C1 > 1 before invoking.
 pub fn hook_bending_factor(c1: f64) -> f64 {
     (4.0 * c1 * c1 - c1 - 1.0) / (4.0 * c1 * (c1 - 1.0))
 }
 
 /// Hook torsion curvature factor at point B (Shigley, extension springs):
 /// (K)_B = (4·C2 − 1) / (4·C2 − 4), with C2 = 2·r2/d.
+///
+/// Precondition: `c2` must exceed 1.0. The factor diverges (denominator → 0)
+/// as C2 → 1. The caller is responsible for ensuring C2 > 1 before invoking.
 pub fn hook_torsion_factor(c2: f64) -> f64 {
     (4.0 * c2 - 1.0) / (4.0 * c2 - 4.0)
 }
@@ -25,11 +31,11 @@ pub fn hook_bending_stress(force: Force, mean_dia: Length, wire_dia: Length, r1:
     Stress::from_pascals(sigma)
 }
 
-/// Extension deflection at a load: y = max(0, (F − F_i)/k). Coils stay closed
+/// Extension deflection at a load: y = max(0, F − F_i)/k. Coils stay closed
 /// (no deflection) until the force exceeds the built-in initial tension (Shigley).
 pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Length {
     let net = force.newtons() - initial_tension.newtons();
-    Length::from_meters((net.max(0.0)) / rate.newtons_per_meter())
+    Length::from_meters(net.max(0.0) / rate.newtons_per_meter())
 }
 
 /// Hook torsional stress at point B (Shigley): τ_B = (K)_B·8FD/(πd³).

@@ -107,6 +107,24 @@ pub fn solve_forward(
             "initial tension must be non-negative".into(),
         ));
     }
+    // Hook curvature index C1 = 2·r1/d must exceed 1; at C1 ≤ 1 the bending
+    // factor (K_A) denominator 4·C1·(C1−1) goes to zero or negative.
+    let c1 = 2.0 * hooks.r1.meters() / wire_dia.meters();
+    if c1 <= 1.0 {
+        return Err(SpringError::InconsistentInputs(
+            "hook bend radius r1 must exceed d/2 (curvature index C1 = 2·r1/d must exceed 1)"
+                .into(),
+        ));
+    }
+    // Hook curvature index C2 = 2·r2/d must exceed 1; at C2 ≤ 1 the torsion
+    // factor (K_B) denominator (4·C2−4) goes to zero or negative.
+    let c2 = 2.0 * hooks.r2.meters() / wire_dia.meters();
+    if c2 <= 1.0 {
+        return Err(SpringError::InconsistentInputs(
+            "hook bend radius r2 must exceed d/2 (curvature index C2 = 2·r2/d must exceed 1)"
+                .into(),
+        ));
+    }
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
@@ -197,5 +215,89 @@ mod tests {
             &[Force::from_newtons(30.0)],
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// C1 = 2·r1/d = 2·(2mm)/(4mm) = 1 — bending factor denominator hits zero.
+    #[test]
+    fn rejects_hook_r1_too_tight() {
+        let m = crate::test_support::music_wire();
+        // d = 4 mm, r1 = d/2 = 2 mm → C1 = 1.0; r2 = 3 mm → C2 = 1.5 (valid).
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(4.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds {
+                r1: Length::from_millimeters(2.0),
+                r2: Length::from_millimeters(3.0),
+            },
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// Default hooks give r2 = D/4; with d = D/2 → C2 = 2·(D/4)/(D/2) = 1 —
+    /// torsion factor denominator hits zero.
+    #[test]
+    fn rejects_default_hooks_low_index_spring() {
+        let m = crate::test_support::music_wire();
+        // d = 10 mm, D = 20 mm → index 2; default_for(20mm) → r1=10mm (C1=2), r2=5mm (C2=1).
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(10.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// Pin the pct-allowable denominator mapping: body and hook-torsion use
+    /// `allowable_pct_torsion`; hook-bending uses `allowable_pct_bending`.
+    /// Swapping the two fractions would make this test fail.
+    #[test]
+    fn pct_allowable_fractions_use_correct_denominators() {
+        let m = crate::test_support::music_wire();
+        let wire_dia = Length::from_millimeters(2.0);
+        let d = solve_forward(
+            &m,
+            wire_dia,
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        )
+        .unwrap();
+        let lp = &d.load_points[0];
+        let mts = m.min_tensile_strength(wire_dia).unwrap();
+
+        let expected_body = lp.body_shear.pascals() / (m.allowable_pct_torsion * mts.pascals());
+        let expected_hook_torsion =
+            lp.hook_torsion.pascals() / (m.allowable_pct_torsion * mts.pascals());
+        let expected_hook_bending =
+            lp.hook_bending.pascals() / (m.allowable_pct_bending * mts.pascals());
+
+        assert_relative_eq!(lp.pct_body_allow, expected_body, max_relative = 1e-12);
+        assert_relative_eq!(
+            lp.pct_hook_torsion_allow,
+            expected_hook_torsion,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            lp.pct_hook_bending_allow,
+            expected_hook_bending,
+            max_relative = 1e-12
+        );
+        // Sanity-check: the two allowable percentages differ, so the test is
+        // discriminating — a swap of the torsion/bending denominator would change
+        // the values.
+        assert_ne!(m.allowable_pct_torsion, m.allowable_pct_bending);
     }
 }
