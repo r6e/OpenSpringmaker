@@ -185,14 +185,35 @@ fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Elemen
         .into()
 }
 
-/// Stable widget id (as a string) for a calculator field's text input. The
-/// inputs are empty by default, so headless Simulator tests can't target them by
-/// text content and select by this id instead. Single source of truth shared by
-/// the view and the tests, derived from the `Field` variant name so the two
-/// can't drift. Assumes each `Field` renders at most one input per frame (true
-/// today: the scenario-driven input set never repeats a field).
-pub(crate) fn calc_field_id(field: Field) -> String {
-    format!("calc-{field:?}")
+/// Stable widget id for a calculator field's text input. The inputs are empty by
+/// default, so headless Simulator tests can't target them by text content and
+/// select by this id instead. An explicit, exhaustive match (rather than a
+/// `Debug`-derived string) keeps the ids a deliberate stable contract, avoids a
+/// per-render allocation, and forces a choice when a `Field` is added. Single
+/// source of truth shared by the view and the tests; each `Field` renders at
+/// most one input per frame (the scenario-driven input set never repeats a field).
+pub(crate) fn calc_field_id(field: Field) -> &'static str {
+    match field {
+        Field::WireDia => "calc-wire-dia",
+        Field::MeanDia => "calc-mean-dia",
+        Field::OuterDia => "calc-outer-dia",
+        Field::Active => "calc-active",
+        Field::FreeLength => "calc-free-length",
+        Field::Rate => "calc-rate",
+        Field::Loads => "calc-loads",
+        Field::Force1 => "calc-force1",
+        Field::Length1 => "calc-length1",
+        Field::Force2 => "calc-force2",
+        Field::Length2 => "calc-length2",
+        Field::FatigueMin => "calc-fatigue-min",
+        Field::FatigueMax => "calc-fatigue-max",
+        Field::MaxForce => "calc-max-force",
+        Field::IndexMin => "calc-index-min",
+        Field::IndexMax => "calc-index-max",
+        Field::MaxOuterDia => "calc-max-outer-dia",
+        Field::CandidateDiameters => "calc-candidate-diameters",
+        Field::ClashAllowance => "calc-clash-allowance",
+    }
 }
 
 /// A field label in the muted color at 13px.
