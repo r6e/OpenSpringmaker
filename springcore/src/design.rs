@@ -80,7 +80,7 @@ pub fn solve_forward(
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
     if !(wire_dia.meters().is_finite() && wire_dia.meters() > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "wire diameter must be positive".into(),
+            "wire diameter must be a positive finite number".into(),
         ));
     }
     // Mean diameter must be finite; a non-finite dm gives a zero or non-finite
@@ -104,14 +104,14 @@ pub fn solve_forward(
     // non-finite or negative rate.
     if !(active.is_finite() && active > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "active coils must be positive".into(),
+            "active coils must be a positive finite number".into(),
         ));
     }
     // Free length must be finite and positive; a non-finite L0 propagates into pitch
     // and buckling and the per-load lengths.
     if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "free length must be positive".into(),
+            "free length must be a positive finite number".into(),
         ));
     }
     // Every load must be finite and non-negative. A non-finite load makes deflection
@@ -740,7 +740,7 @@ mod tests {
             &[Force::from_newtons(10.0)],
         );
         assert!(
-            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be positive"),
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be a positive finite number"),
             "expected the free-length guard, got {result:?}"
         );
     }

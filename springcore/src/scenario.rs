@@ -154,7 +154,7 @@ impl Scenario for Dimensional {
         // a clear message rather than a derived "mean diameter" error.
         if !(self.outer_dia.meters().is_finite() && self.outer_dia.meters() > 0.0) {
             return Err(SpringError::InconsistentInputs(
-                "outer diameter must be positive".into(),
+                "outer diameter must be a positive finite number".into(),
             ));
         }
         let mean = Length::from_meters(self.outer_dia.meters() - self.wire_dia.meters());
@@ -357,7 +357,7 @@ mod tests {
         };
         assert!(
             matches!(s.solve(&crate::test_support::music_wire()),
-                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be positive"),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
             "non-finite outer_dia must be rejected with an OD-specific message"
         );
     }
@@ -378,7 +378,7 @@ mod tests {
         };
         assert!(
             matches!(s.solve(&crate::test_support::music_wire()),
-                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be positive"),
+                Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
             "outer_dia == 0 must be rejected with the OD message"
         );
     }

@@ -99,7 +99,7 @@ pub fn solve_forward(
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
     if !(wire_dia.meters().is_finite() && wire_dia.meters() > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "wire diameter must be positive".into(),
+            "wire diameter must be a positive finite number".into(),
         ));
     }
     // Mean diameter must be finite; a non-finite dm gives a zero or non-finite
@@ -121,21 +121,21 @@ pub fn solve_forward(
     // non-finite or negative rate.
     if !(active.is_finite() && active > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "active coils must be positive".into(),
+            "active coils must be a positive finite number".into(),
         ));
     }
     // Free length must be finite and positive; a non-finite L0 propagates into the
     // load-point length (L = L0 + y).
     if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "free length must be positive".into(),
+            "free length must be a positive finite number".into(),
         ));
     }
     // Initial tension is a built-in preload; it must be finite and non-negative.
     // (`< 0.0` alone would admit NaN and +Inf, which then flow into deflection.)
     if !(initial_tension.newtons().is_finite() && initial_tension.newtons() >= 0.0) {
         return Err(SpringError::InconsistentInputs(
-            "initial tension must be non-negative".into(),
+            "initial tension must be a non-negative finite number".into(),
         ));
     }
     // Every load must be finite and non-negative. A non-finite load makes stresses
@@ -151,6 +151,11 @@ pub fn solve_forward(
             "loads must be finite and non-negative".into(),
         ));
     }
+    // Validate the wire diameter against the material's manufacturable range before
+    // the hook-radius checks, so an out-of-range diameter surfaces as
+    // DiameterOutOfRange (the most actionable error) rather than a hook-radius error
+    // — matching the compression solver's ordering.
+    let mts = material.min_tensile_strength(wire_dia)?;
     // Hook curvature index C1 = 2·r1/d must be finite and exceed 1; at C1 ≤ 1 the
     // bending factor (K_A) denominator 4·C1·(C1−1) goes to zero or negative, and a
     // non-finite r1 (or the `<= 1.0` comparison failing for NaN/+Inf) must not slip
@@ -174,7 +179,6 @@ pub fn solve_forward(
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
-    let mts = material.min_tensile_strength(wire_dia)?;
 
     let load_points = loads
         .iter()
@@ -421,6 +425,32 @@ mod tests {
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
+    /// An out-of-range wire diameter must surface as DiameterOutOfRange even when a
+    /// hook radius is ALSO invalid (C1 ≤ 1). Pins the `min_tensile_strength` ordering:
+    /// if it were moved back after the hook-radius checks, this would return the hook
+    /// error instead. d=10mm is out of range for music wire; r1=2mm → C1 = 0.4 ≤ 1.
+    #[test]
+    fn diameter_error_precedes_hook_error() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(10.0), // out of range for music wire
+            Length::from_millimeters(80.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds {
+                r1: Length::from_millimeters(2.0), // C1 = 2·2/10 = 0.4 ≤ 1 — also invalid
+                r2: Length::from_millimeters(6.0),
+            },
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(
+            matches!(r, Err(crate::SpringError::DiameterOutOfRange { .. })),
+            "out-of-range diameter must win over the hook-radius error, got {r:?}"
+        );
+    }
+
     /// wire_dia = 0 slips past the mean > wire check yet yields a zero rate
     /// (d⁴ = 0) → infinite deflection. Asserts the wire-specific message so the
     /// dedicated wire guard is exercised, not the downstream C1 = 2·r1/d guard
@@ -439,7 +469,7 @@ mod tests {
             &[Force::from_newtons(30.0)],
         );
         assert!(
-            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "wire diameter must be positive"),
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "wire diameter must be a positive finite number"),
             "expected the wire-diameter guard, got {r:?}"
         );
     }
@@ -459,7 +489,7 @@ mod tests {
             &[Force::from_newtons(30.0)],
         );
         assert!(
-            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be positive"),
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be a positive finite number"),
             "expected the free-length guard, got {r:?}"
         );
     }
@@ -520,19 +550,20 @@ mod tests {
     }
 
     /// Default hooks give r2 = D/4; with d = D/2 → C2 = 2·(D/4)/(D/2) = 1 —
-    /// torsion factor denominator hits zero.
+    /// torsion factor denominator hits zero. Uses an in-range wire diameter so the
+    /// C2 guard fires (not the diameter-range check, which now precedes it).
     #[test]
     fn rejects_default_hooks_low_index_spring() {
         let m = crate::test_support::music_wire();
-        // d = 10 mm, D = 20 mm → index 2; default_for(20mm) → r1=10mm (C1=2), r2=5mm (C2=1).
+        // d = 5 mm (in range), D = 10 mm → index 2; default_for(10mm) → r1=5mm (C1=2), r2=2.5mm (C2=1).
         let r = solve_forward(
             &m,
+            Length::from_millimeters(5.0),
             Length::from_millimeters(10.0),
-            Length::from_millimeters(20.0),
             10.0,
             Length::from_millimeters(60.0),
             Force::from_newtons(10.0),
-            HookEnds::default_for(Length::from_millimeters(20.0)),
+            HookEnds::default_for(Length::from_millimeters(10.0)),
             &[Force::from_newtons(30.0)],
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
