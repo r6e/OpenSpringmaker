@@ -114,10 +114,16 @@ pub fn solve_forward(
             "free length must be positive".into(),
         ));
     }
-    // Every load must be finite, else deflection and stresses become NaN/Inf.
-    if loads.iter().any(|f| !f.newtons().is_finite()) {
+    // Every load must be finite and non-negative. A non-finite load makes deflection
+    // and stresses NaN/Inf; a negative load drives the signed-force stress formulas
+    // to negative stresses and %-allowable ratios that never exceed the limit,
+    // silently hiding overstress. Zero is allowed (a valid free-state reference point).
+    if loads
+        .iter()
+        .any(|f| !f.newtons().is_finite() || f.newtons() < 0.0)
+    {
         return Err(SpringError::InconsistentInputs(
-            "loads must be finite".into(),
+            "loads must be finite and non-negative".into(),
         ));
     }
 
@@ -764,6 +770,47 @@ mod tests {
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
             "non-finite load must return InconsistentInputs"
         );
+    }
+
+    /// A negative load yields negative stresses and %-allowable ratios that never
+    /// exceed the limit, silently hiding overstress.
+    #[test]
+    fn solve_forward_rejects_negative_load() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(-5.0)], // negative load → rejected
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "loads must be finite and non-negative"),
+            "expected the loads guard, got {result:?}"
+        );
+    }
+
+    /// A zero load is allowed (a valid free-state point). Pins the `< 0.0`
+    /// (not `<= 0.0`) boundary.
+    #[test]
+    fn solve_forward_accepts_zero_load() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(0.0)],
+        )
+        .unwrap();
+        assert_relative_eq!(design.load_points[0].deflection.millimeters(), 0.0);
+        assert_relative_eq!(design.load_points[0].shear_stress.pascals(), 0.0);
     }
 
     /// mean < wire is also rejected.

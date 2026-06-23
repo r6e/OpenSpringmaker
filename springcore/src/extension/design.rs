@@ -138,11 +138,17 @@ pub fn solve_forward(
             "initial tension must be non-negative".into(),
         ));
     }
-    // Every load must be finite, else stresses and deflection become NaN/Inf
-    // (and a NaN deflection would be silently masked to zero by the y clamp).
-    if loads.iter().any(|f| !f.newtons().is_finite()) {
+    // Every load must be finite and non-negative. A non-finite load makes stresses
+    // and deflection NaN/Inf (a NaN deflection would be silently masked to zero by
+    // the y clamp); a negative load drives the signed-force stress formulas to
+    // negative stresses and %-allowable ratios that never exceed the limit, silently
+    // hiding overstress. Zero is allowed (a valid free-state reference point).
+    if loads
+        .iter()
+        .any(|f| !f.newtons().is_finite() || f.newtons() < 0.0)
+    {
         return Err(SpringError::InconsistentInputs(
-            "loads must be finite".into(),
+            "loads must be finite and non-negative".into(),
         ));
     }
     // Hook curvature index C1 = 2·r1/d must be finite and exceed 1; at C1 ≤ 1 the
@@ -333,6 +339,47 @@ mod tests {
             &[Force::from_newtons(f64::NAN)],
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A negative load drives the signed-force stress formulas to negative stresses
+    /// and %-allowable ratios that never exceed the limit, hiding overstress.
+    #[test]
+    fn rejects_negative_load() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(-5.0)],
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "loads must be finite and non-negative"),
+            "expected the loads guard, got {r:?}"
+        );
+    }
+
+    /// A zero load is allowed: a valid free-state reference point (no force →
+    /// no deflection, no stress). Pins the `< 0.0` (not `<= 0.0`) boundary.
+    #[test]
+    fn accepts_zero_load() {
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(0.0)],
+        )
+        .unwrap();
+        assert_relative_eq!(d.load_points[0].deflection.millimeters(), 0.0);
+        assert_relative_eq!(d.load_points[0].body_shear.pascals(), 0.0);
     }
 
     /// A non-finite hook radius makes C1 = 2·r1/d non-finite; `c1 <= 1.0` would not
