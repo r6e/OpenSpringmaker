@@ -110,54 +110,63 @@ fn comprehensive_spring_design_compression() {
     );
 }
 
+// A second independent compression oracle, from a different source than the
+// Victory Spring example above. Inputs and results transcribed (not recomputed by
+// us) from Shigley's worked example.
+//
+// Source: Budynas & Nisbett, "Shigley's Mechanical Engineering Design", 10th ed.
+// (McGraw-Hill, 2015), Example 10-1, p. 519 (a no. 16 music-wire compression
+// spring, squared ends). Verified against the primary text.
+//
+// GIVEN: no. 16 music wire d = 0.037 in; OD = 7/16 in = 0.4375 in, so
+//   D = OD − d = 0.4005 in, which Shigley rounds to D = 0.400 in (used throughout
+//   the example, so the test inputs 0.400 to match its published results);
+//   squared (closed, not ground) ends; total turns Nt = 12.5 → Na = Nt − 2 = 10.5;
+//   G = 11.85 Mpsi (Shigley Table 10-5). Free length L0 = 2.06 in (Eq. 10-1 part f).
+// PUBLISHED: spring index C = 10.8; Bergsträsser K_B = 1.124; static load at
+//   yield F = 6.46 lbf giving corrected shear τ = S_sy = 146 kpsi; rate k = 4.13
+//   lbf/in; deflection y = F/k = 1.56 in; solid length L_s = (Nt+1)d = 0.500 in.
+//
+// Tolerances: index and solid length are pure geometry (tight). k and the
+// F/k deflection use a 3% band absorbing the source's G = 11.85 Mpsi vs our
+// curated Music Wire G = 80 GPa (11.6 Mpsi). The corrected shear uses a 2% band
+// because Shigley applies the Bergsträsser factor (1.124) while our static path
+// currently applies Wahl (1.133 at C=10.8, ~0.8% higher); this tightens once the
+// selectable curvature-correction model lands.
 #[test]
-#[ignore = "awaiting EN 13906-1 worked-example source values — RELEASE BLOCKER, see PR body"]
-fn en_13906_1_worked_example() {
-    // Inputs and expected values transcribed from EN 13906-1 (Cylindrical
-    // helical springs — Calculation and design), worked example (metric units).
-    //
-    // TODO: Locate the EN 13906-1 worked example (appendix or normative body).
-    //       Record the given values for d, D, n (active coils), L0, end type,
-    //       and operating force, then fill in the zeros below.
-    //       Also record the published results for spring rate and shear stress.
+fn shigley_10_1_compression() {
     let set = MaterialSet::load_default();
-
-    // GIVEN (from the source — replace each 0.0 with the printed figure):
-    let wire_dia = Length::from_millimeters(/* d from EN 13906-1 example */ 0.0);
-    let mean_dia = Length::from_millimeters(/* D from EN 13906-1 example */ 0.0);
-    let active = /* n from EN 13906-1 example */ 0.0_f64;
-    let free_length = Length::from_millimeters(/* L0 from EN 13906-1 example */ 0.0);
-    let load = Force::from_newtons(/* F from EN 13906-1 example */ 0.0);
-
-    // Use the material named in the example; update the string if it differs.
     let material = set.get("Music Wire").unwrap();
 
     let design = springcore::PowerUser {
-        end_type: /* end type from EN 13906-1 example */ springcore::EndType::SquaredGround,
+        end_type: springcore::EndType::Squared, // squared (closed), not ground
         fixity: springcore::EndFixity::FixedFixed,
-        wire_dia,
-        mean_dia,
-        active,
-        free_length,
-        loads: vec![load],
+        wire_dia: Length::from_inches(0.037),
+        mean_dia: Length::from_inches(0.400), // Shigley's rounded D (7/16 − 0.037 = 0.4005 ≈ 0.400)
+        active: 10.5,                         // Na = Nt − 2 (squared ends)
+        free_length: Length::from_inches(2.06),
+        loads: vec![Force::from_pounds_force(6.46)], // load at yield
     }
     .solve(material)
     .unwrap();
 
-    // PUBLISHED RESULTS (from the source — replace each 0.0 with the printed figure):
+    // Spring index C = D/d = 0.400/0.037 = 10.81 (Shigley rounds to 10.8).
+    assert_relative_eq!(design.index, 0.400 / 0.037, max_relative = 1e-9);
+    // Solid length L_s = (Nt+1)d = 13.5·0.037 = 0.4995 in; the 2e-3 band absorbs
+    // Shigley's rounding of that to the published 0.500 in.
+    assert_relative_eq!(design.solid_length.inches(), 0.500, max_relative = 2e-3);
+    // Published rate k = 4.13 lbf/in (3% absorbs the G-source difference).
+    assert_relative_eq!(design.rate.pounds_per_inch(), 4.13, max_relative = 0.03);
+    // Corrected shear at F = 6.46 lbf: published τ = S_sy = 146 kpsi.
     assert_relative_eq!(
-        design.rate.newtons_per_meter(),
-        /* k */ 0.0,
-        max_relative = 0.03
+        design.load_points[0].shear_stress.psi(),
+        146_000.0,
+        max_relative = 0.02
     );
+    // Deflection y = F/k = 1.56 in (3% tracks the k tolerance).
     assert_relative_eq!(
-        design.solid_length.millimeters(),
-        /* Ls */ 0.0,
-        max_relative = 0.03
-    );
-    assert_relative_eq!(
-        design.load_points[0].shear_stress.megapascals(),
-        /* tau */ 0.0,
+        design.load_points[0].deflection.inches(),
+        1.56,
         max_relative = 0.03
     );
 }

@@ -10,17 +10,21 @@ pub fn spring_index(mean_dia: Length, wire_dia: Length) -> f64 {
 }
 
 /// Wahl curvature-and-shear correction factor (Wahl 1963; Shigley Eq. 10-5):
-/// Kw = (4C-1)/(4C-4) + 0.615/C.
+/// Kw = (4C-1)/(4C-4) + 0.615/C. EN 13906-1:2013 lists this as the alternative
+/// to Bergsträsser in the NOTE under Formula (1).
 pub fn wahl_factor(index: f64) -> f64 {
     (4.0 * index - 1.0) / (4.0 * index - 4.0) + 0.615 / index
 }
 
 /// Bergsträsser correction factor (Shigley Eq. 10-6): Kb = (4C+2)/(4C-3).
+/// This is EN 13906-1:2013 Formula (1), `k = (w+0.5)/(w−0.75)`, written over the
+/// common denominator (multiply numerator and denominator by 4); the standard's
+/// primary stress-correction factor.
 pub fn bergstrasser_factor(index: f64) -> f64 {
     (4.0 * index + 2.0) / (4.0 * index - 3.0)
 }
 
-/// Spring rate k = G d^4 / (8 D^3 Na) (Shigley Eq. 10-9; EN 13906-1).
+/// Spring rate k = G d^4 / (8 D^3 Na) (Shigley Eq. 10-9; EN 13906-1:2013 Formula (6)).
 pub fn spring_rate(
     shear_modulus: Stress,
     wire_dia: Length,
@@ -33,7 +37,8 @@ pub fn spring_rate(
     SpringRate::from_newtons_per_meter(g * d.powi(4) / (8.0 * dm.powi(3) * active))
 }
 
-/// Active coils required for a target rate (inverse of `spring_rate`).
+/// Active coils required for a target rate (inverse of `spring_rate`;
+/// EN 13906-1:2013 Formula (11): n = G d^4 s / (8 D^3 F)).
 pub fn active_coils_for_rate(
     shear_modulus: Stress,
     wire_dia: Length,
@@ -46,8 +51,10 @@ pub fn active_coils_for_rate(
     g * d.powi(4) / (8.0 * dm.powi(3) * rate.newtons_per_meter())
 }
 
-/// Corrected shear stress tau = K * 8 F D / (pi d^3) (Shigley Eq. 10-7).
-/// `factor` is the chosen correction factor (Wahl or Bergsträsser).
+/// Corrected shear stress tau = K * 8 F D / (pi d^3) (Shigley Eq. 10-7;
+/// EN 13906-1:2013 uncorrected Formula (7) τ = 8 D F / (π d^3), corrected via
+/// Formula (9) τk = k·τ). `factor` is the chosen correction factor (Wahl or
+/// Bergsträsser).
 pub fn corrected_shear_stress(
     force: Force,
     mean_dia: Length,
@@ -165,6 +172,23 @@ mod tests {
     fn bergstrasser_factor_c10() {
         // Kb = (4C+2)/(4C-3); C=10 -> 42/37
         assert_relative_eq!(bergstrasser_factor(10.0), 42.0 / 37.0, max_relative = 1e-12);
+    }
+
+    /// Provenance: `bergstrasser_factor` is exactly EN 13906-1:2013 Formula (1),
+    /// `k = (w+0.5)/(w−0.75)` — our `(4w+2)/(4w−3)` is the same identity over a
+    /// common denominator. Asserting against the standard's printed form (a
+    /// genuinely distinct expression) catches a drift either way. (Wahl, the EN
+    /// NOTE alternative, has no distinct closed form to cross-check — it is pinned
+    /// numerically by `wahl_factor_c10`.)
+    #[test]
+    fn en_13906_1_bergstrasser_provenance() {
+        for &w in &[5.0_f64, 8.0, 10.8, 12.0] {
+            assert_relative_eq!(
+                bergstrasser_factor(w),
+                (w + 0.5) / (w - 0.75),
+                max_relative = 1e-12
+            );
+        }
     }
 
     #[test]
