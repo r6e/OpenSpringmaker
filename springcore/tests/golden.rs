@@ -169,9 +169,11 @@ fn en_13906_1_worked_example() {
 // so a wrong constant in the extension solver that the formula-based unit tests
 // would share is caught here.
 //
-// Source: Budynas & Nisbett, "Shigley's Mechanical Engineering Design", 10th ed.,
-// Example 10-6 (A227 hard-drawn steel extension spring). Reproduced publicly in
-// the McGraw-Hill "Chapter 10 Mechanical Springs" lecture slides, e.g.
+// Source: Budynas & Nisbett, "Shigley's Mechanical Engineering Design", 10th ed.
+// (McGraw-Hill, 2015), Example 10-6, p. 561 (A227 hard-drawn steel extension
+// spring). Values below were transcribed from and verified against the primary
+// text; the same example is reproduced publicly in the McGraw-Hill "Chapter 10
+// Mechanical Springs" lecture slides, e.g.
 // https://www.point32.com/jenkins_he/documents/SpringsCh10ExtensionTorsionsprings.pdf
 //
 // The example's hook formulas match our engine's exactly: the bending factor
