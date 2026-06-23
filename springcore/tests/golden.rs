@@ -118,7 +118,9 @@ fn comprehensive_spring_design_compression() {
 // (McGraw-Hill, 2015), Example 10-1, p. 519 (a no. 16 music-wire compression
 // spring, squared ends). Verified against the primary text.
 //
-// GIVEN: no. 16 music wire d = 0.037 in; OD = 7/16 in → D = OD − d = 0.400 in;
+// GIVEN: no. 16 music wire d = 0.037 in; OD = 7/16 in = 0.4375 in, so
+//   D = OD − d = 0.4005 in, which Shigley rounds to D = 0.400 in (used throughout
+//   the example, so the test inputs 0.400 to match its published results);
 //   squared (closed, not ground) ends; total turns Nt = 12.5 → Na = Nt − 2 = 10.5;
 //   G = 11.85 Mpsi (Shigley Table 10-5). Free length L0 = 2.06 in (Eq. 10-1 part f).
 // PUBLISHED: spring index C = 10.8; Bergsträsser K_B = 1.124; static load at
@@ -140,7 +142,7 @@ fn shigley_10_1_compression() {
         end_type: springcore::EndType::Squared, // squared (closed), not ground
         fixity: springcore::EndFixity::FixedFixed,
         wire_dia: Length::from_inches(0.037),
-        mean_dia: Length::from_inches(0.400), // OD − d = 7/16 − 0.037
+        mean_dia: Length::from_inches(0.400), // Shigley's rounded D (7/16 − 0.037 = 0.4005 ≈ 0.400)
         active: 10.5,                         // Na = Nt − 2 (squared ends)
         free_length: Length::from_inches(2.06),
         loads: vec![Force::from_pounds_force(6.46)], // load at yield
