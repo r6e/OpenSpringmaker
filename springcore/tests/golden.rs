@@ -162,6 +162,55 @@ fn en_13906_1_worked_example() {
     );
 }
 
+// ── Extension springs ─────────────────────────────────────────────────────────
+
+#[test]
+#[ignore = "awaiting Shigley extension worked-example values — see PR body"]
+fn extension_shigley_worked_example() {
+    // Inputs and expected values to be transcribed from the Shigley's Mechanical
+    // Engineering Design extension-spring worked example (edition + example number
+    // TBD). Confirm: d, D, Na, L0, F_i, r1, r2, and published k, σ_A, τ_B.
+    //
+    // TODO: Record the given values (d/D/Na/L0/F_i/r1/r2) and published results
+    //       (k, σ_A, τ_B) from the Shigley example, then fill in the zeros below.
+    use springcore::extension::{HookEnds, PowerUser, Scenario};
+
+    let set = MaterialSet::load_default();
+    let material = set
+        .get(/* material from the example */ "Music Wire")
+        .unwrap();
+
+    let s = PowerUser {
+        wire_dia: Length::from_millimeters(/* d */ 0.0),
+        mean_dia: Length::from_millimeters(/* D */ 0.0),
+        active: /* Na */ 0.0,
+        free_length: Length::from_millimeters(/* L0 */ 0.0),
+        initial_tension: Force::from_newtons(/* F_i */ 0.0),
+        hooks: HookEnds {
+            r1: Length::from_millimeters(/* r1 */ 0.0),
+            r2: Length::from_millimeters(/* r2 */ 0.0),
+        },
+        loads: vec![Force::from_newtons(/* F */ 0.0)],
+    };
+    let d = s.solve(material).unwrap();
+
+    assert_relative_eq!(
+        d.rate.newtons_per_meter(),
+        /* k */ 0.0,
+        max_relative = 0.03
+    );
+    assert_relative_eq!(
+        d.load_points[0].hook_bending.megapascals(),
+        /* σ_A */ 0.0,
+        max_relative = 0.03
+    );
+    assert_relative_eq!(
+        d.load_points[0].hook_torsion.megapascals(),
+        /* τ_B */ 0.0,
+        max_relative = 0.03
+    );
+}
+
 // ── PR (b) curated materials: per-material data-correctness goldens ──────────
 // Each asserts the strength model reproduces an INDEPENDENT published tensile
 // point (Machinery's Handbook 32nd ed., p390 "Minimum Tensile Strength of Spring
