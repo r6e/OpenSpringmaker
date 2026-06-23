@@ -199,6 +199,49 @@ mod tests {
             max_relative = 1e-9
         );
         assert!(d.load_points[0].hook_bending.pascals() > d.load_points[0].body_shear.pascals());
+        // OD = D + d = 22 mm; ID = D − d = 18 mm.
+        assert_relative_eq!(d.outer_dia.millimeters(), 22.0, max_relative = 1e-9);
+        assert_relative_eq!(d.inner_dia.millimeters(), 18.0, max_relative = 1e-9);
+    }
+
+    /// Zero initial tension is valid (coils separate immediately under any load);
+    /// the guard rejects only strictly negative preload.
+    #[test]
+    fn accepts_zero_initial_tension() {
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(0.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        )
+        .unwrap();
+        // With F_i = 0, deflection = F/k = 30/2000 = 15 mm.
+        assert_relative_eq!(
+            d.load_points[0].deflection.millimeters(),
+            15.0,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn rejects_negative_initial_tension() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(-1.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
     #[test]
