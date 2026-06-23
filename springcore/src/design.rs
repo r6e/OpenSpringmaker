@@ -127,12 +127,25 @@ pub fn solve_forward(
         ));
     }
 
+    // Validate the wire diameter against the material's manufacturable range before
+    // any geometry-derived check, so an out-of-range diameter surfaces as
+    // DiameterOutOfRange rather than a downstream geometry error.
+    let mts = material.min_tensile_strength(wire_dia)?;
+
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
     let total_coils = end_type.total_coils(active);
     let solid_length = end_type.solid_length(wire_dia, active);
+    // Free length cannot be below solid length — the coils physically cannot
+    // compress past solid. Beyond being impossible geometry, it makes the
+    // solid force F = k·(L0 − Ls) negative, which yields negative stress and a
+    // negative %-allowable that silently never trips the set/overstress check.
+    if free_length.meters() < solid_length.meters() {
+        return Err(SpringError::InconsistentInputs(
+            "free length must be at least the solid length".into(),
+        ));
+    }
     let pitch = end_type.pitch_from_free_length(wire_dia, active, free_length);
-    let mts = material.min_tensile_strength(wire_dia)?;
     let nat_freq = natural_frequency(
         wire_dia,
         mean_dia,
@@ -770,6 +783,72 @@ mod tests {
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
             "non-finite load must return InconsistentInputs"
         );
+    }
+
+    /// free_length below solid length is impossible geometry and makes the solid
+    /// force k·(L0−Ls) negative — negative stress and a %-allowable that can't trip
+    /// the set check. SquaredGround d=2,Na=10 → Ls = d(Na+2) = 24mm; 20 < 24.
+    #[test]
+    fn solve_forward_rejects_free_length_below_solid() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(20.0), // L0 = 20mm < Ls = 24mm → rejected
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be at least the solid length"),
+            "free_length < solid_length must be rejected, got {result:?}"
+        );
+    }
+
+    /// An out-of-range wire diameter must surface as DiameterOutOfRange even when
+    /// the geometry is ALSO invalid (free < solid). Pins the `mts` check ordering:
+    /// if `min_tensile_strength` were moved back after the solid-length guard, this
+    /// would return the geometry error instead. d=10mm is out of range for music
+    /// wire AND makes Ls = 10(10+2) = 120mm > free = 50mm.
+    #[test]
+    fn solve_forward_diameter_error_precedes_geometry_error() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(10.0), // out of range for music wire
+            Length::from_millimeters(80.0),
+            10.0,
+            Length::from_millimeters(50.0), // < solid (120mm) — also invalid
+            &[Force::from_newtons(10.0)],
+        );
+        assert!(
+            matches!(result, Err(crate::SpringError::DiameterOutOfRange { .. })),
+            "out-of-range diameter must win over the geometry error, got {result:?}"
+        );
+    }
+
+    /// free_length == solid length is the boundary: a (degenerate, zero-travel)
+    /// design that must be ACCEPTED, with solid force k·(L0−Ls) = 0. Pins the
+    /// `<` (not `<=`) boundary of the solid-length guard.
+    #[test]
+    fn solve_forward_accepts_free_length_equal_solid() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(24.0), // L0 == Ls = d(Na+2) = 24mm
+            &[Force::from_newtons(10.0)],
+        )
+        .unwrap();
+        assert_relative_eq!(design.at_solid.force.newtons(), 0.0);
     }
 
     /// A negative load yields negative stresses and %-allowable ratios that never
