@@ -52,6 +52,7 @@ fn pipeline_rate_based_music_wire() {
         Length::from_millimeters(20.0),
         Force::from_newtons(10.0),
         Force::from_newtons(30.0),
+        springcore::CurvatureCorrection::Bergstrasser,
     )
     .unwrap();
     assert!(fat.goodman_factor_of_safety > 1.0);
