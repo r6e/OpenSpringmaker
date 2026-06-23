@@ -277,7 +277,7 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0), Force::from_newtons(30.0)],
         }
-        .solve(&m)
+        .solve(&m, springcore::CurvatureCorrection::Bergstrasser)
         .unwrap()
     }
 

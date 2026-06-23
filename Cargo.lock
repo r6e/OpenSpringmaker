@@ -3410,11 +3410,14 @@ name = "springmaker"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "directories",
  "iced",
  "iced_test",
  "plotters",
  "rfd",
+ "serde",
  "springcore",
+ "toml",
 ]
 
 [[package]]

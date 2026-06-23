@@ -480,7 +480,15 @@ fn compute_fatigue(
         &form.fatigue_max,
         form.unit_system,
     )?);
-    match analyze_fatigue(material, design.wire_dia, design.mean_dia, fmin, fmax) {
+    // TODO(B2): use App.correction
+    match analyze_fatigue(
+        material,
+        design.wire_dia,
+        design.mean_dia,
+        fmin,
+        fmax,
+        springcore::CurvatureCorrection::Bergstrasser,
+    ) {
         Ok(r) => Ok(FatigueStatus::Computed(r)),
         Err(SpringError::NoFatigueData(_)) => Ok(FatigueStatus::NoData),
         Err(e) => Err(e),
@@ -496,7 +504,12 @@ pub fn parse_and_solve(form: &FormState, materials: &MaterialStore) -> Result<Fo
         let material = materials.get(&form.material)?;
         let spec = build_spec(form)?;
         let req = springcore::min_weight_request_from_spec(&spec)?;
-        let sol = springcore::solve_min_weight(material, &req)?;
+        // TODO(B2): use App.correction
+        let sol = springcore::solve_min_weight(
+            material,
+            &req,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )?;
         let status = evaluate_status(&sol.design, material);
         let fatigue = compute_fatigue(form, material, &sol.design)?;
         return Ok(FormOutcome {
@@ -520,7 +533,9 @@ pub fn parse_and_solve(form: &FormState, materials: &MaterialStore) -> Result<Fo
         unit_system: form.unit_system,
         scenario: spec,
     };
-    let design = saved.solve_with_material(material)?;
+    // TODO(B2): use App.correction
+    let design =
+        saved.solve_with_material(material, springcore::CurvatureCorrection::Bergstrasser)?;
     let status = evaluate_status(&design, material);
     let fatigue = compute_fatigue(form, material, &design)?;
 
