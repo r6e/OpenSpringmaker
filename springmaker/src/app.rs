@@ -887,10 +887,7 @@ mod tests {
         app.update(Message::MatField(MatField::Shear, "79".into()));
         app.update(Message::MatField(MatField::Density, "7850".into()));
         app.update(Message::MatField(MatField::AllowTorsion, "0.45".into()));
-        app.update(Message::MatField(
-            MatField::AllowEndTorsion,
-            "0.40".into(),
-        ));
+        app.update(Message::MatField(MatField::AllowEndTorsion, "0.40".into()));
         app.update(Message::MatField(MatField::AllowBending, "0.75".into()));
         app.update(Message::MatField(MatField::AllowSet, "0.6".into()));
     }

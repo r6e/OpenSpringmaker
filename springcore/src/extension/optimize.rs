@@ -21,7 +21,7 @@ use std::f64::consts::PI;
 
 /// Smallest spring index for which all three extension stresses (body shear, hook
 /// bending σ_A, hook torsion τ_B) are monotone increasing in the mean diameter, so the
-/// single-endpoint feasibility test in [`best_mean_dia`] is valid. It is the hook-torsion
+/// single-endpoint feasibility test in `best_mean_dia` is valid. It is the hook-torsion
 /// factor turning point: `K_B(C2)·C2` is minimised where `4·C2² − 8·C2 + 1 = 0` with
 /// `C2 = C/2`, giving `C = 2 + √3 ≈ 3.732`. Below this the factor is non-monotone (and has
 /// a pole at `C = 2` for default hooks, where `4·C2 − 4 → 0`), so a request whose `c_min`
@@ -91,7 +91,7 @@ pub struct ExtMinWeightRequest {
     /// How the hook geometry is chosen for each candidate (scaling or fixed radii).
     pub hooks: HookSpec,
     /// Allowed spring-index range `(c_min, c_max)`. `c_min` must be ≥ the monotonicity
-    /// floor `2 + √3` (see [`min_spring_index`]) and strictly below `c_max`.
+    /// floor `2 + √3` (see `min_spring_index`) and strictly below `c_max`.
     pub index_bounds: (f64, f64),
     /// Optional cap on the outer diameter `D + d`; caps the mean diameter if a candidate
     /// would exceed it. Must be finite and > 0 when present.
@@ -204,7 +204,11 @@ fn best_mean_dia(
     let candidates = [
         bound_for(&body, allow_torsion, ExtBindingConstraint::BodyShear)?,
         bound_for(&bending, allow_bending, ExtBindingConstraint::HookBending)?,
-        bound_for(&torsion, allow_end_torsion, ExtBindingConstraint::HookTorsion)?,
+        bound_for(
+            &torsion,
+            allow_end_torsion,
+            ExtBindingConstraint::HookTorsion,
+        )?,
     ];
     // The smallest upper bound binds. `total_cmp` is panic-free (the values are
     // finite here — dm_lo/dm_hi are finite and any root lies between them — so it
@@ -245,11 +249,7 @@ pub fn solve_min_weight(
     // 0 < c_min is intentionally NOT checked separately: the floor (c_min ≥ 2 + √3 ≈
     // 3.732) strictly implies it, so a redundant positivity guard would be an unkillable
     // equivalent mutant. The floor still rejects every c_min ≤ 0.
-    if !(c_min.is_finite()
-        && c_max.is_finite()
-        && c_min < c_max
-        && c_min >= min_spring_index())
-    {
+    if !(c_min.is_finite() && c_max.is_finite() && c_min < c_max && c_min >= min_spring_index()) {
         return Err(SpringError::InconsistentInputs(format!(
             "index bounds must satisfy {min:.4} ≤ c_min < c_max with both finite \
              (c_min floor = 2 + √3, the hook-torsion monotonicity turning point); \
@@ -573,10 +573,7 @@ mod tests {
                 r2: Length::from_millimeters(5.0),
             },
         ];
-        let corrections = [
-            CurvatureCorrection::Wahl,
-            CurvatureCorrection::Bergstrasser,
-        ];
+        let corrections = [CurvatureCorrection::Wahl, CurvatureCorrection::Bergstrasser];
 
         let mut feasible_count = 0;
         for &d in &diameters {
