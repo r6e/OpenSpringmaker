@@ -11,3 +11,6 @@ Cargo.lock.orig
 
 # Claude Code local session/config state
 /.claude/
+
+# macOS
+.DS_Store

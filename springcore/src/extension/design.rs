@@ -22,7 +22,7 @@ pub struct ExtLoadPoint {
     pub pct_body_allow: f64,
     /// hook_bending (σ_A) / (allowable_pct_bending · Sut)
     pub pct_hook_bending_allow: f64,
-    /// hook_torsion (τ_B) / (allowable_pct_torsion · Sut)
+    /// hook_torsion (τ_B) / (allowable_pct_end_torsion · Sut)
     pub pct_hook_torsion_allow: f64,
 }
 
@@ -55,6 +55,7 @@ fn ext_load_point(
     hooks: HookEnds,
     mts: Stress,
     allowable_pct_torsion: f64,
+    allowable_pct_end_torsion: f64,
     allowable_pct_bending: f64,
     correction: CurvatureCorrection,
 ) -> ExtLoadPoint {
@@ -69,6 +70,7 @@ fn ext_load_point(
     let hook_torsion = hook_torsion_stress(force, mean_dia, wire_dia, hooks.r2);
 
     let allow_torsion = allowable_pct_torsion * mts.pascals();
+    let allow_end_torsion = allowable_pct_end_torsion * mts.pascals();
     let allow_bending = allowable_pct_bending * mts.pascals();
 
     ExtLoadPoint {
@@ -80,7 +82,9 @@ fn ext_load_point(
         hook_torsion,
         pct_body_allow: body_shear.pascals() / allow_torsion,
         pct_hook_bending_allow: hook_bending.pascals() / allow_bending,
-        pct_hook_torsion_allow: hook_torsion.pascals() / allow_torsion,
+        // End hooks in torsion use the per-material end-hook allowable (Shigley
+        // Table 10-7: 40% for carbon/low-alloy steel, 30% for stainless/nonferrous).
+        pct_hook_torsion_allow: hook_torsion.pascals() / allow_end_torsion,
     }
 }
 
@@ -196,6 +200,7 @@ pub fn solve_forward(
                 hooks,
                 mts,
                 material.allowable_pct_torsion,
+                material.allowable_pct_end_torsion,
                 material.allowable_pct_bending,
                 correction,
             )
@@ -618,9 +623,10 @@ mod tests {
         );
     }
 
-    /// Pin the pct-allowable denominator mapping: body and hook-torsion use
-    /// `allowable_pct_torsion`; hook-bending uses `allowable_pct_bending`.
-    /// Swapping the two fractions would make this test fail.
+    /// Pin the pct-allowable denominator mapping: body shear uses
+    /// `allowable_pct_torsion`; hook-torsion (τ_B) uses the lower
+    /// `allowable_pct_end_torsion` (Shigley Table 10-7); hook-bending uses
+    /// `allowable_pct_bending`. Swapping any of the three fractions fails this test.
     #[test]
     fn pct_allowable_fractions_use_correct_denominators() {
         let m = crate::test_support::music_wire();
@@ -642,7 +648,7 @@ mod tests {
 
         let expected_body = lp.body_shear.pascals() / (m.allowable_pct_torsion * mts.pascals());
         let expected_hook_torsion =
-            lp.hook_torsion.pascals() / (m.allowable_pct_torsion * mts.pascals());
+            lp.hook_torsion.pascals() / (m.allowable_pct_end_torsion * mts.pascals());
         let expected_hook_bending =
             lp.hook_bending.pascals() / (m.allowable_pct_bending * mts.pascals());
 
@@ -657,9 +663,9 @@ mod tests {
             expected_hook_bending,
             max_relative = 1e-12
         );
-        // Sanity-check: the two allowable percentages differ, so the test is
-        // discriminating — a swap of the torsion/bending denominator would change
-        // the values.
+        // Sanity-check: the three allowable percentages differ, so the test is
+        // discriminating — a swap of any denominator would change the values.
         assert_ne!(m.allowable_pct_torsion, m.allowable_pct_bending);
+        assert_ne!(m.allowable_pct_torsion, m.allowable_pct_end_torsion);
     }
 }

@@ -5,8 +5,12 @@
 mod design;
 mod ends;
 mod mechanics;
+mod optimize;
 mod scenario;
 
 pub use design::{ExtLoadPoint, ExtensionDesign};
 pub use ends::HookEnds;
+pub use optimize::{
+    solve_min_weight, ExtBindingConstraint, ExtMinWeightRequest, ExtMinWeightSolution, HookSpec,
+};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
