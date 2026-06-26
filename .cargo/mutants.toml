@@ -7,11 +7,16 @@ exclude_re = [
   # Line 77: `if stress_at(dm_lo) - allowable > 0.0 { return None; }`
   #
   # Mutant "> → ==":
-  #   When stress > allowable (infeasible), `==` is false → no early return.
-  #   Execution reaches find_root_bracketed where f(dm_lo) > 0 and f(dm_hi) > 0
-  #   (both endpoints positive, no sign change). find_root returns Err; .ok()?
-  #   propagates None. Callers that reject None produce Infeasible — identical to
-  #   original. No distinguishing test exists because the outcome is the same.
+  #   Differs from the original ONLY when stress_at(dm_lo) - allowable == 0.0 exactly.
+  #   find_root_bracketed checks `if fa == 0.0 { return Ok(a) }` before its sign check,
+  #   so the two branches resolve the exact-equality input differently:
+  #     Original (>):  0.0 > 0.0  = false → falls through → find_root sees fa == 0.0 →
+  #                    Ok(dm_lo) → design at exact allowable is accepted.
+  #     Mutant   (==): 0.0 == 0.0 = true  → returns None (rejected).
+  #   For any strictly-positive residual the two are identical (both reach the
+  #   same-sign Err(InvalidBracket) → .ok()? → None path), so exact equality is the
+  #   only distinguishing input. That is the same IEEE 754 cancellation as the ">="
+  #   entry below — not realistically achievable, so no killable test exists.
   #
   # Mutant "> → >=":
   #   Only differs when stress_at(dm_lo) - allowable == 0.0 exactly.
@@ -35,6 +40,60 @@ exclude_re = [
   #   coincidence. The tie itself is unreachable — no input can produce two candidates
   #   with bit-identical mass_kg — so no distinguishing test can exist.
   "optimize\\.rs:148:.*replace < with <=",
+
+  # ---------------------------------------------------------------------------
+  # Mutation-equivalent exclusions for springcore/src/extension/optimize.rs.
+  #
+  # The extension minimum-weight optimizer mirrors the compression optimizer
+  # above. The same two equivalence classes recur, with three differences from
+  # the compression case noted per entry: different line numbers, a richer mass
+  # formula (the hook-wire term), and a per-stress binding search (three stress
+  # closures, not one).
+  #
+  # Line 144: inside the per-stress `bound_for` helper,
+  #   `if stress(dm_lo) - allowable > 0.0 { return None; }`
+  # bound_for runs once per stress (body shear, hook bending, hook torsion), so
+  # the argument below is local to whichever stress closure is bound.
+  #
+  # Mutant "> → ==":
+  #   Differs from the original ONLY when stress(dm_lo) - allowable == 0.0 exactly.
+  #   find_root_bracketed checks `if fa == 0.0 { return Ok(a) }` before its sign check:
+  #     Original (>):  0.0 > 0.0  = false → falls through → find_root sees fa == 0.0 →
+  #                    Ok(dm_lo) → Some((dm_lo, label)) (design at exact allowable accepted).
+  #     Mutant   (==): 0.0 == 0.0 = true  → returns None → best_mean_dia returns None
+  #                    via the `?` on the candidate (rejected).
+  #   For any strictly-positive residual the two are identical: both reach
+  #   find_root_bracketed with f(dm_lo) > 0 and f(dm_hi) > 0 (every stress is monotone
+  #   increasing in D, so no sign change) → Err(InvalidBracket) → `.ok()?` → None. So
+  #   exact equality is the only distinguishing input — the same IEEE 754 cancellation
+  #   as the ">=" entry below, not realistically achievable, so no killable test exists.
+  #
+  # Mutant "> → >=":
+  #   Only differs when stress(dm_lo) - allowable == 0.0 exactly.
+  #   Original: 0.0 > 0.0 = false → continues (design at exact allowable accepted).
+  #   Mutant:   0.0 >= 0.0 = true → returns None (rejected).
+  #   Exact IEEE 754 cancellation between two independent computation paths
+  #   (a Wahl/Bergsträsser-corrected or hook-curvature-corrected stress and the
+  #   power-law allowable derived from MTS) is not realistically achievable with
+  #   the available material constants, so no killable test exists.
+  "extension/optimize\\.rs:144:.*replace > with ==",
+  "extension/optimize\\.rs:144:.*replace > with >=",
+
+  # Line 221: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
+  #
+  # Mutant "< → <=":
+  #   Only differs when two candidates produce exactly equal mass_kg.
+  #   Original: equal mass → false → keeps the previously recorded best.
+  #   Mutant:   equal mass → true → replaces best with the new candidate.
+  #   Extension wire mass = rho*(pi/4)*d^2 * (pi*dm*na + 2*pi*d_loop), with active
+  #   coils na = G*d^4/(8*dm^3*rate). These are continuous functions of distinct
+  #   wire diameters, so two *different* candidates producing bit-identical mass_kg
+  #   would require a manufactured coincidence across even more terms than the
+  #   compression case (the hook-wire term is added). And a *duplicate* diameter in
+  #   candidate_diameters (e.g. [3.0, 3.0]) yields a bit-identical design and mass,
+  #   so `<` and `<=` return indistinguishable output there too. The tie is either
+  #   unreachable or output-indistinguishable — no distinguishing test can exist.
+  "extension/optimize\\.rs:221:.*replace < with <=",
 
   # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
   # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
