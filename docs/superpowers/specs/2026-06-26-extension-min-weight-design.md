@@ -122,11 +122,13 @@ pub fn solve_min_weight(
 
 ### `best_mean_dia(material, d, max_force, bounds, hooks, correction) -> Option<(Length, ExtBindingConstraint)>`
 
-1. `allow_torsion = allowable_pct_torsion · MTS(d)`; `allow_bending = allowable_pct_bending · MTS(d)`
-   (returns `None` if `MTS(d)` is unavailable — wire out of manufacturable range).
+1. `allow_torsion = allowable_pct_torsion · MTS(d)` (body shear, 45%);
+   `allow_end_torsion = allowable_pct_end_torsion · MTS(d)` (end-hook τ_B, 40% — Shigley
+   Table 10-7); `allow_bending = allowable_pct_bending · MTS(d)` (75%). (Returns `None`
+   if `MTS(d)` is unavailable — wire out of manufacturable range.)
 2. Bracket: `dm_lo = c_min·d`, `dm_hi = c_max·d`.
 3. For each of the three stresses `s(D)` — body shear (`τ`, allow_torsion), hook bending
-   (`σ_A`, allow_bending), hook torsion (`τ_B`, allow_torsion) — compute its upper bound:
+   (`σ_A`, allow_bending), hook torsion (`τ_B`, allow_end_torsion) — compute its upper bound:
    - if `s(dm_lo) > allowable` → the wire overstresses even at the smallest index →
      return `None` (candidate infeasible);
    - else if `s(dm_hi) ≤ allowable` → the stress does not bind → bound = `dm_hi`;
@@ -139,11 +141,15 @@ pub fn solve_min_weight(
 5. Return `(D, binding)`.
 
 Each stress is monotone increasing in `D` over `[dm_lo, dm_hi]` provided the index floor
-`c_min` is at or above the per-factor turning point (compression documents the body
-shear's U-shape with a minimum at `C* ≈ 1.866` for Wahl, `≈ 1.718` for Bergsträsser; the
-hook factors are likewise monotone for the practical `C ≥ 4` range). The implementation
-documents this assumption inline and the plan verifies it numerically across the index
-bracket; the single-endpoint feasibility test in step 3 is valid only under it.
+`c_min` is at or above the **binding** per-factor turning point. The body shear's U-shape
+has a minimum at `C* ≈ 1.866` (Wahl) / `≈ 1.718` (Bergsträsser), but the tightest
+precondition is the **hook torsion**: its factor `K_B·C2` uses `C2 = C/2` and is minimised
+where `4·C2² − 8·C2 + 1 = 0`, i.e. `C2 = 1 − √3/2` is rejected and `C2 = 1 + √3/2 ≈ 1.866`
+is the relevant root, giving the spring-index floor `C = 2 + √3 ≈ 3.732`. Below it the
+hook-torsion factor is non-monotone (and has a pole at `C = 2` for default hooks, where
+`4·C2 − 4 → 0`). The optimizer therefore rejects any request with `c_min < 2 + √3` as an
+input-contract violation; the single-endpoint feasibility test in step 3 is valid only
+above this floor.
 
 ### `solve_min_weight`
 
@@ -202,13 +208,20 @@ optimization.
   A manufacturable-preferred-`F_i` band advisory (Shigley's preferred uncorrected
   torsional-stress range) is **out of scope** for this phase.
 - **Input validation** (mirrors compression): `required_rate` finite `> 0`; `max_force`
-  finite `> 0`; `index_bounds` finite with `c_min ≥` the monotonicity floor and
-  `c_min < c_max`; `candidate_diameters` finite `> 0`; `max_outer_dia` (if present)
+  finite `> 0`; `index_bounds` finite with `c_min ≥ 2 + √3 ≈ 3.732` (the hook-torsion
+  monotonicity turning point, NOT compression's body-shear `C* ≈ 1.866`) and
+  `c_min < c_max`; `candidate_diameters` non-empty; `max_outer_dia` (if present)
   finite `> 0`; for `HookSpec::Fixed`, `r1`/`r2` finite `> 0` (and the resulting `C1`,
-  `C2 > 1`, surfaced by `solve_forward`'s hook guards).
+  `C2 > 1`, surfaced by `solve_forward`'s hook guards). Malformed requests return
+  `SpringError::InconsistentInputs` (bad input), distinct from `Infeasible` (no
+  candidate survives). The redundant `0 < c_min` check is intentionally omitted: the
+  floor strictly implies it.
 - **Infeasibility**: a candidate is skipped when any stress overstresses at `c_min`,
-  when `Na < 1` or non-finite, or when the OD cap forces the index below `c_min`.
-  `solve_min_weight` returns `SpringError::Infeasible` when no candidate survives.
+  when `Na < 1` or non-finite, when the OD cap forces the index below `c_min`, or when
+  the per-candidate `solve_forward` rejects the resulting geometry (e.g. fixed hooks
+  with `C2 ≤ 1`, or `free_length ≤ 0`) — every such case `continue`s to the next
+  candidate rather than aborting the search. `solve_min_weight` returns
+  `SpringError::Infeasible` when no candidate survives.
 
 ## Testing
 
