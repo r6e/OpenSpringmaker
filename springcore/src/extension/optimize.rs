@@ -19,6 +19,20 @@ use crate::CurvatureCorrection;
 use crate::{Result, SpringError};
 use std::f64::consts::PI;
 
+/// Smallest spring index for which all three extension stresses (body shear, hook
+/// bending σ_A, hook torsion τ_B) are monotone increasing in the mean diameter, so the
+/// single-endpoint feasibility test in [`best_mean_dia`] is valid. It is the hook-torsion
+/// factor turning point: `K_B(C2)·C2` is minimised where `4·C2² − 8·C2 + 1 = 0` with
+/// `C2 = C/2`, giving `C = 2 + √3 ≈ 3.732`. Below this the factor is non-monotone (and has
+/// a pole at `C = 2` for default hooks, where `4·C2 − 4 → 0`), so a request whose `c_min`
+/// sits below it can drive the root finder onto the pole discontinuity and report a wildly
+/// overstressed design as feasible. This floor is conservative for fixed hooks (whose
+/// factors are monotone for all `C > 1`) but a single floor correct for every hook type is
+/// the right input contract here. Cf. Shigley Eq. 10-37.
+fn min_spring_index() -> f64 {
+    2.0 + 3.0_f64.sqrt() // 2 + √3
+}
+
 /// How the hook geometry is determined during the search.
 #[derive(Debug, Clone, Copy)]
 pub enum HookSpec {
@@ -175,7 +189,52 @@ pub fn solve_min_weight(
     req: &ExtMinWeightRequest,
     correction: CurvatureCorrection,
 ) -> Result<ExtMinWeightSolution> {
-    let (c_min, _c_max) = req.index_bounds;
+    // Input validation (bad inputs → InconsistentInputs, NOT Infeasible — mirrors the
+    // compression `min_weight_request_from_spec` contract). These reject malformed
+    // requests up front rather than letting non-finite/degenerate values poison the
+    // search (a zero rate diverges Na → ∞; a sub-floor c_min breaks the monotonicity
+    // precondition `best_mean_dia` relies on, see [`min_spring_index`]).
+    if !(req.required_rate.newtons_per_meter().is_finite()
+        && req.required_rate.newtons_per_meter() > 0.0)
+    {
+        return Err(SpringError::InconsistentInputs(
+            "required rate must be a positive finite number (N/m)".into(),
+        ));
+    }
+    if !(req.max_force.newtons().is_finite() && req.max_force.newtons() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "max force must be a positive finite number (N)".into(),
+        ));
+    }
+    if req.candidate_diameters.is_empty() {
+        return Err(SpringError::InconsistentInputs(
+            "candidate_diameters must contain at least one diameter".into(),
+        ));
+    }
+    let (c_min, c_max) = req.index_bounds;
+    // 0 < c_min is intentionally NOT checked separately: the floor (c_min ≥ 2 + √3 ≈
+    // 3.732) strictly implies it, so a redundant positivity guard would be an unkillable
+    // equivalent mutant. The floor still rejects every c_min ≤ 0.
+    if !(c_min.is_finite()
+        && c_max.is_finite()
+        && c_min < c_max
+        && c_min >= min_spring_index())
+    {
+        return Err(SpringError::InconsistentInputs(format!(
+            "index bounds must satisfy {min:.4} ≤ c_min < c_max with both finite \
+             (c_min floor = 2 + √3, the hook-torsion monotonicity turning point); \
+             got c_min={c_min}, c_max={c_max}",
+            min = min_spring_index()
+        )));
+    }
+    if let Some(od_max) = req.max_outer_dia {
+        if !(od_max.meters().is_finite() && od_max.meters() > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "max_outer_dia must be a positive finite number".into(),
+            ));
+        }
+    }
+
     let mut best: Option<ExtMinWeightSolution> = None;
 
     for &d in &req.candidate_diameters {
@@ -313,6 +372,139 @@ mod tests {
         assert!(matches!(
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
             Err(SpringError::Infeasible(_))
+        ));
+    }
+
+    // ── Group 1: input validation + index floor ───────────────────────────────
+
+    /// At the exact floor c_min = 2 + √3, the request is accepted (the rest of the
+    /// request is feasible), pinning the `>=` boundary against a `>` mutant.
+    #[test]
+    fn index_floor_exactly_at_min_is_accepted() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![1.5, 2.0, 2.5, 3.0]);
+        req.index_bounds = (2.0 + 3.0_f64.sqrt(), 12.0);
+        assert!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok(),
+            "c_min exactly at the floor (2 + √3) must be accepted"
+        );
+    }
+
+    /// Just below the floor is rejected. `floor - 1e-9` (≈3.7320508) lands in the
+    /// `[2·√3, 2+√3)` gap so it also kills the `+`→`*` mutant on `2.0 + √3`
+    /// (`2·√3 ≈ 3.464`, which would accept it).
+    #[test]
+    fn index_below_floor_is_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = ((2.0 + 3.0_f64.sqrt()) - 1e-9, 12.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    /// CRITICAL regression: default hooks with c_min = 1.5 (below the C = 2 pole of
+    /// the hook-torsion factor) used to converge onto the pole and return a design
+    /// overstressed by ~10¹¹× labelled feasible. It must now be rejected as bad input.
+    #[test]
+    fn low_index_default_hooks_rejected_not_overstressed() {
+        let m = crate::test_support::music_wire();
+        let req = ExtMinWeightRequest {
+            required_rate: SpringRate::from_newtons_per_meter(2000.0),
+            max_force: Force::from_newtons(300.0),
+            initial_tension: Force::from_newtons(0.0),
+            hooks: HookSpec::Default,
+            index_bounds: (1.5, 12.0),
+            max_outer_dia: None,
+            candidate_diameters: vec![Length::from_millimeters(2.0)],
+        };
+        assert!(
+            matches!(
+                solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+                Err(SpringError::InconsistentInputs(_))
+            ),
+            "sub-pole c_min must be rejected as bad input, never returned as a feasible design"
+        );
+    }
+
+    #[test]
+    fn inverted_index_bounds_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (12.0, 4.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    /// c_min == c_max is degenerate; pins the strict `<` against a `<=` mutant.
+    #[test]
+    fn equal_index_bounds_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (5.0, 5.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    /// A +Inf bound is the discriminator for the finiteness conjunct: ordering
+    /// (`c_min < +Inf`) and the floor both pass, so only the finiteness check stands
+    /// between it and acceptance (NaN would be caught downstream by the ordering test).
+    #[test]
+    fn non_finite_index_bound_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (4.0, f64::INFINITY);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn empty_candidates_rejected() {
+        let m = crate::test_support::music_wire();
+        let req = base_request(vec![]);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn non_positive_max_force_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.max_force = Force::from_newtons(0.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn non_positive_required_rate_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.required_rate = SpringRate::from_newtons_per_meter(0.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn non_positive_max_outer_dia_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.max_outer_dia = Some(Length::from_millimeters(0.0));
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
         ));
     }
 
