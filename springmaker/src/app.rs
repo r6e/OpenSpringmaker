@@ -98,8 +98,7 @@ impl C {
 pub enum Screen {
     Calculator,
     Materials,
-    /// Settings screen — navigation wired in B3.
-    #[allow(dead_code)]
+    /// Settings screen — curvature-correction preference.
     Settings,
 }
 
@@ -175,8 +174,7 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
-    // Settings — B3 adds the correction picker that emits this; tests drive it directly.
-    #[allow(dead_code)]
+    // Settings screen: emitted by the correction radio group in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
@@ -498,8 +496,7 @@ impl App {
         match self.screen {
             Screen::Calculator => crate::view::view(self),
             Screen::Materials => crate::materials_view::view(self),
-            // TODO(B3): settings_view::view
-            Screen::Settings => crate::view::view(self),
+            Screen::Settings => crate::settings_view::view(self),
         }
     }
 

@@ -5,6 +5,8 @@ mod materials_view;
 mod materials_view_model;
 mod plot;
 mod settings;
+mod settings_view;
+mod settings_view_model;
 mod view;
 mod view_model;
 
