@@ -76,20 +76,42 @@ impl Scenario for TwoLoad {
     ) -> Result<ExtensionDesign> {
         let (f1, l1) = self.point1;
         let (f2, l2) = self.point2;
+        // Reject non-finite raw inputs up front (mirrors the compression `TwoLoad`
+        // pattern) so a NaN/±inf names its real cause instead of slipping the `<= 0.0`
+        // comparisons below (NaN compares false) and surfacing as a derived-quantity
+        // error. `free_length` is included: a non-finite L0 would make every `y`
+        // non-finite and otherwise be misattributed to the monotonicity guard.
+        if [
+            f1.newtons(),
+            f2.newtons(),
+            l1.meters(),
+            l2.meters(),
+            self.free_length.meters(),
+        ]
+        .iter()
+        .any(|v| !v.is_finite())
+        {
+            return Err(SpringError::InconsistentInputs(
+                "load points and free length must be finite".into(),
+            ));
+        }
         // Deflection from the free length (an extension spring lengthens under load).
         let y1 = l1.meters() - self.free_length.meters();
         let y2 = l2.meters() - self.free_length.meters();
         let df = f2.newtons() - f1.newtons();
         let dy = y2 - y1;
-        // A valid extension pair has more force at the greater length.
-        if !(df.is_finite() && dy.is_finite()) || df <= 0.0 || dy <= 0.0 {
+        // A valid extension pair has more force at the greater length. Inputs are
+        // already finite (guard above), so `is_finite()` here would be dead code.
+        if df <= 0.0 || dy <= 0.0 {
             return Err(SpringError::InconsistentInputs(
                 "two load points must show increasing force with increasing length".into(),
             ));
         }
-        // An extension spring only lengthens under load, so every operating length must be
-        // at or above the free length (y ≥ 0). A negative y would clamp to 0 in
-        // `deflection` (y = max(0,…)) and silently misreport the point's length.
+        // An extension spring only lengthens under load, so every operating length must
+        // be at or above the free length (y ≥ 0). A negative y would clamp to 0 in
+        // `deflection` (y = max(0,…)) and silently misreport the point's length. Only
+        // `y1` is checked: `dy > 0` above guarantees `y2 > y1`, so `y1 ≥ 0 ⟹ y2 > 0` —
+        // `y1` is the binding (smaller) deflection, and checking `y2` would be dead code.
         if y1 < 0.0 {
             return Err(SpringError::InconsistentInputs(
                 "operating lengths must be at or above the free length".into(),
@@ -293,11 +315,9 @@ mod tests {
 
     #[test]
     fn two_load_rejects_non_finite_point() {
-        // df = +inf passes df<=0 and dy<=0, but fails is_finite() — exercises that branch.
-        // Use +infinity, not NaN: both fail is_finite(), but a NaN df also passes
-        // df<=0 (NaN comparisons are always false), so +inf is the value that is
-        // positive AND non-finite — only the is_finite() arm can reject it.
-        // Pin the exact message to distinguish from solve_forward's own guards.
+        // A non-finite point force is rejected up front by the finiteness guard with a
+        // finiteness-specific message (not the monotonicity message): +inf force makes
+        // `df` non-finite, which would otherwise slip the `df <= 0.0` comparison.
         let s = TwoLoad {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -316,9 +336,35 @@ mod tests {
                     CurvatureCorrection::Bergstrasser
                 ),
                 Err(crate::SpringError::InconsistentInputs(ref m))
-                    if m == "two load points must show increasing force with increasing length"
+                    if m == "load points and free length must be finite"
             ),
-            "expected TwoLoad guard message"
+            "expected the finiteness guard message"
+        );
+    }
+
+    #[test]
+    fn two_load_rejects_non_finite_free_length() {
+        // A non-finite free length is caught by the same up-front finiteness guard
+        // (it is the array element compression's TwoLoad cannot have). Without it, a
+        // non-finite L0 makes every `y` non-finite and would be misattributed.
+        let s = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            free_length: Length::from_meters(f64::INFINITY),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            point1: (Force::from_newtons(30.0), Length::from_millimeters(70.0)),
+            point2: (Force::from_newtons(50.0), Length::from_millimeters(80.0)),
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "load points and free length must be finite"
+            ),
+            "expected the finiteness guard message"
         );
     }
 
