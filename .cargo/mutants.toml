@@ -79,7 +79,7 @@ exclude_re = [
   "extension/optimize\\.rs:185:.*replace > with ==",
   "extension/optimize\\.rs:185:.*replace > with >=",
 
-  # Line 314: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
+  # Line 334: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
   #
   # Mutant "< → <=":
   #   Only differs when two candidates produce exactly equal mass_kg.
@@ -93,7 +93,7 @@ exclude_re = [
   #   candidate_diameters (e.g. [3.0, 3.0]) yields a bit-identical design and mass,
   #   so `<` and `<=` return indistinguishable output there too. The tie is either
   #   unreachable or output-indistinguishable — no distinguishing test can exist.
-  "extension/optimize\\.rs:314:.*replace < with <=",
+  "extension/optimize\\.rs:334:.*replace < with <=",
 
   # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
   # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
