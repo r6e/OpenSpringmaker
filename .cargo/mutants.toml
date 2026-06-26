@@ -50,7 +50,7 @@ exclude_re = [
   # formula (the hook-wire term), and a per-stress binding search (three stress
   # closures, not one).
   #
-  # Line 144: inside the per-stress `bound_for` helper,
+  # Line 185: inside the per-stress `bound_for` helper,
   #   `if stress(dm_lo) - allowable > 0.0 { return None; }`
   # bound_for runs once per stress (body shear, hook bending, hook torsion), so
   # the argument below is local to whichever stress closure is bound.
@@ -76,10 +76,10 @@ exclude_re = [
   #   (a Wahl/Bergsträsser-corrected or hook-curvature-corrected stress and the
   #   power-law allowable derived from MTS) is not realistically achievable with
   #   the available material constants, so no killable test exists.
-  "extension/optimize\\.rs:144:.*replace > with ==",
-  "extension/optimize\\.rs:144:.*replace > with >=",
+  "extension/optimize\\.rs:185:.*replace > with ==",
+  "extension/optimize\\.rs:185:.*replace > with >=",
 
-  # Line 221: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
+  # Line 314: `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
   #
   # Mutant "< → <=":
   #   Only differs when two candidates produce exactly equal mass_kg.
@@ -93,7 +93,7 @@ exclude_re = [
   #   candidate_diameters (e.g. [3.0, 3.0]) yields a bit-identical design and mass,
   #   so `<` and `<=` return indistinguishable output there too. The tie is either
   #   unreachable or output-indistinguishable — no distinguishing test can exist.
-  "extension/optimize\\.rs:221:.*replace < with <=",
+  "extension/optimize\\.rs:314:.*replace < with <=",
 
   # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
   # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
