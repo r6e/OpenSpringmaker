@@ -387,6 +387,21 @@ mod tests {
         req
     }
 
+    /// Request tuned so d = 3 mm, c_max = 8, k = 58 593.75 N/m give Na = 1.0 exactly at
+    /// D = 24 mm (OD = 27 mm). Two boundary tests share these seven fields and differ
+    /// only in `max_outer_dia` (None here; the OD-cap test sets it to 27 mm).
+    fn c8_na_one_request() -> ExtMinWeightRequest {
+        ExtMinWeightRequest {
+            required_rate: SpringRate::from_newtons_per_meter(58_593.75),
+            max_force: Force::from_newtons(5.0),
+            initial_tension: Force::from_newtons(0.0),
+            hooks: HookSpec::Default,
+            index_bounds: (4.0, 8.0),
+            max_outer_dia: None,
+            candidate_diameters: vec![Length::from_millimeters(3.0)],
+        }
+    }
+
     #[test]
     fn solution_is_feasible() {
         let m = crate::test_support::music_wire();
@@ -687,9 +702,10 @@ mod tests {
 
     /// Defense in depth: across a grid of VALID requests, every design the optimizer
     /// returns as `Ok` must be feasible — all three %-allowable ratios within 1.0 at
-    /// the operating load. This is the property the pole bug violated; a test (not a
-    /// runtime re-check, which the input validation above makes unreachable dead code) keeps it
-    /// mutation-clean while asserting the contract directly.
+    /// the operating load. This is the property the pole bug violated; a test enforces
+    /// it directly. A runtime re-check inside the search loop would be unreachable dead
+    /// code after the input guards above — and less mutation-clean than a direct
+    /// assertion.
     #[test]
     fn returned_designs_are_always_feasible() {
         let m = crate::test_support::music_wire();
@@ -967,15 +983,8 @@ mod tests {
     #[test]
     fn od_cap_does_not_fire_when_od_equals_od_max_exactly() {
         let m = crate::test_support::music_wire();
-        let req = ExtMinWeightRequest {
-            required_rate: SpringRate::from_newtons_per_meter(58_593.75),
-            max_force: Force::from_newtons(5.0),
-            initial_tension: Force::from_newtons(0.0),
-            hooks: HookSpec::Default,
-            index_bounds: (4.0, 8.0),
-            max_outer_dia: Some(Length::from_millimeters(27.0)), // OD == od_max at D=24mm
-            candidate_diameters: vec![Length::from_millimeters(3.0)],
-        };
+        let mut req = c8_na_one_request();
+        req.max_outer_dia = Some(Length::from_millimeters(27.0)); // OD == od_max at D=24mm
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_eq!(
             sol.binding,
@@ -1049,15 +1058,7 @@ mod tests {
     #[test]
     fn active_coils_exactly_one_is_not_rejected() {
         let m = crate::test_support::music_wire();
-        let req = ExtMinWeightRequest {
-            required_rate: SpringRate::from_newtons_per_meter(58_593.75),
-            max_force: Force::from_newtons(5.0),
-            initial_tension: Force::from_newtons(0.0),
-            hooks: HookSpec::Default,
-            index_bounds: (4.0, 8.0),
-            max_outer_dia: None,
-            candidate_diameters: vec![Length::from_millimeters(3.0)],
-        };
+        let req = c8_na_one_request();
         assert!(
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok(),
             "Na=1.0 exactly must not be skipped (strict <); design must succeed"
