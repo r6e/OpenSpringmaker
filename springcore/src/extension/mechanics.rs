@@ -1,6 +1,7 @@
 //! Extension-spring-specific mechanics: hook curvature factors and stresses,
 //! and initial-tension deflection. Body rate/stress reuse `crate::mechanics`.
 
+use crate::extension::ends::HookEnds;
 use crate::units::{Force, Length, SpringRate, Stress};
 use std::f64::consts::PI;
 
@@ -41,6 +42,19 @@ pub fn hook_bending_stress(force: Force, mean_dia: Length, wire_dia: Length, r1:
 pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Length {
     let net = force.newtons() - initial_tension.newtons();
     Length::from_meters(net.max(0.0) / rate.newtons_per_meter())
+}
+
+/// Extension-spring free length from geometry (Shigley extension free-length
+/// relation, generalized to the hook-loop diameter). The end loop is modeled
+/// by its mean diameter `d_loop = 2·r1` (default hook `r1 = D/2` ⇒ `d_loop = D`),
+/// so `L₀ = 2·(d_loop − d) + (Na + 1)·d`. Body coils are taken equal to the
+/// active coils (close-wound body); `r2` governs torsion only and is not used.
+// No in-crate caller until extension/optimize.rs lands (later task); remove then.
+#[allow(dead_code)]
+pub fn free_length_from_geometry(wire_dia: Length, active: f64, hooks: HookEnds) -> Length {
+    let d = wire_dia.meters();
+    let d_loop = 2.0 * hooks.r1.meters();
+    Length::from_meters(2.0 * (d_loop - d) + (active + 1.0) * d)
 }
 
 /// Hook torsional stress at point B (Shigley): τ_B = (K)_B·8FD/(πd³).
@@ -116,5 +130,26 @@ mod tests {
             SpringRate::from_newtons_per_meter(2000.0),
         );
         assert_relative_eq!(y.millimeters(), 10.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn free_length_default_hook_matches_shigley_form() {
+        // Default hook: r1 = D/2 ⇒ d_loop = D. D=20mm, d=2mm, Na=10.
+        // L0 = 2(D − d) + (Na + 1)d = 2(18mm) + 11·2mm = 36 + 22 = 58 mm.
+        let hooks = HookEnds::default_for(Length::from_millimeters(20.0));
+        let l0 = free_length_from_geometry(Length::from_millimeters(2.0), 10.0, hooks);
+        assert_relative_eq!(l0.millimeters(), 58.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn free_length_fixed_hook_uses_loop_diameter() {
+        // Fixed hook r1 = 6mm ⇒ d_loop = 12mm. d=2mm, Na=10.
+        // L0 = 2(12 − 2) + 11·2 = 20 + 22 = 42 mm. (r2 does not affect length.)
+        let hooks = HookEnds {
+            r1: Length::from_millimeters(6.0),
+            r2: Length::from_millimeters(3.0),
+        };
+        let l0 = free_length_from_geometry(Length::from_millimeters(2.0), 10.0, hooks);
+        assert_relative_eq!(l0.millimeters(), 42.0, max_relative = 1e-12);
     }
 }
