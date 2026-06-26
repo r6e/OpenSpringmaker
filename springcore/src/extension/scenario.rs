@@ -105,11 +105,58 @@ impl Scenario for TwoLoad {
     }
 }
 
+/// Required rate given; back out the active coils, then solve. Mirrors the
+/// compression `RateBased` (plus initial tension / hooks).
+#[derive(Debug, Clone)]
+pub struct RateBased {
+    pub wire_dia: Length,
+    pub mean_dia: Length,
+    pub rate: SpringRate,
+    pub free_length: Length,
+    pub initial_tension: Force,
+    pub hooks: HookEnds,
+    pub loads: Vec<Force>,
+}
+
+impl Scenario for RateBased {
+    fn solve(
+        &self,
+        material: &Material,
+        correction: CurvatureCorrection,
+    ) -> Result<ExtensionDesign> {
+        // Validate the target rate here so a non-positive/non-finite value gives a
+        // rate-specific message rather than the derived "active coils" error.
+        let k = self.rate.newtons_per_meter();
+        if !(k.is_finite() && k > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "required rate must be a positive finite number".into(),
+            ));
+        }
+        let active = active_coils_for_rate(
+            material.shear_modulus,
+            self.wire_dia,
+            self.mean_dia,
+            self.rate,
+        );
+        solve_forward(
+            material,
+            self.wire_dia,
+            self.mean_dia,
+            active,
+            self.free_length,
+            self.initial_tension,
+            self.hooks,
+            &self.loads,
+            correction,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::extension::ends::HookEnds;
-    use crate::units::{Force, Length};
+    use crate::units::{Force, Length, SpringRate};
     use approx::assert_relative_eq;
 
     #[test]
@@ -272,6 +319,85 @@ mod tests {
                     if m == "two load points must show increasing force with increasing length"
             ),
             "expected TwoLoad guard message"
+        );
+    }
+
+    // --- RateBased scenario tests (SpringRate is in the test module's `use` above) ---
+
+    #[test]
+    fn rate_based_backs_out_active_coils() {
+        // Target k=2000 N/m at d=2mm D=20mm → Na=10 (back-solved).
+        let s = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: SpringRate::from_newtons_per_meter(2000.0),
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
+        assert_relative_eq!(d.active_coils, 10.0, max_relative = 1e-6);
+        assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
+    }
+
+    #[test]
+    fn rate_based_rejects_non_positive_rate() {
+        // rate=0.0 fires the >0.0 branch; message pinned to catch mutants that let
+        // bad values flow to solve_forward (which returns InconsistentInputs with a
+        // different message).
+        let s = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: SpringRate::from_newtons_per_meter(0.0),
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "required rate must be a positive finite number"
+            ),
+            "expected RateBased guard message"
+        );
+    }
+
+    #[test]
+    fn rate_based_rejects_non_finite_rate() {
+        // rate=+inf passes >0.0 (true), so only is_finite() rejects it — exercises
+        // that branch exclusively. NaN would also fail >0.0 so it wouldn't isolate
+        // is_finite(); +infinity is the value that requires is_finite() to fire.
+        // Pin the exact message to distinguish from solve_forward's own guards.
+        let s = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: SpringRate::from_newtons_per_meter(f64::INFINITY),
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "required rate must be a positive finite number"
+            ),
+            "expected RateBased guard message"
         );
     }
 }
