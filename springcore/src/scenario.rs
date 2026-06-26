@@ -7,12 +7,12 @@ use crate::end_type::EndType;
 use crate::material::Material;
 use crate::mechanics::{active_coils_for_rate, EndFixity};
 use crate::units::{Force, Length, SpringRate};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// A solve scenario: a particular fixed assignment of which quantities are inputs.
 pub trait Scenario {
     /// Compute a complete spring design given this scenario's inputs and the specified material.
-    fn solve(&self, material: &Material) -> Result<SpringDesign>;
+    fn solve(&self, material: &Material, correction: CurvatureCorrection) -> Result<SpringDesign>;
 }
 
 /// All geometry given; compute performance.
@@ -28,7 +28,7 @@ pub struct PowerUser {
 }
 
 impl Scenario for PowerUser {
-    fn solve(&self, material: &Material) -> Result<SpringDesign> {
+    fn solve(&self, material: &Material, correction: CurvatureCorrection) -> Result<SpringDesign> {
         solve_forward(
             material,
             self.end_type,
@@ -38,6 +38,7 @@ impl Scenario for PowerUser {
             self.active,
             self.free_length,
             &self.loads,
+            correction,
         )
     }
 }
@@ -54,7 +55,7 @@ pub struct TwoLoad {
 }
 
 impl Scenario for TwoLoad {
-    fn solve(&self, material: &Material) -> Result<SpringDesign> {
+    fn solve(&self, material: &Material, correction: CurvatureCorrection) -> Result<SpringDesign> {
         let (f1, l1) = self.point1;
         let (f2, l2) = self.point2;
         // Reject non-finite points up front; otherwise NaN slips the `<= 0.0`
@@ -91,6 +92,7 @@ impl Scenario for TwoLoad {
             active,
             free_length,
             &[f1, f2],
+            correction,
         )
     }
 }
@@ -108,7 +110,7 @@ pub struct RateBased {
 }
 
 impl Scenario for RateBased {
-    fn solve(&self, material: &Material) -> Result<SpringDesign> {
+    fn solve(&self, material: &Material, correction: CurvatureCorrection) -> Result<SpringDesign> {
         // Validate the target rate here; otherwise a non-positive/non-finite rate
         // makes the derived active-coil count bad and surfaces downstream as a
         // misleading "active coils must be positive" error.
@@ -132,6 +134,7 @@ impl Scenario for RateBased {
             active,
             self.free_length,
             &self.loads,
+            correction,
         )
     }
 }
@@ -149,7 +152,7 @@ pub struct Dimensional {
 }
 
 impl Scenario for Dimensional {
-    fn solve(&self, material: &Material) -> Result<SpringDesign> {
+    fn solve(&self, material: &Material, correction: CurvatureCorrection) -> Result<SpringDesign> {
         // Validate the outer diameter here so a non-finite/non-positive value gives
         // a clear message rather than a derived "mean diameter" error.
         if !(self.outer_dia.meters().is_finite() && self.outer_dia.meters() > 0.0) {
@@ -167,6 +170,7 @@ impl Scenario for Dimensional {
             self.active,
             self.free_length,
             &self.loads,
+            correction,
         )
     }
 }
@@ -189,7 +193,12 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&crate::test_support::music_wire()).unwrap();
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
     }
 
@@ -204,7 +213,12 @@ mod tests {
             point1: (Force::from_newtons(10.0), Length::from_millimeters(55.0)),
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
         };
-        let d = s.solve(&crate::test_support::music_wire()).unwrap();
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
         assert_relative_eq!(d.free_length.millimeters(), 60.0, max_relative = 1e-9);
         assert_relative_eq!(d.active_coils, 10.0, max_relative = 1e-6);
@@ -222,7 +236,10 @@ mod tests {
             point2: (Force::from_newtons(10.0), Length::from_millimeters(50.0)),
         };
         assert!(matches!(
-            s.solve(&crate::test_support::music_wire()),
+            s.solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser
+            ),
             Err(crate::SpringError::InconsistentInputs(_))
         ));
     }
@@ -238,7 +255,12 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&crate::test_support::music_wire()).unwrap();
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
         assert_relative_eq!(d.active_coils, 10.0, max_relative = 1e-6);
     }
@@ -255,7 +277,12 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        let d = s.solve(&crate::test_support::music_wire()).unwrap();
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
         assert_relative_eq!(d.index, 10.0, max_relative = 1e-9);
         assert_relative_eq!(d.mean_dia.millimeters(), 20.0, max_relative = 1e-9);
     }
@@ -274,7 +301,10 @@ mod tests {
         };
         assert!(
             matches!(
-                s.solve(&crate::test_support::music_wire()),
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
                 Err(crate::SpringError::InconsistentInputs(_))
             ),
             "outer_dia == wire_dia must return InconsistentInputs"
@@ -295,7 +325,10 @@ mod tests {
         };
         assert!(
             matches!(
-                s.solve(&crate::test_support::music_wire()),
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
                 Err(crate::SpringError::InconsistentInputs(_))
             ),
             "outer_dia < wire_dia must return InconsistentInputs"
@@ -316,7 +349,7 @@ mod tests {
             loads: vec![Force::from_newtons(10.0)],
         };
         assert!(
-            matches!(s.solve(&crate::test_support::music_wire()),
+            matches!(s.solve(&crate::test_support::music_wire(), CurvatureCorrection::Bergstrasser),
                 Err(crate::SpringError::InconsistentInputs(m)) if m == "required rate must be a positive finite number"),
             "non-positive rate must be rejected with a rate-specific message"
         );
@@ -337,7 +370,7 @@ mod tests {
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
         };
         assert!(
-            matches!(s.solve(&crate::test_support::music_wire()),
+            matches!(s.solve(&crate::test_support::music_wire(), CurvatureCorrection::Bergstrasser),
                 Err(crate::SpringError::InconsistentInputs(m)) if m == "load points must be finite"),
             "a NaN point must be rejected with a points-finite message"
         );
@@ -356,7 +389,7 @@ mod tests {
             loads: vec![Force::from_newtons(10.0)],
         };
         assert!(
-            matches!(s.solve(&crate::test_support::music_wire()),
+            matches!(s.solve(&crate::test_support::music_wire(), CurvatureCorrection::Bergstrasser),
                 Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
             "non-finite outer_dia must be rejected with an OD-specific message"
         );
@@ -377,7 +410,7 @@ mod tests {
             loads: vec![Force::from_newtons(10.0)],
         };
         assert!(
-            matches!(s.solve(&crate::test_support::music_wire()),
+            matches!(s.solve(&crate::test_support::music_wire(), CurvatureCorrection::Bergstrasser),
                 Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
             "outer_dia == 0 must be rejected with the OD message"
         );

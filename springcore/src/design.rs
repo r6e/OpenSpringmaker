@@ -5,10 +5,10 @@ use crate::end_type::EndType;
 use crate::material::Material;
 use crate::mechanics::{
     corrected_shear_stress, is_buckling_stable, natural_frequency, spring_index, spring_rate,
-    wahl_factor, EndFixity,
+    EndFixity,
 };
 use crate::units::{Force, Frequency, Length, SpringRate, Stress};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// State of the spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,7 @@ pub struct SpringDesign {
     pub end_type: EndType,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_point(
     force: Force,
     rate: SpringRate,
@@ -50,11 +51,12 @@ fn load_point(
     wire_dia: Length,
     index: f64,
     mts: Stress,
+    correction: CurvatureCorrection,
 ) -> LoadPoint {
     // Deflection y = F/k (Shigley Eq. 10-9 rearranged).
     let y = force.newtons() / rate.newtons_per_meter();
     let length = Length::from_meters(free_length.meters() - y);
-    let stress = corrected_shear_stress(force, mean_dia, wire_dia, wahl_factor(index));
+    let stress = corrected_shear_stress(force, mean_dia, wire_dia, correction.factor(index));
     LoadPoint {
         force,
         deflection: Length::from_meters(y),
@@ -75,6 +77,7 @@ pub fn solve_forward(
     active: f64,
     free_length: Length,
     loads: &[Force],
+    correction: CurvatureCorrection,
 ) -> Result<SpringDesign> {
     // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
@@ -163,7 +166,18 @@ pub fn solve_forward(
 
     let load_points = loads
         .iter()
-        .map(|&f| load_point(f, rate, free_length, mean_dia, wire_dia, index, mts))
+        .map(|&f| {
+            load_point(
+                f,
+                rate,
+                free_length,
+                mean_dia,
+                wire_dia,
+                index,
+                mts,
+                correction,
+            )
+        })
         .collect();
 
     // Force required to reach solid: F = k * (L0 - Ls).
@@ -178,6 +192,7 @@ pub fn solve_forward(
         wire_dia,
         index,
         mts,
+        correction,
     );
 
     Ok(SpringDesign {
@@ -318,6 +333,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         (design, m)
@@ -401,6 +417,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Wahl,
         )
         .unwrap();
         assert_relative_eq!(design.index, 10.0, max_relative = 1e-12);
@@ -630,6 +647,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         let status = evaluate_status(&design, &m);
@@ -655,6 +673,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -676,6 +695,7 @@ mod tests {
             0.0, // active = 0 → rejected
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -697,6 +717,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -718,6 +739,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -738,6 +760,7 @@ mod tests {
             10.0,
             Length::from_millimeters(0.0), // free length = 0 → rejected
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be a positive finite number"),
@@ -758,6 +781,7 @@ mod tests {
             10.0,
             Length::from_millimeters(f64::INFINITY), // free length = +Inf → rejected
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -778,6 +802,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(f64::NAN)], // NaN load → rejected
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -800,6 +825,7 @@ mod tests {
             10.0,
             Length::from_millimeters(20.0), // L0 = 20mm < Ls = 24mm → rejected
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be at least the solid length"),
@@ -824,6 +850,7 @@ mod tests {
             10.0,
             Length::from_millimeters(50.0), // < solid (120mm) — also invalid
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::DiameterOutOfRange { .. })),
@@ -846,6 +873,7 @@ mod tests {
             10.0,
             Length::from_millimeters(24.0), // L0 == Ls = d(Na+2) = 24mm
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         assert_relative_eq!(design.at_solid.force.newtons(), 0.0);
@@ -865,6 +893,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(-5.0)], // negative load → rejected
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "loads must be finite and non-negative"),
@@ -886,10 +915,43 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(0.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         assert_relative_eq!(design.load_points[0].deflection.millimeters(), 0.0);
         assert_relative_eq!(design.load_points[0].shear_stress.pascals(), 0.0);
+    }
+
+    /// The selected correction factor governs the body shear: the same geometry
+    /// solved with Wahl vs Bergsträsser yields the two factors' stress ratio.
+    #[test]
+    fn solve_forward_uses_selected_correction() {
+        let m = crate::test_support::music_wire();
+        let mk = |corr| {
+            solve_forward(
+                &m,
+                EndType::SquaredGround,
+                EndFixity::FixedFixed,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                10.0,
+                Length::from_millimeters(60.0),
+                &[Force::from_newtons(30.0)],
+                corr,
+            )
+            .unwrap()
+            .load_points[0]
+                .shear_stress
+                .pascals()
+        };
+        let wahl = mk(crate::CurvatureCorrection::Wahl);
+        let berg = mk(crate::CurvatureCorrection::Bergstrasser);
+        // C = 10 → Kw/Kb = (39/36+0.0615)/(42/37); stresses share base 8FD/πd³.
+        assert_relative_eq!(
+            wahl / berg,
+            crate::mechanics::wahl_factor(10.0) / crate::mechanics::bergstrasser_factor(10.0),
+            max_relative = 1e-12
+        );
     }
 
     /// mean < wire is also rejected.
@@ -906,6 +968,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(result, Err(crate::SpringError::InconsistentInputs(_))),
@@ -928,6 +991,7 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(1.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             result.is_ok(),
@@ -948,6 +1012,7 @@ mod tests {
             6.0,
             Length::from_millimeters(60.0),
             &[Force::from_newtons(5.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         let status = evaluate_status(&design, &m);

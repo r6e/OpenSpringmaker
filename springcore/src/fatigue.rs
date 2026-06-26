@@ -3,9 +3,9 @@
 //! gracefully by returning `NoFatigueData`.
 
 use crate::material::Material;
-use crate::mechanics::{bergstrasser_factor, corrected_shear_stress, spring_index};
+use crate::mechanics::{corrected_shear_stress, spring_index};
 use crate::units::{Force, Length, Stress};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// Ratio of ultimate shear strength to ultimate tensile strength (Shigley Eq. 10-30).
 const SHEAR_TO_TENSILE: f64 = 0.67;
@@ -27,6 +27,7 @@ pub fn analyze_fatigue(
     mean_dia: Length,
     force_min: Force,
     force_max: Force,
+    correction: CurvatureCorrection,
 ) -> Result<FatigueResult> {
     if force_max.newtons() < force_min.newtons() {
         return Err(SpringError::InconsistentInputs(
@@ -38,11 +39,11 @@ pub fn analyze_fatigue(
         .ok_or_else(|| SpringError::NoFatigueData(material.name.clone()))?;
 
     let c = spring_index(mean_dia, wire_dia);
-    let kb = bergstrasser_factor(c);
+    let k = correction.factor(c);
     let fa = Force::from_newtons((force_max.newtons() - force_min.newtons()) / 2.0);
     let fm = Force::from_newtons((force_max.newtons() + force_min.newtons()) / 2.0);
-    let tau_a = corrected_shear_stress(fa, mean_dia, wire_dia, kb);
-    let tau_m = corrected_shear_stress(fm, mean_dia, wire_dia, kb);
+    let tau_a = corrected_shear_stress(fa, mean_dia, wire_dia, k);
+    let tau_m = corrected_shear_stress(fm, mean_dia, wire_dia, k);
 
     let sut = material.min_tensile_strength(wire_dia)?.pascals();
     let ssu = SHEAR_TO_TENSILE * sut;
@@ -90,6 +91,7 @@ mod tests {
             Length::from_millimeters(20.0),
             Force::from_newtons(10.0),
             Force::from_newtons(30.0),
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         // Independent re-derivation per Shigley §10-9.
@@ -115,6 +117,7 @@ mod tests {
             Length::from_millimeters(20.0),
             Force::from_newtons(10.0),
             Force::from_newtons(30.0),
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap_err();
         assert!(matches!(err, crate::SpringError::NoFatigueData(_)));
@@ -129,9 +132,31 @@ mod tests {
             Length::from_millimeters(20.0),
             Force::from_newtons(30.0),
             Force::from_newtons(10.0),
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap_err();
         assert!(matches!(err, crate::SpringError::InconsistentInputs(_)));
+    }
+
+    #[test]
+    fn analyze_fatigue_uses_selected_correction() {
+        let m = crate::test_support::music_wire();
+        let mk = |corr| {
+            analyze_fatigue(
+                &m,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                Force::from_newtons(10.0),
+                Force::from_newtons(30.0),
+                corr,
+            )
+            .unwrap()
+            .goodman_factor_of_safety
+        };
+        // Wahl > Bergsträsser at C=10 → higher stress → lower factor of safety, so they differ.
+        assert!(
+            mk(crate::CurvatureCorrection::Wahl) < mk(crate::CurvatureCorrection::Bergstrasser)
+        );
     }
 
     // Pins the `<` (strict) in the force guard: equal forces (zero alternating load)
@@ -146,6 +171,7 @@ mod tests {
             Length::from_millimeters(20.0),
             Force::from_newtons(20.0),
             Force::from_newtons(20.0),
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             result.is_ok(),

@@ -5,9 +5,9 @@
 use crate::extension::ends::HookEnds;
 use crate::extension::mechanics::{deflection, hook_bending_stress, hook_torsion_stress};
 use crate::material::Material;
-use crate::mechanics::{corrected_shear_stress, spring_index, spring_rate, wahl_factor};
+use crate::mechanics::{corrected_shear_stress, spring_index, spring_rate};
 use crate::units::{Force, Length, SpringRate, Stress};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// State of an extension spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -56,13 +56,14 @@ fn ext_load_point(
     mts: Stress,
     allowable_pct_torsion: f64,
     allowable_pct_bending: f64,
+    correction: CurvatureCorrection,
 ) -> ExtLoadPoint {
     // Extension deflection y = max(0, (F − F_i) / k) (Shigley extension springs).
     let y = deflection(force, initial_tension, rate);
     // Extension springs lengthen under load: L = L0 + y.
     let length = Length::from_meters(free_length.meters() + y.meters());
-    // Body shear stress with Wahl correction (Shigley Eq. 10-7).
-    let body_shear = corrected_shear_stress(force, mean_dia, wire_dia, wahl_factor(index));
+    // Body shear stress with selected curvature correction (Shigley Eq. 10-7).
+    let body_shear = corrected_shear_stress(force, mean_dia, wire_dia, correction.factor(index));
     // Hook stresses (Shigley extension spring hook curvature factors).
     let hook_bending = hook_bending_stress(force, mean_dia, wire_dia, hooks.r1);
     let hook_torsion = hook_torsion_stress(force, mean_dia, wire_dia, hooks.r2);
@@ -94,6 +95,7 @@ pub fn solve_forward(
     initial_tension: Force,
     hooks: HookEnds,
     loads: &[Force],
+    correction: CurvatureCorrection,
 ) -> Result<ExtensionDesign> {
     // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
@@ -195,6 +197,7 @@ pub fn solve_forward(
                 mts,
                 material.allowable_pct_torsion,
                 material.allowable_pct_bending,
+                correction,
             )
         })
         .collect();
@@ -234,6 +237,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
@@ -268,6 +272,7 @@ mod tests {
             Force::from_newtons(0.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         // With F_i = 0, deflection = F/k = 30/2000 = 15 mm.
@@ -290,6 +295,7 @@ mod tests {
             Force::from_newtons(-1.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -307,6 +313,7 @@ mod tests {
             Force::from_newtons(f64::INFINITY),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -324,6 +331,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -341,6 +349,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(f64::NAN)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -359,6 +368,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(-5.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "loads must be finite and non-negative"),
@@ -380,6 +390,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(0.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         assert_relative_eq!(d.load_points[0].deflection.millimeters(), 0.0);
@@ -403,6 +414,7 @@ mod tests {
                 r2: Length::from_millimeters(5.0),
             },
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -421,6 +433,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -444,6 +457,7 @@ mod tests {
                 r2: Length::from_millimeters(6.0),
             },
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(r, Err(crate::SpringError::DiameterOutOfRange { .. })),
@@ -467,6 +481,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "wire diameter must be a positive finite number"),
@@ -487,6 +502,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(
             matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be a positive finite number"),
@@ -508,6 +524,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -524,6 +541,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(5.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -545,6 +563,7 @@ mod tests {
                 r2: Length::from_millimeters(3.0),
             },
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
@@ -565,8 +584,38 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(10.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// The selected correction factor governs extension body shear (only the
+    /// body term; the hook σ_A/τ_B factors are independent).
+    #[test]
+    fn solve_forward_uses_selected_correction() {
+        let m = crate::test_support::music_wire();
+        let mk = |corr| {
+            solve_forward(
+                &m,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                10.0,
+                Length::from_millimeters(60.0),
+                Force::from_newtons(10.0),
+                HookEnds::default_for(Length::from_millimeters(20.0)),
+                &[Force::from_newtons(30.0)],
+                corr,
+            )
+            .unwrap()
+            .load_points[0]
+                .body_shear
+                .pascals()
+        };
+        assert_relative_eq!(
+            mk(crate::CurvatureCorrection::Wahl) / mk(crate::CurvatureCorrection::Bergstrasser),
+            crate::mechanics::wahl_factor(10.0) / crate::mechanics::bergstrasser_factor(10.0),
+            max_relative = 1e-12
+        );
     }
 
     /// Pin the pct-allowable denominator mapping: body and hook-torsion use
@@ -585,6 +634,7 @@ mod tests {
             Force::from_newtons(10.0),
             HookEnds::default_for(Length::from_millimeters(20.0)),
             &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
         let lp = &d.load_points[0];

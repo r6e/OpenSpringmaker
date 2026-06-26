@@ -4,7 +4,10 @@ use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, Scenari
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
-use springcore::{LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits, UnitSystem};
+use springcore::{
+    CurvatureCorrection, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
+    UnitSystem,
+};
 
 // --------------------------------------------------------------------------
 // Design tokens — single source of truth for colours used in view.rs
@@ -95,6 +98,8 @@ impl C {
 pub enum Screen {
     Calculator,
     Materials,
+    /// Settings screen — curvature-correction preference.
+    Settings,
 }
 
 // --------------------------------------------------------------------------
@@ -169,6 +174,8 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
+    // Settings screen: emitted by the correction option buttons in settings_view.
+    SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
     MatField(MatField, String),
@@ -207,13 +214,28 @@ pub struct App {
     pub editing: Option<EditTarget>,
     pub mat_error: Option<String>,
     pub mat_status: Option<String>,
+    /// Curvature-correction factor applied to all solve paths; persisted via
+    /// [`crate::settings::AppSettings`].
+    pub correction: CurvatureCorrection,
+    /// Path to persist settings on [`Message::SetCorrection`]. `None` means do
+    /// not write to the filesystem (all test-constructed apps use `None`).
+    pub settings_path: Option<std::path::PathBuf>,
+    /// Last settings-save error, if any. Separate from `action_error` because
+    /// `recompute()` clears `action_error` but must not clobber this status.
+    pub settings_error: Option<String>,
 }
 
 impl App {
-    /// Build an `App` around a given store, performing no filesystem IO.
-    /// `Default` wraps this with the on-disk user overlay loaded; tests use it
-    /// directly with a curated-only store for deterministic, hermetic behavior.
-    pub(crate) fn from_store(materials: MaterialStore, load_warnings: Vec<LoadWarning>) -> Self {
+    /// Build an `App` around a given store.
+    ///
+    /// `correction` is injected by the caller so that `from_store` performs no
+    /// filesystem I/O; the running app passes the value loaded from
+    /// [`crate::settings::AppSettings`], while tests pass a known hermetic value.
+    pub(crate) fn from_store(
+        materials: MaterialStore,
+        load_warnings: Vec<LoadWarning>,
+        correction: CurvatureCorrection,
+    ) -> Self {
         Self {
             form: FormState::default(),
             materials,
@@ -226,6 +248,9 @@ impl App {
             editing: None,
             mat_error: None,
             mat_status: None,
+            correction,
+            settings_path: None,
+            settings_error: None,
         }
     }
 }
@@ -233,7 +258,7 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         let (materials, load_warnings) = MaterialStore::load();
-        Self::from_store(materials, load_warnings)
+        Self::from_store(materials, load_warnings, CurvatureCorrection::default())
     }
 }
 
@@ -243,7 +268,7 @@ impl App {
         // A form edit (or successful load / return to the calculator) dismisses a
         // stale save/load error.
         self.action_error = None;
-        match parse_and_solve(&self.form, &self.materials) {
+        match parse_and_solve(&self.form, &self.materials, self.correction) {
             Ok(out) => {
                 self.outcome = Some(out);
                 self.error = None;
@@ -305,6 +330,27 @@ impl App {
             }
             // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+
+            // ── Settings ────────────────────────────────────────────────────
+            Message::SetCorrection(c) => {
+                self.correction = c;
+                // Persist only when a real settings path is configured (None in all
+                // test-constructed apps, so tests never touch the real filesystem).
+                let save_result = self.settings_path.as_ref().map(|p| {
+                    crate::settings::AppSettings {
+                        curvature_correction: c,
+                    }
+                    .save_to(p)
+                });
+                match save_result {
+                    Some(Err(e)) => {
+                        self.settings_error = Some(format!("could not save settings: {e}"))
+                    }
+                    // Ok(()) or no path configured: clear any stale error.
+                    _ => self.settings_error = None,
+                }
+                true
+            }
 
             // ── Navigation ──────────────────────────────────────────────────
             Message::NavigateTo(s) => {
@@ -468,6 +514,7 @@ impl App {
         match self.screen {
             Screen::Calculator => crate::view::view(self),
             Screen::Materials => crate::materials_view::view(self),
+            Screen::Settings => crate::settings_view::view(self),
         }
     }
 
@@ -606,11 +653,101 @@ mod tests {
     /// materials-CRUD tests are hermetic regardless of the developer's saved
     /// materials. `App::default()` loads the real overlay from the OS config dir.
     fn test_app() -> App {
-        // No filesystem IO: a curated-only store, no on-disk user overlay.
+        // No filesystem IO: a curated-only store, no on-disk user overlay, and a
+        // fixed hermetic correction value (Bergsträsser) rather than reading settings.
         App::from_store(
             MaterialStore::new(springcore::MaterialSet::load_default()),
             Vec::new(),
+            springcore::CurvatureCorrection::Bergstrasser,
         )
+    }
+
+    /// A path that makes `save_to` fail deterministically WITHOUT touching the
+    /// filesystem: an empty path has no parent, so `save_to`'s `parent()` guard
+    /// errors before any temp file is written. (A relative name like
+    /// `"x\0.toml"` would have parent `""` = cwd, leaking a `.settings.*.tmp`
+    /// there before the rename fails — not hermetic.)
+    fn unwritable_settings_path() -> std::path::PathBuf {
+        std::path::PathBuf::new()
+    }
+
+    #[test]
+    fn set_correction_without_settings_path_does_not_write_fs() {
+        // settings_path is None in all test-constructed apps → no FS access.
+        let mut app = test_app();
+        assert!(
+            app.settings_path.is_none(),
+            "test apps must be non-persisting"
+        );
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        // In-memory preference updated.
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+        // No save attempted → no error surfaced.
+        assert!(app.settings_error.is_none());
+    }
+
+    #[test]
+    fn set_correction_surfaces_save_error_and_still_updates_correction() {
+        let mut app = test_app();
+        // Point to an unwritable path so the save attempt fails deterministically.
+        app.settings_path = Some(unwritable_settings_path());
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        // In-memory preference still updated even on write failure.
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+        // The error is surfaced via the dedicated channel (not action_error,
+        // which recompute() clears).
+        assert!(
+            app.settings_error.is_some(),
+            "settings-save failure must be surfaced"
+        );
+    }
+
+    #[test]
+    fn set_correction_clears_stale_save_error_on_success() {
+        let mut app = test_app();
+        // Prime a stale error, then fire without a settings path (no save → clear).
+        app.settings_error = Some("stale error".into());
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Bergstrasser,
+        ));
+        assert!(
+            app.settings_error.is_none(),
+            "a no-save SetCorrection must clear a stale settings error"
+        );
+    }
+
+    #[test]
+    fn changing_correction_recomputes_with_new_factor() {
+        let mut app = App::from_store(
+            MaterialStore::new(springcore::MaterialSet::load_default()),
+            Vec::new(),
+            springcore::CurvatureCorrection::Bergstrasser,
+        );
+        // PowerUser design with spring index C = mean_dia / wire_dia = 20 / 2 = 10.
+        app.form.scenario = crate::form::ScenarioKind::PowerUser;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.active = "10".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Bergstrasser,
+        ));
+        let berg = app.outcome.as_ref().unwrap().design.load_points[0]
+            .shear_stress
+            .pascals();
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        let wahl = app.outcome.as_ref().unwrap().design.load_points[0]
+            .shear_stress
+            .pascals();
+        assert!(wahl > berg, "Wahl factor exceeds Bergsträsser at C=10");
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
     }
 
     #[test]

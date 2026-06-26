@@ -474,10 +474,15 @@ fn build_header(app: &App) -> Element<'_, Message> {
         .on_press(Message::NavigateTo(crate::app::Screen::Materials))
         .style(nav_button_style);
 
+    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(C::ACCENT))
+        .on_press(Message::NavigateTo(crate::app::Screen::Settings))
+        .style(nav_button_style);
+
     row![
         app_name,
         space().width(Length::Fill),
         materials_btn,
+        settings_btn,
         unit_metric,
         unit_us,
     ]

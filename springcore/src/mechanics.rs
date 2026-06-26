@@ -2,6 +2,7 @@
 //! Each formula cites its source.
 
 use crate::units::{Force, Frequency, Length, MassDensity, SpringRate, Stress};
+use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 /// Spring index C = D/d (Shigley Eq. 10-1).
@@ -22,6 +23,29 @@ pub fn wahl_factor(index: f64) -> f64 {
 /// primary stress-correction factor.
 pub fn bergstrasser_factor(index: f64) -> f64 {
     (4.0 * index + 2.0) / (4.0 * index - 3.0)
+}
+
+/// Wire-curvature stress-correction model for body torsional shear. Both are
+/// accepted; EN 13906-1:2013 Formula (1) and Shigley name Bergsträsser primary
+/// (the default), with Wahl the documented alternative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CurvatureCorrection {
+    /// Wahl factor (Shigley Eq. 10-5; EN 13906-1 NOTE alternative).
+    Wahl,
+    /// Bergsträsser factor (Shigley Eq. 10-6; EN 13906-1 Formula (1)).
+    #[default]
+    Bergstrasser,
+}
+
+impl CurvatureCorrection {
+    /// The chosen curvature-correction factor at spring index `index`.
+    pub fn factor(self, index: f64) -> f64 {
+        match self {
+            Self::Wahl => wahl_factor(index),
+            Self::Bergstrasser => bergstrasser_factor(index),
+        }
+    }
 }
 
 /// Spring rate k = G d^4 / (8 D^3 Na) (Shigley Eq. 10-9; EN 13906-1:2013 Formula (6)).
@@ -144,7 +168,8 @@ pub fn is_buckling_stable(
 mod tests {
     use super::{
         active_coils_for_rate, bergstrasser_factor, corrected_shear_stress, critical_free_length,
-        is_buckling_stable, natural_frequency, spring_index, spring_rate, wahl_factor, EndFixity,
+        is_buckling_stable, natural_frequency, spring_index, spring_rate, wahl_factor,
+        CurvatureCorrection, EndFixity,
     };
     use crate::units::{Force, Length, MassDensity, SpringRate, Stress};
     use approx::assert_relative_eq;
@@ -172,6 +197,50 @@ mod tests {
     fn bergstrasser_factor_c10() {
         // Kb = (4C+2)/(4C-3); C=10 -> 42/37
         assert_relative_eq!(bergstrasser_factor(10.0), 42.0 / 37.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn correction_factor_dispatches() {
+        // factor() returns exactly the chosen closed-form factor.
+        for &c in &[5.0_f64, 8.0, 10.8] {
+            assert_relative_eq!(
+                CurvatureCorrection::Wahl.factor(c),
+                wahl_factor(c),
+                max_relative = 1e-12
+            );
+            assert_relative_eq!(
+                CurvatureCorrection::Bergstrasser.factor(c),
+                bergstrasser_factor(c),
+                max_relative = 1e-12
+            );
+        }
+    }
+
+    #[test]
+    fn correction_default_is_bergstrasser() {
+        // EN 13906-1 / Shigley name Bergsträsser the primary factor.
+        assert_eq!(
+            CurvatureCorrection::default(),
+            CurvatureCorrection::Bergstrasser
+        );
+    }
+
+    #[test]
+    fn correction_serde_round_trips() {
+        // Persisted in Phase B's settings.toml; assert the lowercase token form
+        // in TOML (the project's persistence format) so we don't pull in a JSON
+        // dependency just to test serialization. TOML needs a table, so wrap it.
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct Wrap {
+            c: CurvatureCorrection,
+        }
+        let s = toml::to_string(&Wrap {
+            c: CurvatureCorrection::Wahl,
+        })
+        .unwrap();
+        assert_eq!(s.trim(), "c = \"wahl\"");
+        let back: Wrap = toml::from_str(&s).unwrap();
+        assert_eq!(back.c, CurvatureCorrection::Wahl);
     }
 
     /// Provenance: `bergstrasser_factor` is exactly EN 13906-1:2013 Formula (1),

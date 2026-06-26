@@ -25,7 +25,9 @@ fn pipeline_rate_based_music_wire() {
         },
     };
     let set = MaterialSet::load_default();
-    let design = saved.solve(&set).unwrap();
+    let design = saved
+        .solve(&set, springcore::CurvatureCorrection::Bergstrasser)
+        .unwrap();
 
     assert_relative_eq!(design.index, 10.0, max_relative = 1e-9);
     assert_relative_eq!(design.rate.newtons_per_meter(), 2000.0, max_relative = 1e-6);
@@ -50,6 +52,7 @@ fn pipeline_rate_based_music_wire() {
         Length::from_millimeters(20.0),
         Force::from_newtons(10.0),
         Force::from_newtons(30.0),
+        springcore::CurvatureCorrection::Bergstrasser,
     )
     .unwrap();
     assert!(fat.goodman_factor_of_safety > 1.0);
@@ -93,7 +96,7 @@ fn comprehensive_spring_design_compression() {
         free_length: Length::from_inches(8.0),
         loads: vec![Force::from_pounds_force(356.0)], // P at 4 in deflection
     }
-    .solve(material)
+    .solve(material, springcore::CurvatureCorrection::Wahl)
     .unwrap();
 
     // Spring index C = D/d = 1.69 / 0.250 = 6.76 (exact).
@@ -147,7 +150,7 @@ fn shigley_10_1_compression() {
         free_length: Length::from_inches(2.06),
         loads: vec![Force::from_pounds_force(6.46)], // load at yield
     }
-    .solve(material)
+    .solve(material, springcore::CurvatureCorrection::Bergstrasser)
     .unwrap();
 
     // Spring index C = D/d = 0.400/0.037 = 10.81 (Shigley rounds to 10.8).
@@ -158,10 +161,11 @@ fn shigley_10_1_compression() {
     // Published rate k = 4.13 lbf/in (3% absorbs the G-source difference).
     assert_relative_eq!(design.rate.pounds_per_inch(), 4.13, max_relative = 0.03);
     // Corrected shear at F = 6.46 lbf: published τ = S_sy = 146 kpsi.
+    // Shigley uses K_B = 1.124 (Bergsträsser); 3e-3 absorbs Shigley's 3-figure rounding.
     assert_relative_eq!(
         design.load_points[0].shear_stress.psi(),
         146_000.0,
-        max_relative = 0.02
+        max_relative = 3e-3
     );
     // Deflection y = F/k = 1.56 in (3% tracks the k tolerance).
     assert_relative_eq!(
@@ -201,9 +205,7 @@ fn shigley_10_1_compression() {
 // Tolerances: sigma_A / tau_B are G-independent and reproduce to <0.3% (Shigley's
 // rounding of the K factors), so 1%. k uses a 3% band absorbing the source's
 // G = 11.6e6 psi vs our curated A227 G = 11.5e6 psi (MH Table 20). Body shear
-// uses 2% because Shigley applies the Bergsträsser factor (1.234) while our
-// static path currently applies the Wahl factor (1.249), ~1.2% higher; this
-// band tightens once the selectable curvature-correction model lands.
+// uses 3e-3 absorbing Shigley's 3-figure rounding of K_B = 1.234 (Bergsträsser).
 #[test]
 fn extension_shigley_worked_example() {
     use springcore::extension::{HookEnds, PowerUser, Scenario};
@@ -223,7 +225,7 @@ fn extension_shigley_worked_example() {
         },
         loads: vec![Force::from_pounds_force(5.25)],
     }
-    .solve(material)
+    .solve(material, springcore::CurvatureCorrection::Bergstrasser)
     .unwrap();
 
     let lp = &d.load_points[0];
@@ -233,8 +235,8 @@ fn extension_shigley_worked_example() {
     assert_relative_eq!(lp.hook_bending.psi(), 156_900.0, max_relative = 0.01);
     // Hook torsion at B: tau_B = 78.4 kpsi (G-independent).
     assert_relative_eq!(lp.hook_torsion.psi(), 78_400.0, max_relative = 0.01);
-    // Body torsional shear tau = 82.0 kpsi (2% absorbs Wahl vs Bergsträsser).
-    assert_relative_eq!(lp.body_shear.psi(), 82_000.0, max_relative = 0.02);
+    // Body torsional shear tau = 82.0 kpsi (Shigley 10-6 uses K_B=1.234, Bergsträsser).
+    assert_relative_eq!(lp.body_shear.psi(), 82_000.0, max_relative = 3e-3);
     // Deflection under the service load: y = (F - F_i)/k = (5.25 - 1.19)/17.91 =
     // 0.227 in — exercises the initial-tension offset (3% tracks the k tolerance).
     assert_relative_eq!(lp.deflection.inches(), 0.227, max_relative = 0.03);

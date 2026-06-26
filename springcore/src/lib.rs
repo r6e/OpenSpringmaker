@@ -39,7 +39,7 @@ pub use material::{
 };
 pub use material_persist::{user_overlay_path, LoadWarning};
 pub use material_store::MaterialStore;
-pub use mechanics::EndFixity;
+pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};

@@ -6,10 +6,11 @@ use crate::design::{solve_forward, SpringDesign};
 use crate::end_type::EndType;
 use crate::material::Material;
 use crate::mechanics::{
-    active_coils_for_rate, corrected_shear_stress, is_buckling_stable, wahl_factor, EndFixity,
+    active_coils_for_rate, corrected_shear_stress, is_buckling_stable, EndFixity,
 };
 use crate::numeric::{find_root_bracketed, SolveConfig};
 use crate::units::{Force, Length, SpringRate};
+use crate::CurvatureCorrection;
 use crate::{Result, SpringError};
 use std::f64::consts::PI;
 
@@ -56,6 +57,7 @@ fn best_mean_dia(
     d: Length,
     max_force: Force,
     bounds: (f64, f64),
+    correction: CurvatureCorrection,
 ) -> Option<(Length, BindingConstraint)> {
     let (c_min, c_max) = bounds;
     let allowable =
@@ -63,13 +65,16 @@ fn best_mean_dia(
     // τ(C) = Kw(C)·C with Kw = (4C−1)/(4C−4) + 0.615/C is NOT globally monotonic.
     // Solving dτ/dC = 0 gives 4C²−8C+1 = 0 → C* = 1 + √3/2 ≈ 1.866; τ is
     // U-shaped with a minimum at C* and is monotonic increasing only for C ≥ 1.866.
+    // Bergsträsser's K_B·C turns at C ≈ 1.718 (below the enforced index floor),
+    // so the monotonicity assumption holds for both factors — the floor is
+    // correction-agnostic and conservative.
     // The single-endpoint feasibility test below (`stress_at(dm_lo) > allowable → None`)
     // is therefore only valid when c_min ≥ 1.866, which Fix 2 (min_weight_request_from_spec)
     // enforces at the entry point.
     let stress_at = |dm_m: f64| {
         let dm = Length::from_meters(dm_m);
         let c = dm_m / d.meters();
-        corrected_shear_stress(max_force, dm, d, wahl_factor(c)).pascals()
+        corrected_shear_stress(max_force, dm, d, correction.factor(c)).pascals()
     };
     let dm_lo = c_min * d.meters();
     let dm_hi = c_max * d.meters();
@@ -93,13 +98,17 @@ fn best_mean_dia(
 }
 
 /// Solve the minimum-weight problem.
-pub fn solve_min_weight(material: &Material, req: &MinWeightRequest) -> Result<MinWeightSolution> {
+pub fn solve_min_weight(
+    material: &Material,
+    req: &MinWeightRequest,
+    correction: CurvatureCorrection,
+) -> Result<MinWeightSolution> {
     let (c_min, _c_max) = req.index_bounds;
     let mut best: Option<MinWeightSolution> = None;
 
     for &d in &req.candidate_diameters {
         let Some((mut mean, mut binding)) =
-            best_mean_dia(material, d, req.max_force, req.index_bounds)
+            best_mean_dia(material, d, req.max_force, req.index_bounds, correction)
         else {
             continue;
         };
@@ -143,6 +152,7 @@ pub fn solve_min_weight(material: &Material, req: &MinWeightRequest) -> Result<M
             active,
             free_length,
             &[req.max_force],
+            correction,
         )?;
         let mass = wire_mass(material, d, mean, design.total_coils);
         if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true) {
@@ -244,7 +254,12 @@ mod tests {
         // mass = 7850 * (pi^2/4) * (3e-3)^2 * 36e-3 * 5.4722...
         //      = 7850 * 2.4674e0 * 9e-6 * 36e-3 * 5.4722...
         //      ≈ 3.4341e-2 kg
-        let sol = solve_min_weight(&m, &index_binding_request(vec![3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         // Computed by independent Python simulation from the formula:
         // rho*(pi^2/4)*d^2*D*Nt = 7850*(pi^2/4)*(0.003)^2*0.036*5.4722...
         assert_relative_eq!(sol.mass_kg, 3.434_141_188_364_544e-2, max_relative = 1e-8);
@@ -276,7 +291,10 @@ mod tests {
             clash_allowance: 0.15,
         };
         assert!(
-            matches!(solve_min_weight(&m, &req), Err(SpringError::Infeasible(_))),
+            matches!(
+                solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+                Err(SpringError::Infeasible(_))
+            ),
             "d=2mm at F=300N must be infeasible (stress_at_c_min > 0.45*MTS)"
         );
     }
@@ -298,7 +316,11 @@ mod tests {
         let m = crate::test_support::music_wire();
         // d=3mm at F=50N: stress at c_min (≈79 MPa) << allowable (≈848 MPa).
         // Must succeed (not return None from the first guard).
-        let sol = solve_min_weight(&m, &index_binding_request(vec![3.0]));
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![3.0]),
+            CurvatureCorrection::Bergstrasser,
+        );
         assert!(
             sol.is_ok(),
             "d=3mm at F=50N must be feasible (stress_at_c_min << allowable)"
@@ -317,7 +339,12 @@ mod tests {
     #[test]
     fn stress_within_allowable_at_cmax_binds_index() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &index_binding_request(vec![3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_eq!(
             sol.binding,
             BindingConstraint::Index,
@@ -337,7 +364,12 @@ mod tests {
     #[test]
     fn stress_exceeding_allowable_at_cmax_binds_stress() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &stress_binding_request(vec![3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &stress_binding_request(vec![3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_eq!(
             sol.binding,
             BindingConstraint::Stress,
@@ -364,7 +396,13 @@ mod tests {
     #[test]
     fn stress_binding_mean_dia_and_mass_are_exact() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &stress_binding_request(vec![3.0])).unwrap();
+        // The exact dm and mass were computed with Wahl factor; pass Wahl to keep the pin valid.
+        let sol = solve_min_weight(
+            &m,
+            &stress_binding_request(vec![3.0]),
+            CurvatureCorrection::Wahl,
+        )
+        .unwrap();
         assert_relative_eq!(
             sol.design.mean_dia.millimeters(),
             25.592_401_871_8,
@@ -388,7 +426,7 @@ mod tests {
         let mut req = stress_binding_request(vec![3.0]);
         // od_max=28mm: uncapped OD≈28.59mm fires the cap; capped_dm=25mm (c=8.33 ≥ 4).
         req.max_outer_dia = Some(Length::from_millimeters(28.0));
-        let sol = solve_min_weight(&m, &req).unwrap();
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_eq!(
             sol.binding,
             BindingConstraint::OuterDiameter,
@@ -414,7 +452,7 @@ mod tests {
         let m = crate::test_support::music_wire();
         let mut req = stress_binding_request(vec![3.0]);
         req.max_outer_dia = Some(Length::from_millimeters(28.0));
-        let sol = solve_min_weight(&m, &req).unwrap();
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_relative_eq!(sol.mass_kg, 5.390_032_768_742_724e-2, max_relative = 1e-6);
     }
 
@@ -433,7 +471,10 @@ mod tests {
         // od_max=14.9mm forces capped index=3.967 < c_min=4.0 → skip.
         req.max_outer_dia = Some(Length::from_millimeters(14.9));
         assert!(
-            matches!(solve_min_weight(&m, &req), Err(SpringError::Infeasible(_))),
+            matches!(
+                solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+                Err(SpringError::Infeasible(_))
+            ),
             "OD cap that violates min-index must reject the candidate"
         );
     }
@@ -473,7 +514,10 @@ mod tests {
             clash_allowance: 0.15,
         };
         assert!(
-            matches!(solve_min_weight(&m, &req), Err(SpringError::Infeasible(_))),
+            matches!(
+                solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+                Err(SpringError::Infeasible(_))
+            ),
             "d=2mm at rate=15000 N/m has active ≈ 0.772 < 1.0 and must be skipped"
         );
     }
@@ -494,7 +538,7 @@ mod tests {
             clash_allowance: 0.15,
         };
         assert!(
-            solve_min_weight(&m, &req).is_ok(),
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok(),
             "d=3mm at rate=15000 N/m must have active >= 1.0 and succeed"
         );
     }
@@ -516,7 +560,12 @@ mod tests {
     #[test]
     fn free_length_includes_clash_allowance() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &index_binding_request(vec![3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         // travel=10mm; with clash=0.15: extra = 10*0.15=1.5mm, so free = solid+11.5mm.
         // without clash: free would be solid+10 = 26.4167mm.
         // Exact value from Python simulation: 27.91666667mm.
@@ -546,11 +595,21 @@ mod tests {
     #[test]
     fn mass_comparison_selects_lighter_design() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &index_binding_request(vec![2.0, 3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![2.0, 3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         // The 2mm candidate must win.
         assert_relative_eq!(sol.design.wire_dia.millimeters(), 2.0, max_relative = 1e-9);
         // The mass must equal the single-candidate 2mm solution exactly.
-        let sol_single = solve_min_weight(&m, &index_binding_request(vec![2.0])).unwrap();
+        let sol_single = solve_min_weight(
+            &m,
+            &index_binding_request(vec![2.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(sol.mass_kg, sol_single.mass_kg, max_relative = 1e-12);
     }
 
@@ -561,7 +620,12 @@ mod tests {
     #[test]
     fn index_binding_mass_exact_value() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &index_binding_request(vec![2.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![2.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(sol.mass_kg, 8.023_107_534e-3, max_relative = 1e-5);
     }
 
@@ -594,7 +658,7 @@ mod tests {
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
         };
-        let sol = solve_min_weight(&m, &req).unwrap();
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         // Binding must stay Index (uncapped OD == od_max, strict > means cap doesn't fire).
         assert_eq!(
             sol.binding,
@@ -638,7 +702,7 @@ mod tests {
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
         };
-        let sol = solve_min_weight(&m, &req);
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser);
         assert!(
             sol.is_ok(),
             "c_cap == c_min (exact FP) and active == 1.0 (exact FP) must NOT be rejected"
@@ -681,7 +745,7 @@ mod tests {
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
         };
-        let sol = solve_min_weight(&m, &req).unwrap();
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         // na must be exactly 1.0 (IEEE 754: numerator and denominator converge to same bits).
         assert_relative_eq!(sol.design.active_coils, 1.0, max_relative = 1e-12);
     }
@@ -702,9 +766,19 @@ mod tests {
         // Reversed candidate order: 3mm (heavy) → 2mm (light).
         // < → == mutant: picks 3mm first, then 2mm == 3mm? No → returns 3mm (WRONG).
         // Original <: picks 3mm first, then 2mm < 3mm → replaces. Returns 2mm (CORRECT).
-        let sol = solve_min_weight(&m, &index_binding_request(vec![3.0, 2.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &index_binding_request(vec![3.0, 2.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(sol.design.wire_dia.millimeters(), 2.0, max_relative = 1e-9,);
-        let sol_single = solve_min_weight(&m, &index_binding_request(vec![2.0])).unwrap();
+        let sol_single = solve_min_weight(
+            &m,
+            &index_binding_request(vec![2.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(sol.mass_kg, sol_single.mass_kg, max_relative = 1e-12);
     }
 
@@ -713,7 +787,12 @@ mod tests {
     #[test]
     fn solution_is_feasible() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &base_request(vec![1.5, 2.0, 2.5, 3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &base_request(vec![1.5, 2.0, 2.5, 3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         // Rate met.
         assert_relative_eq!(
             sol.design.rate.newtons_per_meter(),
@@ -736,12 +815,21 @@ mod tests {
         let per: Vec<f64> = candidates
             .iter()
             .filter_map(|&d| {
-                solve_min_weight(&m, &base_request(vec![d]))
-                    .ok()
-                    .map(|s| s.mass_kg)
+                solve_min_weight(
+                    &m,
+                    &base_request(vec![d]),
+                    CurvatureCorrection::Bergstrasser,
+                )
+                .ok()
+                .map(|s| s.mass_kg)
             })
             .collect();
-        let best = solve_min_weight(&m, &base_request(candidates)).unwrap();
+        let best = solve_min_weight(
+            &m,
+            &base_request(candidates),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         let min = per.iter().cloned().fold(f64::INFINITY, f64::min);
         assert_relative_eq!(best.mass_kg, min, max_relative = 1e-9);
     }
@@ -749,7 +837,12 @@ mod tests {
     #[test]
     fn solution_does_not_buckle() {
         let m = crate::test_support::music_wire();
-        let sol = solve_min_weight(&m, &base_request(vec![1.5, 2.0, 2.5, 3.0])).unwrap();
+        let sol = solve_min_weight(
+            &m,
+            &base_request(vec![1.5, 2.0, 2.5, 3.0]),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert!(sol.design.buckling_stable);
     }
 
@@ -759,7 +852,7 @@ mod tests {
         let mut req = base_request(vec![1.5, 2.0, 2.5]);
         req.max_outer_dia = Some(Length::from_millimeters(3.0)); // forces index < 4
         assert!(matches!(
-            solve_min_weight(&m, &req),
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
             Err(SpringError::Infeasible(_))
         ));
     }
