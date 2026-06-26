@@ -87,6 +87,14 @@ impl Scenario for TwoLoad {
                 "two load points must show increasing force with increasing length".into(),
             ));
         }
+        // An extension spring only lengthens under load, so every operating length must be
+        // at or above the free length (y ≥ 0). A negative y would clamp to 0 in
+        // `deflection` (y = max(0,…)) and silently misreport the point's length.
+        if y1 < 0.0 {
+            return Err(SpringError::InconsistentInputs(
+                "operating lengths must be at or above the free length".into(),
+            ));
+        }
         let rate = SpringRate::from_newtons_per_meter(df / dy);
         let initial_tension = Force::from_newtons(f1.newtons() - rate.newtons_per_meter() * y1);
         let active =
@@ -364,6 +372,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn two_load_rejects_operating_length_below_free_length() {
+        // free_length=75mm, point1=(30N,70mm), point2=(50N,80mm) → y1=−5mm.
+        // Without the y1<0 guard: k=2000 N/m, F_i=40N (positive), so
+        // solve_forward's initial-tension guard does NOT catch this; it returns Ok
+        // with load_points[0].length silently misreported as 75mm, not 70mm.
+        // The new guard must fire first.
+        let s = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            free_length: Length::from_millimeters(75.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            point1: (Force::from_newtons(30.0), Length::from_millimeters(70.0)),
+            point2: (Force::from_newtons(50.0), Length::from_millimeters(80.0)),
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "operating lengths must be at or above the free length"
+            ),
+            "expected TwoLoad y1<0 guard message"
+        );
+    }
+
+    #[test]
+    fn two_load_accepts_first_point_at_free_length() {
+        // y1=0 boundary (strict < 0.0 guard must NOT fire here).
+        // free_length=70mm, point1=(10N,70mm), point2=(30N,80mm):
+        // y1=0, y2=10mm, k=(30−10)/0.010=2000 N/m, F_i=10−2000·0=10 N.
+        // Both points round-trip to their given lengths.
+        let s = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            free_length: Length::from_millimeters(70.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            point1: (Force::from_newtons(10.0), Length::from_millimeters(70.0)),
+            point2: (Force::from_newtons(30.0), Length::from_millimeters(80.0)),
+        };
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
+        assert_relative_eq!(d.rate.newtons_per_meter(), 2000.0, max_relative = 1e-9);
+        assert_relative_eq!(d.initial_tension.newtons(), 10.0, max_relative = 1e-9);
+        assert_relative_eq!(
+            d.load_points[0].length.millimeters(),
+            70.0,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            d.load_points[1].length.millimeters(),
+            80.0,
+            max_relative = 1e-9
+        );
+    }
+
     // --- RateBased scenario tests (SpringRate is in the test module's `use` above) ---
 
     #[test]
@@ -397,6 +467,34 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
             rate: SpringRate::from_newtons_per_meter(0.0),
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "required rate must be a positive finite number"
+            ),
+            "expected RateBased guard message"
+        );
+    }
+
+    #[test]
+    fn rate_based_rejects_non_finite_rate() {
+        // rate=+inf passes >0.0 (true), so only is_finite() rejects it — exercises
+        // that branch exclusively. NaN would also fail >0.0 so it wouldn't isolate
+        // is_finite(); +infinity is the value that requires is_finite() to fire.
+        // Pin the exact message to distinguish from solve_forward's own guards.
+        let s = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: SpringRate::from_newtons_per_meter(f64::INFINITY),
             free_length: Length::from_millimeters(60.0),
             initial_tension: Force::from_newtons(10.0),
             hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
@@ -491,34 +589,6 @@ mod tests {
                     if m == "outer diameter must be a positive finite number"
             ),
             "expected Dimensional guard message"
-        );
-    }
-
-    #[test]
-    fn rate_based_rejects_non_finite_rate() {
-        // rate=+inf passes >0.0 (true), so only is_finite() rejects it — exercises
-        // that branch exclusively. NaN would also fail >0.0 so it wouldn't isolate
-        // is_finite(); +infinity is the value that requires is_finite() to fire.
-        // Pin the exact message to distinguish from solve_forward's own guards.
-        let s = RateBased {
-            wire_dia: Length::from_millimeters(2.0),
-            mean_dia: Length::from_millimeters(20.0),
-            rate: SpringRate::from_newtons_per_meter(f64::INFINITY),
-            free_length: Length::from_millimeters(60.0),
-            initial_tension: Force::from_newtons(10.0),
-            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
-            loads: vec![Force::from_newtons(30.0)],
-        };
-        assert!(
-            matches!(
-                s.solve(
-                    &crate::test_support::music_wire(),
-                    CurvatureCorrection::Bergstrasser
-                ),
-                Err(crate::SpringError::InconsistentInputs(ref m))
-                    if m == "required rate must be a positive finite number"
-            ),
-            "expected RateBased guard message"
         );
     }
 }
