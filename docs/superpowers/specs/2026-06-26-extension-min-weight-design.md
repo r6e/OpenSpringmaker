@@ -1,7 +1,11 @@
 # Extension-Spring Minimum-Weight Optimization — Design
 
 **Status:** Approved (design dialogue 2026-06-26)
-**Scope:** `springcore` engine only (no `springmaker` GUI). One new module.
+**Scope:** Primarily the `springcore` engine (one new module). During implementation
+the scope expanded to a minimal `springmaker` ripple: the new per-material
+`allowable_pct_end_torsion` field round-trips through the materials editor, so the GUI
+form/view/state were updated to preserve it (the engine work would otherwise drop the
+value on save). No new GUI screens.
 **Phase:** Extension Phase 3 (follows Phase 1 PowerUser + Phase 2 input modes).
 
 ## Goal

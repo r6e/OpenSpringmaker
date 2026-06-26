@@ -13,8 +13,8 @@
 - MSRV 1.88; dual MIT/Apache; SI canonical internally.
 - Every formula cited inline (Shigley extension sections; Acxess Spring wire length; design spec `docs/superpowers/specs/2026-06-26-extension-min-weight-design.md`).
 - Strict TDD; `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc`, repo-wide `typos`, `cargo deny check all`, `cargo mutants --in-diff` (springcore) all green before push.
-- No commercial-product/vendor references in any persisted file.
-- Engine-only: `springcore` only; do NOT touch `springmaker` (extension GUI is a later phase).
+- No commercial-product/vendor references in any persisted file. (Technical citations such as Shigley and Acxess Spring are permitted; the prohibition is the commercial inspiration product/vendor.)
+- Primarily engine-only (`springcore`). NOTE: scope expanded during implementation to a minimal `springmaker` ripple — the new per-material `allowable_pct_end_torsion` field round-trips through the materials editor, so the GUI form/view/state preserve it. No new GUI screens; the broader extension GUI remains a later phase.
 - `initial_tension` (F_i) is a passthrough input: validated, reported, but it does NOT affect mass, stresses, or the binding constraint.
 - Branch off current `main` (#27/#28/#29/#30 all merged). (Branch `feat/extension-min-weight` already created; the design spec is committed there.)
 
