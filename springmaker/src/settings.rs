@@ -76,8 +76,17 @@ impl AppSettings {
             std::process::id(),
             std::thread::current().id()
         ));
-        std::fs::write(&tmp, toml)?;
-        std::fs::rename(&tmp, path)
+        // Clean up the temp file on any failure so repeated errors (e.g. a locked
+        // or read-only target) don't accumulate stray `.settings.*.tmp` files.
+        if let Err(e) = std::fs::write(&tmp, toml) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        Ok(())
     }
 }
 

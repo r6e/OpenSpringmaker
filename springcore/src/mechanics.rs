@@ -227,11 +227,20 @@ mod tests {
 
     #[test]
     fn correction_serde_round_trips() {
-        // Persisted in Phase B's settings file; lowercase token form.
-        let json = serde_json::to_string(&CurvatureCorrection::Wahl).unwrap();
-        assert_eq!(json, "\"wahl\"");
-        let back: CurvatureCorrection = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, CurvatureCorrection::Wahl);
+        // Persisted in Phase B's settings.toml; assert the lowercase token form
+        // in TOML (the project's persistence format) so we don't pull in a JSON
+        // dependency just to test serialization. TOML needs a table, so wrap it.
+        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+        struct Wrap {
+            c: CurvatureCorrection,
+        }
+        let s = toml::to_string(&Wrap {
+            c: CurvatureCorrection::Wahl,
+        })
+        .unwrap();
+        assert_eq!(s.trim(), "c = \"wahl\"");
+        let back: Wrap = toml::from_str(&s).unwrap();
+        assert_eq!(back.c, CurvatureCorrection::Wahl);
     }
 
     /// Provenance: `bergstrasser_factor` is exactly EN 13906-1:2013 Formula (1),

@@ -343,7 +343,9 @@ impl App {
                     .save_to(p)
                 });
                 match save_result {
-                    Some(Err(e)) => self.settings_error = Some(e.to_string()),
+                    Some(Err(e)) => {
+                        self.settings_error = Some(format!("could not save settings: {e}"))
+                    }
                     // Ok(()) or no path configured: clear any stale error.
                     _ => self.settings_error = None,
                 }
