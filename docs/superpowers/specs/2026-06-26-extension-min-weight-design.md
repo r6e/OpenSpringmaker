@@ -136,9 +136,10 @@ pub fn solve_min_weight(
    - else bracket-root-find `D ∈ [dm_lo, dm_hi]` with `s(D) = allowable` (existing
      `numeric::find_root_bracketed`).
 4. Collect four candidate bounds — the three stress bounds plus `(dm_hi, Index)` — and
-   take the one with the **smallest `D`**; its label is the binding constraint. (Ties:
-   prefer a stress label over `Index`, since a stress at exactly `dm_hi` is the true
-   limiter.)
+   take the one with the **smallest `D`**; its label is the binding constraint. When no
+   stress reaches its allowable within the index range, the limit is the index ceiling,
+   labelled `Index`; the exact-`dm_hi` equality tie is immaterial (identical geometry,
+   only the reported label could differ).
 5. Return `(D, binding)`.
 
 Each stress is monotone increasing in `D` over `[dm_lo, dm_hi]` provided the index floor
