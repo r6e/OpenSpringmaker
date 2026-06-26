@@ -34,14 +34,29 @@ impl AppSettings {
         settings_path().map(|p| load_from(&p)).unwrap_or_default()
     }
 
-    /// Persist to `path`, creating parent directories.
+    /// Persist to `path`, creating parent directories. Writes atomically (temp
+    /// file + rename) so a crash mid-write can't corrupt the settings file.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let dir = path.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "settings path has no parent directory",
+            )
+        })?;
+        std::fs::create_dir_all(dir)?;
         let toml = toml::to_string(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, toml)
+        // Write to a temp file then rename over the target (mirrors
+        // springcore::material_persist::atomic_write). The temp name is unique per
+        // process AND thread so concurrent saves — including cargo's test threads —
+        // never share a temp path or race on the rename.
+        let tmp = dir.join(format!(
+            ".settings.{}.{:?}.tmp",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&tmp, toml)?;
+        std::fs::rename(&tmp, path)
     }
 }
 

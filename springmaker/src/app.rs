@@ -174,7 +174,7 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
-    // Settings screen: emitted by the correction radio group in settings_view.
+    // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
