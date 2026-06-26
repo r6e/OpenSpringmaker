@@ -228,14 +228,14 @@ pub fn solve_min_weight(
     // requests up front rather than letting non-finite/degenerate values poison the
     // search (a zero rate diverges Na → ∞; a sub-floor c_min breaks the monotonicity
     // precondition `best_mean_dia` relies on, see [`min_spring_index`]).
-    if !(req.required_rate.newtons_per_meter().is_finite()
-        && req.required_rate.newtons_per_meter() > 0.0)
-    {
+    let rate = req.required_rate.newtons_per_meter();
+    if !(rate.is_finite() && rate > 0.0) {
         return Err(SpringError::InconsistentInputs(
             "required rate must be a positive finite number (N/m)".into(),
         ));
     }
-    if !(req.max_force.newtons().is_finite() && req.max_force.newtons() > 0.0) {
+    let force = req.max_force.newtons();
+    if !(force.is_finite() && force > 0.0) {
         return Err(SpringError::InconsistentInputs(
             "max force must be a positive finite number (N)".into(),
         ));
@@ -277,7 +277,8 @@ pub fn solve_min_weight(
         )));
     }
     if let Some(od_max) = req.max_outer_dia {
-        if !(od_max.meters().is_finite() && od_max.meters() > 0.0) {
+        let od = od_max.meters();
+        if !(od.is_finite() && od > 0.0) {
             return Err(SpringError::InconsistentInputs(
                 "max_outer_dia must be a positive finite number".into(),
             ));
@@ -435,7 +436,7 @@ mod tests {
         ));
     }
 
-    // ── Group 1: input validation + index floor ───────────────────────────────
+    // ── input validation + index floor ─────────────────────────────────────────
 
     /// At the exact floor c_min = 2 + √3, the request is accepted (the rest of the
     /// request is feasible), pinning the `>=` boundary against a `>` mutant.
@@ -623,12 +624,12 @@ mod tests {
         ));
     }
 
-    // ── Group 5: public-contract feasibility sweep ─────────────────────────────
+    // ── public-contract feasibility sweep ──────────────────────────────────────
 
     /// Defense in depth: across a grid of VALID requests, every design the optimizer
     /// returns as `Ok` must be feasible — all three %-allowable ratios within 1.0 at
     /// the operating load. This is the property the pole bug violated; a test (not a
-    /// runtime re-check, which Group 1 makes unreachable dead code) keeps it
+    /// runtime re-check, which the input validation above makes unreachable dead code) keeps it
     /// mutation-clean while asserting the contract directly.
     #[test]
     fn returned_designs_are_always_feasible() {
@@ -703,7 +704,7 @@ mod tests {
         assert!(lp.pct_hook_torsion_allow <= 1.0 + 1e-6);
     }
 
-    /// Group 2: a candidate whose forward design is invalid (fixed hooks giving
+    /// A candidate whose forward design is invalid (fixed hooks giving
     /// C2 = 2·r2/d ≤ 1) must be skipped, not abort the whole solve. d=6 mm yields
     /// C2 = 2·2/6 = 0.667 ≤ 1 (solve_forward Errs) but best_mean_dia passes it
     /// (negative K_B ⇒ torsion never binds); d=2 mm is valid and lighter, and must win.
@@ -892,7 +893,7 @@ mod tests {
         assert!(l.design.free_length.millimeters() > s.design.free_length.millimeters());
     }
 
-    // ── OD cap boundary: strict > (line 194) ─────────────────────────────────
+    // ── OD cap boundary: strict > (the `mean + d > od_max` guard) ────────────
     //
     // `if mean.meters() + d.meters() > od_max.meters()`
     // Mutant ">" → ">=" also caps when OD == od_max, wrongly switching binding from
@@ -924,7 +925,7 @@ mod tests {
         );
     }
 
-    // ── c_min floor after OD cap: strict < (line 196) ────────────────────────
+    // ── c_min floor after OD cap: strict < (the `capped/d < c_min` guard) ────
     //
     // `if capped / d.meters() < c_min { continue; }`
     // Mutant "<" → "<=" rejects when capped/d == c_min exactly.
@@ -949,7 +950,7 @@ mod tests {
         assert_relative_eq!(sol.design.mean_dia.millimeters(), 12.0, max_relative = 1e-9);
     }
 
-    // ── active-coils guard: || vs && and < boundary (line 204) ───────────────
+    // ── active-coils guard: || vs && and < boundary ──────────────────────────
     //
     // `if !active.is_finite() || active < 1.0 { continue; }`
     //
@@ -1004,7 +1005,7 @@ mod tests {
         );
     }
 
-    // ── mass comparison: strict < (line 221) ─────────────────────────────────
+    // ── mass comparison: strict < (the `mass < best` guard) ──────────────────
     //
     // `if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true)`
     // Mutant "< → ==" updates only when mass == previous best (never for distinct
