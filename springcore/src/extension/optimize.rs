@@ -284,6 +284,19 @@ pub fn solve_min_weight(
             ));
         }
     }
+    // Fixed hook radii are candidate-INDEPENDENT, so a NaN/±inf/zero/negative radius is
+    // unconditionally bad and is rejected up front (InconsistentInputs) rather than
+    // skipping every candidate into a misleading Infeasible. A finite *positive* radius
+    // that merely yields C ≤ 1 on some candidate is per-candidate (valid at small d,
+    // sub-critical at large d) and stays correctly handled by the skip-on-Err below.
+    if let HookSpec::Fixed { r1, r2 } = req.hooks {
+        let (r1m, r2m) = (r1.meters(), r2.meters());
+        if !(r1m.is_finite() && r1m > 0.0 && r2m.is_finite() && r2m > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "fixed hook radii must be finite and positive".into(),
+            ));
+        }
+    }
 
     let mut best: Option<ExtMinWeightSolution> = None;
 
@@ -622,6 +635,52 @@ mod tests {
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
             Err(SpringError::InconsistentInputs(_))
         ));
+    }
+
+    // ── fixed-hook radius validation (candidate-independent → up-front reject) ──
+    //
+    // A `HookSpec::Fixed` radius that is NaN, ±inf, 0, or negative is bad regardless
+    // of wire diameter (unlike a finite-positive radius that merely gives C ≤ 1 on
+    // some candidates, which is per-candidate and correctly skip-on-Err). Reject it as
+    // InconsistentInputs rather than letting every candidate skip into Infeasible.
+
+    /// A NaN r1 (with a valid r2) must be rejected up front.
+    #[test]
+    fn non_finite_fixed_hook_radius_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.hooks = HookSpec::Fixed {
+            r1: Length::from_millimeters(f64::NAN),
+            r2: Length::from_millimeters(9.0),
+        };
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    /// Non-positive radii must be rejected. Three sub-cases pin all the `> 0.0`
+    /// conjuncts of the guard against `>= 0.0` mutants:
+    ///   - r2 = 0 exactly (kills the r2 `> → >=` mutant; -1 wouldn't, since -1 >= 0 is false),
+    ///   - r1 = 0 exactly (kills the r1 `> → >=` mutant),
+    ///   - a negative radius (the non-boundary degenerate case).
+    #[test]
+    fn non_positive_fixed_hook_radius_rejected() {
+        let m = crate::test_support::music_wire();
+        for (r1_mm, r2_mm) in [(18.0, 0.0), (0.0, 9.0), (18.0, -1.0)] {
+            let mut req = base_request(vec![2.0]);
+            req.hooks = HookSpec::Fixed {
+                r1: Length::from_millimeters(r1_mm),
+                r2: Length::from_millimeters(r2_mm),
+            };
+            assert!(
+                matches!(
+                    solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+                    Err(SpringError::InconsistentInputs(_))
+                ),
+                "r1={r1_mm} mm, r2={r2_mm} mm must reject as InconsistentInputs"
+            );
+        }
     }
 
     // ── public-contract feasibility sweep ──────────────────────────────────────
