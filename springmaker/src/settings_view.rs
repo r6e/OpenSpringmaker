@@ -115,8 +115,6 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         content = content.push(text(fb.text).size(SZ_LABEL).color(color));
     }
 
-    let content = content;
-
     let root = container(
         container(content)
             .padding(24)
