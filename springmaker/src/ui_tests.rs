@@ -173,6 +173,42 @@ fn typing_a_valid_power_user_design_renders_results() {
 }
 
 #[test]
+fn settings_changes_correction_and_recomputes() {
+    let mut app = test_app();
+    // Enter a valid PowerUser design field by field.
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(
+        shows(&app, "Spring rate"),
+        "results should render before navigating"
+    );
+
+    // Capture shear stress under the default Bergsträsser correction.
+    let before = app.outcome.as_ref().unwrap().design.load_points[0]
+        .shear_stress
+        .pascals();
+
+    // Navigate to Settings, select Wahl, then return to the Calculator.
+    click(&mut app, "Settings \u{2192}");
+    click(&mut app, "Wahl");
+    assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+    click(&mut app, "\u{2190} Calculator");
+
+    // Recompute should have run on SetCorrection; Wahl factor exceeds Bergsträsser
+    // at spring index C = mean_dia / wire_dia = 20 / 2 = 10.
+    let after = app.outcome.as_ref().unwrap().design.load_points[0]
+        .shear_stress
+        .pascals();
+    assert!(
+        after > before,
+        "Wahl raises body shear vs the Bergsträsser default at C=10"
+    );
+}
+
+#[test]
 fn save_entry_commits_a_clone_and_closes_the_editor() {
     let mut app = test_app();
     click(&mut app, "Materials →");

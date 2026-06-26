@@ -385,7 +385,7 @@ git commit -m "feat(springcore): thread CurvatureCorrection through the extensio
             .unwrap()
             .goodman_factor_of_safety
         };
-        // Wahl > Bergsträsser at C=10 → higher stress → lower FoS, so they differ.
+        // Wahl > Bergsträsser at C=10 → higher stress → lower factor of safety, so they differ.
         assert!(mk(crate::CurvatureCorrection::Wahl) < mk(crate::CurvatureCorrection::Bergstrasser));
     }
 ```
@@ -429,6 +429,6 @@ git commit -m "feat(springcore): thread CurvatureCorrection through fatigue anal
 - **Spec coverage:** enum + default + serde (Task 1); thread through compression `solve_forward`/`Scenario`/optimizer/persistence (Task 2), extension (Task 3), fatigue (Task 4); golden tightening (Tasks 2,3) — all spec §3.1 / §6 items covered. Settings/GUI (spec §3.2/§3.3) are explicitly Phase B.
 - **Workspace-compile caveat:** changing public `springcore` signatures breaks `springmaker`'s call sites. This is called out above. The cleanest execution is Phase A + Phase B on one branch / one PR pair landed together; otherwise Phase A alone leaves `cargo test --workspace` red in `springmaker`. **Decide this before executing** (see Open Question).
 
-## Open question for the human before execution
+## Resolved: A + B land together as ONE PR
 
-Phase A changes public `springcore` signatures that `springmaker` calls, so `springmaker` won't compile until Phase B updates those call sites. Options: (a) **land Phase A + Phase B together** as one branch (two logical commits/PRs but merged so `main` never breaks) — recommended; (b) include the **minimal springmaker call-site updates** (pass `CurvatureCorrection::Bergstrasser` at the existing call sites, no Settings UI yet) in Phase A so the workspace stays green, deferring only the Settings screen to Phase B. Confirm which before execution.
+**Decision (human):** Phase A stays strictly `springcore`-only; Phases A and B execute on the **same branch** (`feat/selectable-curvature-correction`) and ship as **one PR**, so `main` only ever sees the final green state. The workspace (`cargo test --workspace`) is expected to be red on the intermediate Phase-A commits (because `springmaker` still calls the old signatures) and goes green once Phase B updates those call sites — this is fine because nothing is pushed/merged until the combined tip is green. The springmaker call-site updates therefore live in **Phase B**, not here. Run the full `--workspace` gate only at the end of Phase B, not at the end of Phase A.

@@ -153,7 +153,7 @@ mod tests {
             .unwrap()
             .goodman_factor_of_safety
         };
-        // Wahl > Bergsträsser at C=10 → higher stress → lower FoS, so they differ.
+        // Wahl > Bergsträsser at C=10 → higher stress → lower factor of safety, so they differ.
         assert!(
             mk(crate::CurvatureCorrection::Wahl) < mk(crate::CurvatureCorrection::Bergstrasser)
         );
