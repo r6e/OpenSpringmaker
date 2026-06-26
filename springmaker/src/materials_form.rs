@@ -328,6 +328,21 @@ mod tests {
         assert!(build_draft(&f).unwrap().build().is_ok());
     }
 
+    // The "End Torsion" field's VALUE (not just name/build-ok) must survive the
+    // Material → form → Draft → build round-trip. Stainless 302 carries the 0.30
+    // stainless/nonferrous end-hook allowable (Shigley Table 10-7), distinct from the
+    // 0.40 carbon-steel default, so a dropped or swapped source field would fail here.
+    #[test]
+    fn populate_round_trips_end_torsion_value() {
+        let set = MaterialSet::load_default();
+        let stainless = set.get("Stainless 302").unwrap();
+        assert_eq!(stainless.allowable_pct_end_torsion, 0.30);
+        let mut f = MaterialsFormState::default();
+        populate_from_material(&mut f, stainless);
+        let rebuilt = build_draft(&f).unwrap().build().unwrap();
+        assert_eq!(rebuilt.allowable_pct_end_torsion, 0.30);
+    }
+
     #[test]
     fn coefficient_labels_match_form() {
         assert_eq!(coefficient_labels(MtsForm::Rational).len(), 5);
