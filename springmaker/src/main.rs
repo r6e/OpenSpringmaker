@@ -16,11 +16,17 @@ mod ui_tests;
 use app::App;
 use iced::window;
 use iced::Size;
-use springcore::MaterialStore;
+use springcore::{LoadWarning, MaterialStore};
 
 fn initial_app() -> App {
-    let settings = settings::AppSettings::load();
-    let (materials, load_warnings) = MaterialStore::load();
+    let (settings, settings_warning) = settings::AppSettings::load();
+    let (materials, mut load_warnings) = MaterialStore::load();
+    // Surface a settings-load problem (unreadable/malformed file → reset to
+    // defaults) in the same startup status channel as material-load warnings, so a
+    // silently-reset preference is visible rather than hidden.
+    if let Some(message) = settings_warning {
+        load_warnings.push(LoadWarning { message });
+    }
     let mut app = App::from_store(materials, load_warnings, settings.curvature_correction);
     // Wire up the real settings path so preference changes are persisted.
     // None if the platform config dir is unavailable (settings_path() returns None).

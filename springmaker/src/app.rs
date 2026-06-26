@@ -660,10 +660,13 @@ mod tests {
         )
     }
 
-    /// An unwritable path (embedded NUL) that causes save to fail deterministically
-    /// without touching the real filesystem.
+    /// A path that makes `save_to` fail deterministically WITHOUT touching the
+    /// filesystem: an empty path has no parent, so `save_to`'s `parent()` guard
+    /// errors before any temp file is written. (A relative name like
+    /// `"x\0.toml"` would have parent `""` = cwd, leaking a `.settings.*.tmp`
+    /// there before the rename fails — not hermetic.)
     fn unwritable_settings_path() -> std::path::PathBuf {
-        std::path::PathBuf::from("invalid\0settings.toml")
+        std::path::PathBuf::new()
     }
 
     #[test]
