@@ -34,7 +34,10 @@ fn min_spring_index() -> f64 {
 }
 
 /// How the hook geometry is determined during the search.
+///
+/// Non-exhaustive: future hook styles (e.g. V-hooks, extended hooks) may be added.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum HookSpec {
     /// Standard machine loops that scale with the mean diameter: r1 = D/2, r2 = D/4.
     Default,
@@ -44,7 +47,7 @@ pub enum HookSpec {
 
 impl HookSpec {
     /// Resolve the concrete hook radii for a given mean diameter.
-    pub fn resolve(self, mean_dia: Length) -> HookEnds {
+    pub(crate) fn resolve(self, mean_dia: Length) -> HookEnds {
         match self {
             HookSpec::Default => HookEnds::default_for(mean_dia),
             HookSpec::Fixed { r1, r2 } => HookEnds { r1, r2 },
@@ -53,26 +56,47 @@ impl HookSpec {
 }
 
 /// Which limit determines the chosen extension design.
+///
+/// Non-exhaustive: future binding limits (e.g. fatigue) may be added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExtBindingConstraint {
+    /// Body coil shear stress τ reached its allowable (the largest D where the body
+    /// shear is within `allowable_pct_torsion · MTS`).
     BodyShear,
+    /// Hook bending stress σ_A reached its allowable (`allowable_pct_bending · MTS`).
     HookBending,
+    /// End-hook torsion stress τ_B reached its allowable (`allowable_pct_end_torsion ·
+    /// MTS`, the lower 40% end-hook limit).
     HookTorsion,
+    /// No stress bound first; the index ceiling `c_max` capped the mean diameter.
     Index,
+    /// The outer-diameter cap `max_outer_dia` capped the mean diameter below every
+    /// stress and index limit.
     OuterDiameter,
 }
 
 /// A minimum-weight extension-spring problem.
 #[derive(Debug, Clone)]
 pub struct ExtMinWeightRequest {
+    /// Required spring rate k; fixes the active coils for each (d, D) via
+    /// `Na = G·d⁴ / (8·D³·k)`. Must be finite and > 0.
     pub required_rate: SpringRate,
+    /// Maximum operating force at which all three stresses are evaluated against their
+    /// allowables. Must be finite and > 0.
     pub max_force: Force,
     /// Built-in preload. Passthrough: validated (>= 0, finite) and reported, but it
     /// does not affect the mass, the stresses, or the binding constraint.
     pub initial_tension: Force,
+    /// How the hook geometry is chosen for each candidate (scaling or fixed radii).
     pub hooks: HookSpec,
+    /// Allowed spring-index range `(c_min, c_max)`. `c_min` must be ≥ the monotonicity
+    /// floor `2 + √3` (see [`min_spring_index`]) and strictly below `c_max`.
     pub index_bounds: (f64, f64),
+    /// Optional cap on the outer diameter `D + d`; caps the mean diameter if a candidate
+    /// would exceed it. Must be finite and > 0 when present.
     pub max_outer_dia: Option<Length>,
+    /// Wire diameters to search; the lightest feasible one wins. Must be non-empty.
     pub candidate_diameters: Vec<Length>,
 }
 
@@ -162,6 +186,9 @@ fn best_mean_dia(
             return None;
         }
         if stress(dm_hi) - allowable <= 0.0 {
+            // This stress never reaches allowable across the bracket, so it does not
+            // bind — the index ceiling (dm_hi = c_max·d) is the limit, hence `Index`
+            // rather than `label`.
             return Some((dm_hi, ExtBindingConstraint::Index));
         }
         let root = find_root_bracketed(
@@ -318,6 +345,13 @@ mod tests {
                 .map(Length::from_millimeters)
                 .collect(),
         }
+    }
+
+    /// Low-force request (F = 5 N) where the index ceiling binds for every candidate.
+    fn low_force_request(candidates: Vec<f64>) -> ExtMinWeightRequest {
+        let mut req = base_request(candidates);
+        req.max_force = Force::from_newtons(5.0);
+        req
     }
 
     #[test]
@@ -515,13 +549,79 @@ mod tests {
         ));
     }
 
+    // ── Group 5: public-contract feasibility sweep ─────────────────────────────
+
+    /// Defense in depth: across a grid of VALID requests, every design the optimizer
+    /// returns as `Ok` must be feasible — all three %-allowable ratios within 1.0 at
+    /// the operating load. This is the property the pole bug violated; a test (not a
+    /// runtime re-check, which Group 1 makes unreachable dead code) keeps it
+    /// mutation-clean while asserting the contract directly.
+    #[test]
+    fn returned_designs_are_always_feasible() {
+        let m = crate::test_support::music_wire();
+        let diameters = [2.0_f64, 3.0, 4.0];
+        let c_mins = [4.0_f64, 6.0, 8.0];
+        let forces = [20.0_f64, 100.0];
+        let hook_specs = [
+            HookSpec::Default,
+            HookSpec::Fixed {
+                r1: Length::from_millimeters(20.0),
+                r2: Length::from_millimeters(8.0),
+            },
+            HookSpec::Fixed {
+                r1: Length::from_millimeters(30.0),
+                r2: Length::from_millimeters(5.0),
+            },
+        ];
+        let corrections = [
+            CurvatureCorrection::Wahl,
+            CurvatureCorrection::Bergstrasser,
+        ];
+
+        let mut feasible_count = 0;
+        for &d in &diameters {
+            for &c_min in &c_mins {
+                for &f in &forces {
+                    for &hooks in &hook_specs {
+                        for &corr in &corrections {
+                            let mut req = base_request(vec![d]);
+                            req.index_bounds = (c_min, 12.0);
+                            req.max_force = Force::from_newtons(f);
+                            req.hooks = hooks;
+                            let Ok(sol) = solve_min_weight(&m, &req, corr) else {
+                                continue; // infeasible combos are allowed; only Ok must be feasible
+                            };
+                            let lp = &sol.design.load_points[0];
+                            assert!(
+                                lp.pct_body_allow <= 1.0 + 1e-6
+                                    && lp.pct_hook_bending_allow <= 1.0 + 1e-6
+                                    && lp.pct_hook_torsion_allow <= 1.0 + 1e-6,
+                                "infeasible design returned for d={d} c_min={c_min} F={f} \
+                                 hooks={hooks:?} corr={corr:?}: body={}, bending={}, torsion={}",
+                                lp.pct_body_allow,
+                                lp.pct_hook_bending_allow,
+                                lp.pct_hook_torsion_allow,
+                            );
+                            feasible_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Guard against the grid degenerating to all-infeasible (which would make the
+        // assertion vacuous).
+        assert!(
+            feasible_count > 0,
+            "expected at least one feasible design across the sweep"
+        );
+    }
+
     // ── per-binding discrimination ────────────────────────────────────────────
 
     #[test]
     fn low_force_binds_index() {
         let m = crate::test_support::music_wire();
-        let mut req = base_request(vec![3.0]);
-        req.max_force = Force::from_newtons(5.0); // far below any stress limit at c_max
+        let req = low_force_request(vec![3.0]); // F far below any stress limit at c_max
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_eq!(sol.binding, ExtBindingConstraint::Index);
         // Index ceiling ⇒ mean diameter = c_max · d = 12 · 3 mm = 36 mm.
@@ -561,8 +661,7 @@ mod tests {
     #[test]
     fn index_binding_mass_and_free_length_exact() {
         let m = crate::test_support::music_wire();
-        let mut req = base_request(vec![3.0]);
-        req.max_force = Force::from_newtons(5.0);
+        let req = low_force_request(vec![3.0]);
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         // Kills: arithmetic mutations in wire_mass (factor swaps, powi, PI) and
         //        in free_length_from_geometry (coefficient swaps, wrong d_loop).
@@ -633,8 +732,7 @@ mod tests {
         let m = crate::test_support::music_wire();
         // Without cap: d=3 mm, F=5 N → Index binding, D=36 mm, OD=39 mm.
         // od_max=35 mm < 39 mm → cap fires → D=32 mm, binding=OuterDiameter.
-        let mut req = base_request(vec![3.0]);
-        req.max_force = Force::from_newtons(5.0);
+        let mut req = low_force_request(vec![3.0]);
         req.max_outer_dia = Some(Length::from_millimeters(35.0));
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_eq!(sol.binding, ExtBindingConstraint::OuterDiameter);
@@ -685,8 +783,7 @@ mod tests {
     fn fixed_hooks_reproduce_default_at_same_radii() {
         let m = crate::test_support::music_wire();
         // Single candidate so both runs pick the same D; low force keeps Index binding.
-        let mut def = base_request(vec![3.0]);
-        def.max_force = Force::from_newtons(5.0); // Index binding ⇒ D=36 mm
+        let def = low_force_request(vec![3.0]); // Index binding ⇒ D=36 mm
         let d_sol = solve_min_weight(&m, &def, CurvatureCorrection::Bergstrasser).unwrap();
         // At D=36 mm the default hook resolves to r1=18 mm, r2=9 mm.
         let mut fixed = def.clone();
@@ -708,8 +805,7 @@ mod tests {
         let m = crate::test_support::music_wire();
         // Low force ⇒ Index binding in both cases ⇒ same D=36 mm.
         // Larger r1 means a bigger loop diameter (d_loop=2·r1), more wire, longer spring.
-        let mut small = base_request(vec![3.0]);
-        small.max_force = Force::from_newtons(5.0);
+        let mut small = low_force_request(vec![3.0]);
         small.hooks = HookSpec::Fixed {
             r1: Length::from_millimeters(18.0),
             r2: Length::from_millimeters(9.0),
@@ -769,8 +865,7 @@ mod tests {
     #[test]
     fn od_cap_at_c_min_boundary_is_not_rejected() {
         let m = crate::test_support::music_wire();
-        let mut req = base_request(vec![3.0]);
-        req.max_force = Force::from_newtons(5.0);
+        let mut req = low_force_request(vec![3.0]);
         // od_max = (c_min+1)·d = 5·3 = 15 mm → capped D = 12 mm → c_cap = 4 = c_min.
         req.max_outer_dia = Some(Length::from_millimeters(15.0));
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
@@ -853,8 +948,7 @@ mod tests {
     fn mass_comparison_selects_lighter_design() {
         let m = crate::test_support::music_wire();
         // d=3 mm first (heavier), d=2 mm second (lighter) → 2 mm must win.
-        let mut req = base_request(vec![3.0, 2.0]);
-        req.max_force = Force::from_newtons(5.0);
+        let req = low_force_request(vec![3.0, 2.0]);
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         assert_relative_eq!(sol.design.wire_dia.millimeters(), 2.0, max_relative = 1e-9);
         // Mass must match the single-candidate 2mm solution exactly.
