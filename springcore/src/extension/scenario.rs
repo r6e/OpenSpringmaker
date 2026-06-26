@@ -169,6 +169,8 @@ mod tests {
     #[test]
     fn two_load_rejects_non_increasing_points() {
         // More force at a shorter length is impossible for an extension spring.
+        // Pin the exact message so the test fails when a mutation lets bad values
+        // through to solve_forward (which catches them with a *different* message).
         let s = TwoLoad {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -177,13 +179,17 @@ mod tests {
             point1: (Force::from_newtons(50.0), Length::from_millimeters(70.0)),
             point2: (Force::from_newtons(30.0), Length::from_millimeters(80.0)),
         };
-        assert!(matches!(
-            s.solve(
-                &crate::test_support::music_wire(),
-                CurvatureCorrection::Bergstrasser
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "two load points must show increasing force with increasing length"
             ),
-            Err(crate::SpringError::InconsistentInputs(_))
-        ));
+            "expected TwoLoad guard message"
+        );
     }
 
     // --- Input-domain robustness tests (mandate: every guard sub-condition exercised) ---
@@ -191,7 +197,10 @@ mod tests {
     #[test]
     fn two_load_rejects_non_finite_point() {
         // df = +inf passes df<=0 and dy<=0, but fails is_finite() — exercises that branch.
-        // Use +infinity, not NaN: NaN<=0 is false so NaN is caught by the df<=0 arm already.
+        // Use +infinity, not NaN: both fail is_finite(), but a NaN df also passes
+        // df<=0 (NaN comparisons are always false), so +inf is the value that is
+        // positive AND non-finite — only the is_finite() arm can reject it.
+        // Pin the exact message to distinguish from solve_forward's own guards.
         let s = TwoLoad {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -203,18 +212,23 @@ mod tests {
                 Length::from_millimeters(80.0),
             ),
         };
-        assert!(matches!(
-            s.solve(
-                &crate::test_support::music_wire(),
-                CurvatureCorrection::Bergstrasser
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "two load points must show increasing force with increasing length"
             ),
-            Err(crate::SpringError::InconsistentInputs(_))
-        ));
+            "expected TwoLoad guard message"
+        );
     }
 
     #[test]
     fn two_load_rejects_decreasing_length() {
         // df = +20 > 0 (does NOT fire df<=0), dy = -0.010 < 0 — isolates the dy<=0 branch.
+        // Pin the exact message to distinguish from solve_forward's own guards.
         let s = TwoLoad {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -223,18 +237,23 @@ mod tests {
             point1: (Force::from_newtons(30.0), Length::from_millimeters(80.0)),
             point2: (Force::from_newtons(50.0), Length::from_millimeters(70.0)),
         };
-        assert!(matches!(
-            s.solve(
-                &crate::test_support::music_wire(),
-                CurvatureCorrection::Bergstrasser
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "two load points must show increasing force with increasing length"
             ),
-            Err(crate::SpringError::InconsistentInputs(_))
-        ));
+            "expected TwoLoad guard message"
+        );
     }
 
     #[test]
     fn two_load_rejects_equal_forces() {
         // df = 0 exactly — pins the <= boundary on df (zero rate is not a valid spring).
+        // Pin the exact message to distinguish from solve_forward's own guards.
         let s = TwoLoad {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -243,12 +262,16 @@ mod tests {
             point1: (Force::from_newtons(30.0), Length::from_millimeters(70.0)),
             point2: (Force::from_newtons(30.0), Length::from_millimeters(80.0)),
         };
-        assert!(matches!(
-            s.solve(
-                &crate::test_support::music_wire(),
-                CurvatureCorrection::Bergstrasser
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "two load points must show increasing force with increasing length"
             ),
-            Err(crate::SpringError::InconsistentInputs(_))
-        ));
+            "expected TwoLoad guard message"
+        );
     }
 }
