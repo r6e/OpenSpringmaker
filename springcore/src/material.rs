@@ -160,8 +160,8 @@ pub struct MaterialDraft {
     /// Allowable torsional stress as a fraction of MTS (body shear).
     pub allowable_pct_torsion: f64,
     /// Allowable torsional stress for END hooks (τ_B) as a fraction of MTS.
-    /// Shigley Table 10-7 / Example 10-6: 40% of MTS for end hooks in torsion,
-    /// lower than the 45% body-shear allowable.
+    /// Per Shigley Table 10-7 / Example 10-6: 40% of MTS for carbon & low-alloy
+    /// steels, 30% for austenitic stainless and nonferrous alloys.
     pub allowable_pct_end_torsion: f64,
     /// Allowable bending stress as a fraction of MTS.
     pub allowable_pct_bending: f64,
@@ -231,7 +231,8 @@ pub struct Material {
     pub allowable_pct_torsion: f64,
     /// Allowable torsional stress for END hooks (τ_B) as a fraction of MTS.
     /// Per Shigley Table 10-7 / Example 10-6 the end-hook torsion limit is 40% of
-    /// MTS, distinct from (and lower than) the 45% body-shear allowable above.
+    /// MTS for carbon & low-alloy steels and 30% for austenitic stainless and
+    /// nonferrous alloys, distinct from the body-shear allowable above.
     pub allowable_pct_end_torsion: f64,
     /// Allowable bending stress as a fraction of MTS; applies to bending-loaded
     /// spring types (e.g. torsion, flat). Retained here for future sub-projects.
@@ -781,6 +782,35 @@ allowable_pct_set = 0.60
         );
         // 4 from sub-project 1 + 3 from PR (b).
         assert_eq!(set.names().len(), 7);
+    }
+
+    // Shigley Table 10-7 splits the end-hook torsion allowable by material category:
+    // 40% of MTS for patented/cold-drawn/hardened carbon & low-alloy steels, 30% for
+    // austenitic stainless and nonferrous alloys. Pins the per-category split in the
+    // bundled set so the music-wire-only optimizer suite can't mask a flattened value.
+    #[test]
+    fn end_torsion_allowable_follows_shigley_table_10_7_categories() {
+        let set = MaterialSet::load_default();
+        for name in [
+            "Music Wire",
+            "Oil-Tempered Wire",
+            "Chrome-Silicon",
+            "Hard-Drawn MB",
+            "Chrome-Vanadium",
+        ] {
+            assert_relative_eq!(
+                set.get(name).unwrap().allowable_pct_end_torsion,
+                0.40,
+                max_relative = 1e-12,
+            );
+        }
+        for name in ["Stainless 302", "Phosphor Bronze"] {
+            assert_relative_eq!(
+                set.get(name).unwrap().allowable_pct_end_torsion,
+                0.30,
+                max_relative = 1e-12,
+            );
+        }
     }
 
     // Rational MTS form: Sut = (P0*d^P4 + P1) / (P2*d^P4 + P3), d in mm, MPa.

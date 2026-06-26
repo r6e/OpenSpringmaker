@@ -82,8 +82,8 @@ fn ext_load_point(
         hook_torsion,
         pct_body_allow: body_shear.pascals() / allow_torsion,
         pct_hook_bending_allow: hook_bending.pascals() / allow_bending,
-        // End hooks in torsion use the lower 40%-of-MTS allowable (Shigley Table 10-7),
-        // not the 45% body-shear allowable.
+        // End hooks in torsion use the per-material end-hook allowable (Shigley
+        // Table 10-7: 40% for carbon/low-alloy steel, 30% for stainless/nonferrous).
         pct_hook_torsion_allow: hook_torsion.pascals() / allow_end_torsion,
     }
 }

@@ -67,7 +67,7 @@ pub enum ExtBindingConstraint {
     /// Hook bending stress σ_A reached its allowable (`allowable_pct_bending · MTS`).
     HookBending,
     /// End-hook torsion stress τ_B reached its allowable (`allowable_pct_end_torsion ·
-    /// MTS`, the lower 40% end-hook limit).
+    /// MTS`, the per-material end-hook limit; Shigley Table 10-7).
     HookTorsion,
     /// No stress bound first; the index ceiling `c_max` capped the mean diameter.
     Index,
@@ -151,8 +151,8 @@ fn best_mean_dia(
     let (c_min, c_max) = bounds;
     let mts = material.min_tensile_strength(d).ok()?.pascals();
     let allow_torsion = material.allowable_pct_torsion * mts;
-    // End hooks in torsion (τ_B) use the lower 40%-of-MTS allowable (Shigley Table 10-7),
-    // distinct from the 45% body-shear allowable above.
+    // End hooks in torsion (τ_B) use the per-material end-hook allowable (Shigley
+    // Table 10-7: 40% for carbon/low-alloy steel, 30% for stainless/nonferrous).
     let allow_end_torsion = material.allowable_pct_end_torsion * mts;
     let allow_bending = material.allowable_pct_bending * mts;
     let dm_lo = c_min * d.meters();

@@ -123,8 +123,9 @@ pub fn solve_min_weight(
 ### `best_mean_dia(material, d, max_force, bounds, hooks, correction) -> Option<(Length, ExtBindingConstraint)>`
 
 1. `allow_torsion = allowable_pct_torsion · MTS(d)` (body shear, 45%);
-   `allow_end_torsion = allowable_pct_end_torsion · MTS(d)` (end-hook τ_B, 40% — Shigley
-   Table 10-7); `allow_bending = allowable_pct_bending · MTS(d)` (75%). (Returns `None`
+   `allow_end_torsion = allowable_pct_end_torsion · MTS(d)` (end-hook τ_B, per-material —
+   Shigley Table 10-7: 40% carbon/low-alloy steel, 30% stainless/nonferrous);
+   `allow_bending = allowable_pct_bending · MTS(d)` (75%). (Returns `None`
    if `MTS(d)` is unavailable — wire out of manufacturable range.)
 2. Bracket: `dm_lo = c_min·d`, `dm_hi = c_max·d`.
 3. For each of the three stresses `s(D)` — body shear (`τ`, allow_torsion), hook bending

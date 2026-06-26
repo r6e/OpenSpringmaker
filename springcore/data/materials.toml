@@ -7,8 +7,9 @@
 # / _set are single scalars. Real SMI design stresses are diameter- and set-dependent
 # curves. These scalars gate the status warnings and the Min Weight feasibility boundary;
 # diameter-dependent design-stress curves are a later sub-project.
-# allowable_pct_end_torsion is the end-hook torsion limit (τ_B), 40% of MTS per Shigley
-# Table 10-7 / Example 10-6 — distinct from the 45% body-shear allowable_pct_torsion.
+# allowable_pct_end_torsion is the end-hook torsion limit (τ_B) per Shigley Table 10-7:
+# 40% of MTS for carbon & low-alloy steels, 30% for austenitic stainless and nonferrous
+# alloys — distinct from the body-shear allowable_pct_torsion.
 
 [[material]]
 name = "Music Wire"
@@ -65,7 +66,7 @@ youngs_modulus_gpa = 193.0
 shear_modulus_gpa = 69.0
 density_kg_per_m3 = 7920.0
 allowable_pct_torsion = 0.35
-allowable_pct_end_torsion = 0.40
+allowable_pct_end_torsion = 0.30
 allowable_pct_bending = 0.55
 allowable_pct_set = 0.35
 
@@ -142,7 +143,7 @@ youngs_modulus_gpa = 103.4
 shear_modulus_gpa = 41.4
 density_kg_per_m3 = 8857.6
 allowable_pct_torsion = 0.40
-allowable_pct_end_torsion = 0.40
+allowable_pct_end_torsion = 0.30
 allowable_pct_bending = 0.40
 allowable_pct_set = 0.40
 max_service_temp_c = 100.0
