@@ -240,9 +240,28 @@ pub fn solve_min_weight(
             "max force must be a positive finite number (N)".into(),
         ));
     }
+    // F_i never leaks into the optimization (it is a reported passthrough), but the
+    // documented contract is `>= 0, finite`; without this guard a bad F_i fails every
+    // candidate in solve_forward and the caller sees a misleading Infeasible.
+    let initial_tension = req.initial_tension.newtons();
+    if !(initial_tension.is_finite() && initial_tension >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "initial tension must be finite and non-negative".into(),
+        ));
+    }
     if req.candidate_diameters.is_empty() {
         return Err(SpringError::InconsistentInputs(
             "candidate_diameters must contain at least one diameter".into(),
+        ));
+    }
+    // Reject non-finite/zero/negative diameters explicitly rather than silently
+    // skipping them downstream, so a malformed candidate list is InconsistentInputs.
+    if req.candidate_diameters.iter().any(|d| {
+        let m = d.meters();
+        !(m.is_finite() && m > 0.0)
+    }) {
+        return Err(SpringError::InconsistentInputs(
+            "candidate diameters must be finite and positive".into(),
         ));
     }
     let (c_min, c_max) = req.index_bounds;
@@ -543,6 +562,61 @@ mod tests {
         let m = crate::test_support::music_wire();
         let mut req = base_request(vec![2.0]);
         req.max_outer_dia = Some(Length::from_millimeters(0.0));
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn non_finite_initial_tension_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.initial_tension = Force::from_newtons(f64::NAN);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn negative_initial_tension_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.initial_tension = Force::from_newtons(-1.0);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    /// F_i = 0 is valid (no preload); pins the `>= 0` boundary so a `>` mutant dies.
+    #[test]
+    fn zero_initial_tension_is_accepted() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![1.5, 2.0, 2.5, 3.0]);
+        req.initial_tension = Force::from_newtons(0.0);
+        assert!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok(),
+            "F_i = 0 (no preload) must be accepted"
+        );
+    }
+
+    #[test]
+    fn non_finite_candidate_diameter_rejected() {
+        let m = crate::test_support::music_wire();
+        // A NaN mixed in with a valid diameter must reject the whole request.
+        let req = base_request(vec![2.0, f64::NAN]);
+        assert!(matches!(
+            solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
+            Err(SpringError::InconsistentInputs(_))
+        ));
+    }
+
+    #[test]
+    fn non_positive_candidate_diameter_rejected() {
+        let m = crate::test_support::music_wire();
+        let req = base_request(vec![0.0]);
         assert!(matches!(
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
             Err(SpringError::InconsistentInputs(_))
