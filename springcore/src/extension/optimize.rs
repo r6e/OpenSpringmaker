@@ -265,7 +265,7 @@ pub fn solve_min_weight(
         }
         let hooks = req.hooks.resolve(mean);
         let free_length = free_length_from_geometry(d, active, hooks);
-        let design = solve_forward(
+        let Ok(design) = solve_forward(
             material,
             d,
             mean,
@@ -275,7 +275,11 @@ pub fn solve_min_weight(
             hooks,
             &[req.max_force],
             correction,
-        )?;
+        ) else {
+            continue; // candidate produces an invalid forward design (e.g. C2 ≤ 1 for
+                      // fixed hooks, or free_length ≤ 0); skip it like every other guard
+                      // rather than aborting the whole solve and discarding lighter finds
+        };
         let mass = wire_mass(material, d, mean, active, hooks);
         if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true) {
             best = Some(ExtMinWeightSolution {
@@ -523,6 +527,23 @@ mod tests {
         assert!(lp.pct_body_allow <= 1.0 + 1e-6);
         assert!(lp.pct_hook_bending_allow <= 1.0 + 1e-6);
         assert!(lp.pct_hook_torsion_allow <= 1.0 + 1e-6);
+    }
+
+    /// Group 2: a candidate whose forward design is invalid (fixed hooks giving
+    /// C2 = 2·r2/d ≤ 1) must be skipped, not abort the whole solve. d=6 mm yields
+    /// C2 = 2·2/6 = 0.667 ≤ 1 (solve_forward Errs) but best_mean_dia passes it
+    /// (negative K_B ⇒ torsion never binds); d=2 mm is valid and lighter, and must win.
+    #[test]
+    fn fixed_hooks_bad_candidate_is_skipped_not_aborted() {
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0, 6.0]); // 2 mm valid+lighter; 6 mm ⇒ C2 ≤ 1
+        req.hooks = HookSpec::Fixed {
+            r1: Length::from_millimeters(30.0), // large ⇒ C1 ≫ 1, valid bending factor
+            r2: Length::from_millimeters(2.0),
+        };
+        let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser)
+            .expect("the valid 2 mm candidate must be returned, not aborted by the 6 mm one");
+        assert_relative_eq!(sol.design.wire_dia.millimeters(), 2.0, max_relative = 1e-9);
     }
 
     // ── exact arithmetic pins (mass & free_length) ────────────────────────────
