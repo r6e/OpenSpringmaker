@@ -185,6 +185,11 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
         section_divider(),
         section_heading("Allowable stress fractions"),
         labeled_mat_input("Torsion", &f.allowable_torsion, MatField::AllowTorsion),
+        labeled_mat_input(
+            "End Torsion",
+            &f.allowable_end_torsion,
+            MatField::AllowEndTorsion,
+        ),
         labeled_mat_input("Bending", &f.allowable_bending, MatField::AllowBending),
         labeled_mat_input("Set", &f.allowable_set, MatField::AllowSet),
         section_divider(),

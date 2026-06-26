@@ -127,6 +127,9 @@ fn best_mean_dia(
     let (c_min, c_max) = bounds;
     let mts = material.min_tensile_strength(d).ok()?.pascals();
     let allow_torsion = material.allowable_pct_torsion * mts;
+    // End hooks in torsion (τ_B) use the lower 40%-of-MTS allowable (Shigley Table 10-7),
+    // distinct from the 45% body-shear allowable above.
+    let allow_end_torsion = material.allowable_pct_end_torsion * mts;
     let allow_bending = material.allowable_pct_bending * mts;
     let dm_lo = c_min * d.meters();
     let dm_hi = c_max * d.meters();
@@ -174,7 +177,7 @@ fn best_mean_dia(
     let candidates = [
         bound_for(&body, allow_torsion, ExtBindingConstraint::BodyShear)?,
         bound_for(&bending, allow_bending, ExtBindingConstraint::HookBending)?,
-        bound_for(&torsion, allow_torsion, ExtBindingConstraint::HookTorsion)?,
+        bound_for(&torsion, allow_end_torsion, ExtBindingConstraint::HookTorsion)?,
     ];
     // The smallest upper bound binds. `total_cmp` is panic-free (the values are
     // finite here — dm_lo/dm_hi are finite and any root lies between them — so it

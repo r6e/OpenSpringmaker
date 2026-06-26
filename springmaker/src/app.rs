@@ -126,6 +126,7 @@ pub enum MatField {
     Shear,
     Density,
     AllowTorsion,
+    AllowEndTorsion,
     AllowBending,
     AllowSet,
     EnduranceSsa,
@@ -571,6 +572,7 @@ impl App {
             MatField::Shear => f.shear_modulus = value,
             MatField::Density => f.density = value,
             MatField::AllowTorsion => f.allowable_torsion = value,
+            MatField::AllowEndTorsion => f.allowable_end_torsion = value,
             MatField::AllowBending => f.allowable_bending = value,
             MatField::AllowSet => f.allowable_set = value,
             MatField::EnduranceSsa => f.endurance_ssa = value,
@@ -885,6 +887,10 @@ mod tests {
         app.update(Message::MatField(MatField::Shear, "79".into()));
         app.update(Message::MatField(MatField::Density, "7850".into()));
         app.update(Message::MatField(MatField::AllowTorsion, "0.45".into()));
+        app.update(Message::MatField(
+            MatField::AllowEndTorsion,
+            "0.40".into(),
+        ));
         app.update(Message::MatField(MatField::AllowBending, "0.75".into()));
         app.update(Message::MatField(MatField::AllowSet, "0.6".into()));
     }

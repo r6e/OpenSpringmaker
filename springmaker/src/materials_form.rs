@@ -39,8 +39,10 @@ pub struct MaterialsFormState {
     pub shear_modulus: String,
     /// Density, in kg/m³.
     pub density: String,
-    /// Allowable torsional stress as a fraction of MTS (e.g. `"0.45"`).
+    /// Allowable torsional stress as a fraction of MTS (e.g. `"0.45"`) — body shear.
     pub allowable_torsion: String,
+    /// Allowable end-hook torsional stress as a fraction of MTS (e.g. `"0.40"`).
+    pub allowable_end_torsion: String,
     /// Allowable bending stress as a fraction of MTS (e.g. `"0.75"`).
     pub allowable_bending: String,
     /// Allowable stress before permanent set (e.g. `"0.60"`).
@@ -74,6 +76,7 @@ impl Default for MaterialsFormState {
             shear_modulus: String::new(),
             density: String::new(),
             allowable_torsion: String::new(),
+            allowable_end_torsion: String::new(),
             allowable_bending: String::new(),
             allowable_set: String::new(),
             has_endurance: false,
@@ -163,6 +166,7 @@ pub fn build_draft(form: &MaterialsFormState) -> Result<MaterialDraft> {
         shear_modulus_gpa: num("Shear modulus (GPa)", &form.shear_modulus)?,
         density_kg_per_m3: num("Density (kg/m³)", &form.density)?,
         allowable_pct_torsion: num("Allowable torsion", &form.allowable_torsion)?,
+        allowable_pct_end_torsion: num("Allowable end torsion", &form.allowable_end_torsion)?,
         allowable_pct_bending: num("Allowable bending", &form.allowable_bending)?,
         allowable_pct_set: num("Allowable set", &form.allowable_set)?,
         endurance,
@@ -195,6 +199,7 @@ pub fn populate_from_material(form: &mut MaterialsFormState, m: &Material) {
     form.shear_modulus = format!("{}", d.shear_modulus_gpa);
     form.density = format!("{}", d.density_kg_per_m3);
     form.allowable_torsion = format!("{}", d.allowable_pct_torsion);
+    form.allowable_end_torsion = format!("{}", d.allowable_pct_end_torsion);
     form.allowable_bending = format!("{}", d.allowable_pct_bending);
     form.allowable_set = format!("{}", d.allowable_pct_set);
 
@@ -258,6 +263,7 @@ mod tests {
             shear_modulus: "79".to_string(),
             density: "7850".to_string(),
             allowable_torsion: "0.45".to_string(),
+            allowable_end_torsion: "0.40".to_string(),
             allowable_bending: "0.75".to_string(),
             allowable_set: "0.6".to_string(),
             ..MaterialsFormState::default()

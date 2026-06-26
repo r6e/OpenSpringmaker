@@ -3,10 +3,12 @@
 # Sources: Shigley's Mechanical Engineering Design (10th ed.) Tables 10-4, 10-5,
 # §10-9 (Zimmerli endurance); SMI Handbook of Spring Design (design stresses).
 #
-# KNOWN SIMPLIFICATION (see ADR 0006): allowable_pct_torsion / _bending / _set are
-# single scalars. Real SMI design stresses are diameter- and set-dependent curves.
-# These scalars gate the status warnings and the Min Weight feasibility boundary;
+# KNOWN SIMPLIFICATION (see ADR 0006): allowable_pct_torsion / _end_torsion / _bending
+# / _set are single scalars. Real SMI design stresses are diameter- and set-dependent
+# curves. These scalars gate the status warnings and the Min Weight feasibility boundary;
 # diameter-dependent design-stress curves are a later sub-project.
+# allowable_pct_end_torsion is the end-hook torsion limit (τ_B), 40% of MTS per Shigley
+# Table 10-7 / Example 10-6 — distinct from the 45% body-shear allowable_pct_torsion.
 
 [[material]]
 name = "Music Wire"
@@ -21,6 +23,7 @@ youngs_modulus_gpa = 203.4
 shear_modulus_gpa = 80.0
 density_kg_per_m3 = 7850.0
 allowable_pct_torsion = 0.45
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.75
 allowable_pct_set = 0.60
 [material.endurance]
@@ -41,6 +44,7 @@ youngs_modulus_gpa = 196.5
 shear_modulus_gpa = 78.6
 density_kg_per_m3 = 7850.0
 allowable_pct_torsion = 0.45
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.75
 allowable_pct_set = 0.49
 [material.endurance]
@@ -61,6 +65,7 @@ youngs_modulus_gpa = 193.0
 shear_modulus_gpa = 69.0
 density_kg_per_m3 = 7920.0
 allowable_pct_torsion = 0.35
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.55
 allowable_pct_set = 0.35
 
@@ -77,6 +82,7 @@ youngs_modulus_gpa = 203.4
 shear_modulus_gpa = 77.2
 density_kg_per_m3 = 7850.0
 allowable_pct_torsion = 0.45
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.75
 allowable_pct_set = 0.49
 
@@ -100,6 +106,7 @@ youngs_modulus_gpa = 197.2
 shear_modulus_gpa = 79.3
 density_kg_per_m3 = 7861.1
 allowable_pct_torsion = 0.40
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.40
 allowable_pct_set = 0.40
 max_service_temp_c = 121.1
@@ -117,6 +124,7 @@ youngs_modulus_gpa = 196.5
 shear_modulus_gpa = 77.2
 density_kg_per_m3 = 7861.1
 allowable_pct_torsion = 0.45
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.45
 allowable_pct_set = 0.45
 max_service_temp_c = 218.3
@@ -134,6 +142,7 @@ youngs_modulus_gpa = 103.4
 shear_modulus_gpa = 41.4
 density_kg_per_m3 = 8857.6
 allowable_pct_torsion = 0.40
+allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.40
 allowable_pct_set = 0.40
 max_service_temp_c = 100.0

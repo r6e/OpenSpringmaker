@@ -157,8 +157,12 @@ pub struct MaterialDraft {
     pub shear_modulus_gpa: f64,
     /// Density, in kg/m³.
     pub density_kg_per_m3: f64,
-    /// Allowable torsional stress as a fraction of MTS.
+    /// Allowable torsional stress as a fraction of MTS (body shear).
     pub allowable_pct_torsion: f64,
+    /// Allowable torsional stress for END hooks (τ_B) as a fraction of MTS.
+    /// Shigley Table 10-7 / Example 10-6: 40% of MTS for end hooks in torsion,
+    /// lower than the 45% body-shear allowable.
+    pub allowable_pct_end_torsion: f64,
     /// Allowable bending stress as a fraction of MTS.
     pub allowable_pct_bending: f64,
     /// Allowable stress before permanent set, as a fraction of MTS.
@@ -199,6 +203,7 @@ impl MaterialDraft {
             shear_modulus_gpa: self.shear_modulus_gpa,
             density_kg_per_m3: self.density_kg_per_m3,
             allowable_pct_torsion: self.allowable_pct_torsion,
+            allowable_pct_end_torsion: self.allowable_pct_end_torsion,
             allowable_pct_bending: self.allowable_pct_bending,
             allowable_pct_set: self.allowable_pct_set,
             endurance: self.endurance.as_ref().map(|e| RawEndurance {
@@ -222,8 +227,12 @@ pub struct Material {
     pub shear_modulus: Stress,
     pub density: MassDensity,
     /// Allowable torsional stress as a fraction of MTS; applies to torsionally
-    /// loaded spring types (e.g. helical compression/extension).
+    /// loaded spring types (e.g. helical compression/extension) — body shear.
     pub allowable_pct_torsion: f64,
+    /// Allowable torsional stress for END hooks (τ_B) as a fraction of MTS.
+    /// Per Shigley Table 10-7 / Example 10-6 the end-hook torsion limit is 40% of
+    /// MTS, distinct from (and lower than) the 45% body-shear allowable above.
+    pub allowable_pct_end_torsion: f64,
     /// Allowable bending stress as a fraction of MTS; applies to bending-loaded
     /// spring types (e.g. torsion, flat). Retained here for future sub-projects.
     pub allowable_pct_bending: f64,
@@ -266,6 +275,7 @@ impl Material {
             shear_modulus_gpa: raw.shear_modulus_gpa,
             density_kg_per_m3: raw.density_kg_per_m3,
             allowable_pct_torsion: raw.allowable_pct_torsion,
+            allowable_pct_end_torsion: raw.allowable_pct_end_torsion,
             allowable_pct_bending: raw.allowable_pct_bending,
             allowable_pct_set: raw.allowable_pct_set,
             endurance: raw.endurance.map(|e| EnduranceDraft {
@@ -340,12 +350,23 @@ pub(crate) struct RawMaterial {
     pub(crate) shear_modulus_gpa: f64,
     pub(crate) density_kg_per_m3: f64,
     pub(crate) allowable_pct_torsion: f64,
+    /// End-hook torsion allowable (Shigley Table 10-7). Optional in serialized form:
+    /// older user-overlay TOML written before this field existed loads as 0.40, so the
+    /// addition is backward-compatible and needs no schema-version bump.
+    #[serde(default = "default_allowable_pct_end_torsion")]
+    pub(crate) allowable_pct_end_torsion: f64,
     pub(crate) allowable_pct_bending: f64,
     pub(crate) allowable_pct_set: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) endurance: Option<RawEndurance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_service_temp_c: Option<f64>,
+}
+
+/// Default end-hook torsion allowable (40% of MTS, Shigley Table 10-7) used when an
+/// older overlay TOML omits `allowable_pct_end_torsion`.
+fn default_allowable_pct_end_torsion() -> f64 {
+    0.40
 }
 
 #[derive(Deserialize, Serialize)]
@@ -440,6 +461,7 @@ impl Material {
             r.valid_dia_min_mm,
             r.valid_dia_max_mm,
             r.allowable_pct_torsion,
+            r.allowable_pct_end_torsion,
             r.allowable_pct_bending,
             r.allowable_pct_set,
         ];
@@ -491,6 +513,7 @@ impl Material {
         // is already established above, so these comparisons cannot see NaN.)
         for (label, pct) in [
             ("allowable_pct_torsion", r.allowable_pct_torsion),
+            ("allowable_pct_end_torsion", r.allowable_pct_end_torsion),
             ("allowable_pct_bending", r.allowable_pct_bending),
             ("allowable_pct_set", r.allowable_pct_set),
         ] {
@@ -515,6 +538,7 @@ impl Material {
             shear_modulus: Stress::from_pascals(r.shear_modulus_gpa * 1.0e9),
             density: MassDensity::from_kg_per_m3(r.density_kg_per_m3),
             allowable_pct_torsion: r.allowable_pct_torsion,
+            allowable_pct_end_torsion: r.allowable_pct_end_torsion,
             allowable_pct_bending: r.allowable_pct_bending,
             allowable_pct_set: r.allowable_pct_set,
             endurance: r.endurance.map(|e| Endurance {
@@ -542,6 +566,7 @@ impl Material {
             shear_modulus_gpa: self.shear_modulus.pascals() / 1.0e9,
             density_kg_per_m3: self.density.kg_per_m3(),
             allowable_pct_torsion: self.allowable_pct_torsion,
+            allowable_pct_end_torsion: self.allowable_pct_end_torsion,
             allowable_pct_bending: self.allowable_pct_bending,
             allowable_pct_set: self.allowable_pct_set,
             endurance: self.endurance.map(|e| RawEndurance {
@@ -963,6 +988,7 @@ allowable_pct_set = 0.60
             shear_modulus_gpa: 80.0,
             density_kg_per_m3: 7850.0,
             allowable_pct_torsion: 0.45,
+            allowable_pct_end_torsion: 0.40,
             allowable_pct_bending: 0.75,
             allowable_pct_set: 0.60,
             endurance: Some(RawEndurance {
@@ -1178,6 +1204,53 @@ allowable_pct_set = 0.60
     }
 
     #[test]
+    fn non_finite_allowable_pct_end_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_end_torsion = f64::NAN;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn zero_allowable_pct_end_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_end_torsion = 0.0;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn negative_allowable_pct_end_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_end_torsion = -0.1;
+        assert_data_err(r);
+    }
+
+    #[test]
+    fn over_one_allowable_pct_end_torsion_is_rejected() {
+        let mut r = good_raw();
+        r.allowable_pct_end_torsion = 1.5;
+        assert_data_err(r);
+    }
+
+    // Boundary: exactly 1.0 is ACCEPTED, pinning `>` vs `>=` on the end-torsion branch.
+    #[test]
+    fn allowable_pct_end_torsion_of_one_is_accepted() {
+        let mut r = good_raw();
+        r.allowable_pct_end_torsion = 1.0;
+        assert!(Material::try_from_raw(r).is_ok());
+    }
+
+    // The field is optional in TOML: an overlay written before it existed must load
+    // with the 0.40 default (Shigley Table 10-7), keeping the addition backward-compatible
+    // with no schema-version bump. Pins the serde `default = "..."` attribute.
+    #[test]
+    fn default_allowable_pct_end_torsion_is_applied_when_absent() {
+        // SAMPLE has no allowable_pct_end_torsion line.
+        let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
+        let m = set.get("Test Music Wire").unwrap();
+        assert_relative_eq!(m.allowable_pct_end_torsion, 0.40, max_relative = 1e-12);
+    }
+
+    #[test]
     fn over_one_allowable_pct_bending_is_rejected() {
         let mut r = good_raw();
         r.allowable_pct_bending = 1.5;
@@ -1207,6 +1280,7 @@ allowable_pct_set = 0.60
             shear_modulus_gpa: 79.0,
             density_kg_per_m3: 7850.0,
             allowable_pct_torsion: 0.45,
+            allowable_pct_end_torsion: 0.40,
             allowable_pct_bending: 0.75,
             allowable_pct_set: 0.60,
             endurance: None,
