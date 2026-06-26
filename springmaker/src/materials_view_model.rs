@@ -109,9 +109,13 @@ mod tests {
     use crate::app::Message;
     use springcore::{MaterialSet, MaterialStore, MtsForm};
 
-    /// Hermetic App: curated-only store, no on-disk overlay (no filesystem IO).
+    /// Hermetic App: curated-only store, no on-disk overlay, fixed Bergsträsser correction.
     fn test_app() -> App {
-        App::from_store(MaterialStore::new(MaterialSet::load_default()), Vec::new())
+        App::from_store(
+            MaterialStore::new(MaterialSet::load_default()),
+            Vec::new(),
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
     }
 
     fn row<'a>(rows: &'a [RowView], name: &str) -> &'a RowView {

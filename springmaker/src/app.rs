@@ -222,12 +222,16 @@ pub struct App {
 }
 
 impl App {
-    /// Build an `App` around a given store. Reads `AppSettings` from the
-    /// platform config dir to restore the curvature-correction preference;
-    /// a missing or malformed file silently yields the default (Bergsträsser).
-    /// Tests pass a curated-only store for deterministic material behaviour,
-    /// though the settings read still touches the filesystem.
-    pub(crate) fn from_store(materials: MaterialStore, load_warnings: Vec<LoadWarning>) -> Self {
+    /// Build an `App` around a given store.
+    ///
+    /// `correction` is injected by the caller so that `from_store` performs no
+    /// filesystem I/O; the running app passes the value loaded from
+    /// [`crate::settings::AppSettings`], while tests pass a known hermetic value.
+    pub(crate) fn from_store(
+        materials: MaterialStore,
+        load_warnings: Vec<LoadWarning>,
+        correction: CurvatureCorrection,
+    ) -> Self {
         Self {
             form: FormState::default(),
             materials,
@@ -240,7 +244,7 @@ impl App {
             editing: None,
             mat_error: None,
             mat_status: None,
-            correction: crate::settings::AppSettings::load().curvature_correction,
+            correction,
         }
     }
 }
@@ -248,7 +252,7 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         let (materials, load_warnings) = MaterialStore::load();
-        Self::from_store(materials, load_warnings)
+        Self::from_store(materials, load_warnings, CurvatureCorrection::default())
     }
 }
 
@@ -634,10 +638,12 @@ mod tests {
     /// materials-CRUD tests are hermetic regardless of the developer's saved
     /// materials. `App::default()` loads the real overlay from the OS config dir.
     fn test_app() -> App {
-        // No filesystem IO: a curated-only store, no on-disk user overlay.
+        // No filesystem IO: a curated-only store, no on-disk user overlay, and a
+        // fixed hermetic correction value (Bergsträsser) rather than reading settings.
         App::from_store(
             MaterialStore::new(springcore::MaterialSet::load_default()),
             Vec::new(),
+            springcore::CurvatureCorrection::Bergstrasser,
         )
     }
 
@@ -646,6 +652,7 @@ mod tests {
         let mut app = App::from_store(
             MaterialStore::new(springcore::MaterialSet::load_default()),
             Vec::new(),
+            springcore::CurvatureCorrection::Bergstrasser,
         );
         // PowerUser design with spring index C = mean_dia / wire_dia = 20 / 2 = 10.
         app.form.scenario = crate::form::ScenarioKind::PowerUser;

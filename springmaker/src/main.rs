@@ -14,9 +14,16 @@ mod ui_tests;
 use app::App;
 use iced::window;
 use iced::Size;
+use springcore::MaterialStore;
+
+fn initial_app() -> App {
+    let settings = settings::AppSettings::load();
+    let (materials, load_warnings) = MaterialStore::load();
+    App::from_store(materials, load_warnings, settings.curvature_correction)
+}
 
 fn main() -> iced::Result {
-    iced::application(App::default, App::update, App::view)
+    iced::application(initial_app, App::update, App::view)
         .title("OpenSpringmaker")
         .theme(App::theme)
         .window(window::Settings {

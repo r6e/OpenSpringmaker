@@ -532,7 +532,7 @@ mod tests {
 
     /// Hermetic App: curated-only store, no on-disk overlay, no IO.
     fn app_with(form: FormState) -> App {
-        let mut app = App::from_store(store(), Vec::new());
+        let mut app = App::from_store(store(), Vec::new(), springcore::CurvatureCorrection::Bergstrasser);
         app.form = form;
         app.recompute();
         app
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn results_view_is_empty_with_no_outcome_and_no_error() {
-        let app = App::from_store(store(), Vec::new());
+        let app = App::from_store(store(), Vec::new(), springcore::CurvatureCorrection::Bergstrasser);
         assert_eq!(results_view(&app), ResultsView::Empty);
     }
 
@@ -778,13 +778,13 @@ mod tests {
 
     #[test]
     fn status_suppressed_when_clean() {
-        let app = App::from_store(store(), Vec::new());
+        let app = App::from_store(store(), Vec::new(), springcore::CurvatureCorrection::Bergstrasser);
         assert!(status_view(&app).is_empty());
     }
 
     #[test]
     fn status_surfaces_action_error() {
-        let mut app = App::from_store(store(), Vec::new());
+        let mut app = App::from_store(store(), Vec::new(), springcore::CurvatureCorrection::Bergstrasser);
         app.action_error = Some("could not save design".into());
         let lines = status_view(&app);
         assert_eq!(lines[0].kind, StatusKind::ActionError);
@@ -798,6 +798,7 @@ mod tests {
             vec![LoadWarning {
                 message: "overlay warning".into(),
             }],
+            springcore::CurvatureCorrection::Bergstrasser,
         );
         app.action_error = Some("save failed".into());
         let lines = status_view(&app);
@@ -812,6 +813,7 @@ mod tests {
             vec![LoadWarning {
                 message: "ignored a malformed overlay entry".into(),
             }],
+            springcore::CurvatureCorrection::Bergstrasser,
         );
         let lines = status_view(&app);
         assert_eq!(lines.len(), 1);

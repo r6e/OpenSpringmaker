@@ -24,9 +24,13 @@ const VIEWPORT: iced::Size = iced::Size {
     height: 2400.0,
 };
 
-/// Hermetic app: curated-only store, no on-disk overlay.
+/// Hermetic app: curated-only store, no on-disk overlay, fixed Bergsträsser correction.
 fn test_app() -> App {
-    App::from_store(MaterialStore::new(MaterialSet::load_default()), Vec::new())
+    App::from_store(
+        MaterialStore::new(MaterialSet::load_default()),
+        Vec::new(),
+        springcore::CurvatureCorrection::Bergstrasser,
+    )
 }
 
 fn ui(app: &App) -> Simulator<'_, Message> {
