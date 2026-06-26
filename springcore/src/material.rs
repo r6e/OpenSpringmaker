@@ -352,7 +352,8 @@ pub(crate) struct RawMaterial {
     pub(crate) density_kg_per_m3: f64,
     pub(crate) allowable_pct_torsion: f64,
     /// End-hook torsion allowable (Shigley Table 10-7). Optional in serialized form:
-    /// older user-overlay TOML written before this field existed loads as 0.40, so the
+    /// older user-overlay TOML written before this field existed loads at the
+    /// conservative 0.30 default (see [`default_allowable_pct_end_torsion`]), so the
     /// addition is backward-compatible and needs no schema-version bump.
     #[serde(default = "default_allowable_pct_end_torsion")]
     pub(crate) allowable_pct_end_torsion: f64,
@@ -364,10 +365,16 @@ pub(crate) struct RawMaterial {
     pub(crate) max_service_temp_c: Option<f64>,
 }
 
-/// Default end-hook torsion allowable (40% of MTS, Shigley Table 10-7) used when an
-/// older overlay TOML omits `allowable_pct_end_torsion`.
+/// Default end-hook torsion allowable used when an overlay TOML omits
+/// `allowable_pct_end_torsion`. A missing field has unknown material category (e.g. a
+/// legacy overlay written before this field existed), so it defaults to the
+/// *conservative* austenitic-stainless / nonferrous value (30% of MTS, Shigley
+/// Table 10-7) rather than the higher carbon-steel value — secure by default. The
+/// bundled curated materials set their category-correct value explicitly (40% for the
+/// carbon & low-alloy steels, 30% for stainless/nonferrous), so this default only ever
+/// applies to user overlays missing the field.
 fn default_allowable_pct_end_torsion() -> f64 {
-    0.40
+    0.30
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1270,14 +1277,16 @@ allowable_pct_set = 0.60
     }
 
     // The field is optional in TOML: an overlay written before it existed must load
-    // with the 0.40 default (Shigley Table 10-7), keeping the addition backward-compatible
-    // with no schema-version bump. Pins the serde `default = "..."` attribute.
+    // with the conservative 0.30 default (austenitic-stainless / nonferrous value,
+    // Shigley Table 10-7) — a missing field has unknown category, so secure by default
+    // — keeping the addition backward-compatible with no schema-version bump. Pins both
+    // the serde `default = "..."` attribute and the conservative default value.
     #[test]
     fn default_allowable_pct_end_torsion_is_applied_when_absent() {
         // SAMPLE has no allowable_pct_end_torsion line.
         let set = MaterialSet::from_toml_str(SAMPLE).unwrap();
         let m = set.get("Test Music Wire").unwrap();
-        assert_relative_eq!(m.allowable_pct_end_torsion, 0.40, max_relative = 1e-12);
+        assert_relative_eq!(m.allowable_pct_end_torsion, 0.30, max_relative = 1e-12);
     }
 
     #[test]
