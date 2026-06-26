@@ -65,6 +65,9 @@ fn best_mean_dia(
     // τ(C) = Kw(C)·C with Kw = (4C−1)/(4C−4) + 0.615/C is NOT globally monotonic.
     // Solving dτ/dC = 0 gives 4C²−8C+1 = 0 → C* = 1 + √3/2 ≈ 1.866; τ is
     // U-shaped with a minimum at C* and is monotonic increasing only for C ≥ 1.866.
+    // Bergsträsser's K_B·C turns at C ≈ 1.718 (below the enforced index floor),
+    // so the monotonicity assumption holds for both factors — the floor is
+    // correction-agnostic and conservative.
     // The single-endpoint feasibility test below (`stress_at(dm_lo) > allowable → None`)
     // is therefore only valid when c_min ≥ 1.866, which Fix 2 (min_weight_request_from_spec)
     // enforces at the entry point.

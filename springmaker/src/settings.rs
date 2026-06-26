@@ -43,14 +43,6 @@ impl AppSettings {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, toml)
     }
-
-    /// Persist to the platform settings path; no-op if unavailable.
-    pub fn save(&self) -> std::io::Result<()> {
-        match settings_path() {
-            Some(p) => self.save_to(&p),
-            None => Ok(()),
-        }
-    }
 }
 
 #[cfg(test)]

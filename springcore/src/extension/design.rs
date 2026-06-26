@@ -7,7 +7,7 @@ use crate::extension::mechanics::{deflection, hook_bending_stress, hook_torsion_
 use crate::material::Material;
 use crate::mechanics::{corrected_shear_stress, spring_index, spring_rate};
 use crate::units::{Force, Length, SpringRate, Stress};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// State of an extension spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -56,7 +56,7 @@ fn ext_load_point(
     mts: Stress,
     allowable_pct_torsion: f64,
     allowable_pct_bending: f64,
-    correction: crate::CurvatureCorrection,
+    correction: CurvatureCorrection,
 ) -> ExtLoadPoint {
     // Extension deflection y = max(0, (F − F_i) / k) (Shigley extension springs).
     let y = deflection(force, initial_tension, rate);
@@ -95,7 +95,7 @@ pub fn solve_forward(
     initial_tension: Force,
     hooks: HookEnds,
     loads: &[Force],
-    correction: crate::CurvatureCorrection,
+    correction: CurvatureCorrection,
 ) -> Result<ExtensionDesign> {
     // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.

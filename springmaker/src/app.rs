@@ -217,6 +217,12 @@ pub struct App {
     /// Curvature-correction factor applied to all solve paths; persisted via
     /// [`crate::settings::AppSettings`].
     pub correction: CurvatureCorrection,
+    /// Path to persist settings on [`Message::SetCorrection`]. `None` means do
+    /// not write to the filesystem (all test-constructed apps use `None`).
+    pub settings_path: Option<std::path::PathBuf>,
+    /// Last settings-save error, if any. Separate from `action_error` because
+    /// `recompute()` clears `action_error` but must not clobber this status.
+    pub settings_error: Option<String>,
 }
 
 impl App {
@@ -243,6 +249,8 @@ impl App {
             mat_error: None,
             mat_status: None,
             correction,
+            settings_path: None,
+            settings_error: None,
         }
     }
 }
@@ -326,11 +334,19 @@ impl App {
             // ── Settings ────────────────────────────────────────────────────
             Message::SetCorrection(c) => {
                 self.correction = c;
-                // Best-effort persist — a save failure must not crash the UI.
-                let _ = crate::settings::AppSettings {
-                    curvature_correction: c,
+                // Persist only when a real settings path is configured (None in all
+                // test-constructed apps, so tests never touch the real filesystem).
+                let save_result = self.settings_path.as_ref().map(|p| {
+                    crate::settings::AppSettings {
+                        curvature_correction: c,
+                    }
+                    .save_to(p)
+                });
+                match save_result {
+                    Some(Err(e)) => self.settings_error = Some(e.to_string()),
+                    // Ok(()) or no path configured: clear any stale error.
+                    _ => self.settings_error = None,
                 }
-                .save();
                 true
             }
 
@@ -642,6 +658,61 @@ mod tests {
             Vec::new(),
             springcore::CurvatureCorrection::Bergstrasser,
         )
+    }
+
+    /// An unwritable path (embedded NUL) that causes save to fail deterministically
+    /// without touching the real filesystem.
+    fn unwritable_settings_path() -> std::path::PathBuf {
+        std::path::PathBuf::from("invalid\0settings.toml")
+    }
+
+    #[test]
+    fn set_correction_without_settings_path_does_not_write_fs() {
+        // settings_path is None in all test-constructed apps → no FS access.
+        let mut app = test_app();
+        assert!(
+            app.settings_path.is_none(),
+            "test apps must be non-persisting"
+        );
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        // In-memory preference updated.
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+        // No save attempted → no error surfaced.
+        assert!(app.settings_error.is_none());
+    }
+
+    #[test]
+    fn set_correction_surfaces_save_error_and_still_updates_correction() {
+        let mut app = test_app();
+        // Point to an unwritable path so the save attempt fails deterministically.
+        app.settings_path = Some(unwritable_settings_path());
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Wahl,
+        ));
+        // In-memory preference still updated even on write failure.
+        assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+        // The error is surfaced via the dedicated channel (not action_error,
+        // which recompute() clears).
+        assert!(
+            app.settings_error.is_some(),
+            "settings-save failure must be surfaced"
+        );
+    }
+
+    #[test]
+    fn set_correction_clears_stale_save_error_on_success() {
+        let mut app = test_app();
+        // Prime a stale error, then fire without a settings path (no save → clear).
+        app.settings_error = Some("stale error".into());
+        app.update(Message::SetCorrection(
+            springcore::CurvatureCorrection::Bergstrasser,
+        ));
+        assert!(
+            app.settings_error.is_none(),
+            "a no-save SetCorrection must clear a stale settings error"
+        );
     }
 
     #[test]

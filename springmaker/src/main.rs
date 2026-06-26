@@ -21,7 +21,11 @@ use springcore::MaterialStore;
 fn initial_app() -> App {
     let settings = settings::AppSettings::load();
     let (materials, load_warnings) = MaterialStore::load();
-    App::from_store(materials, load_warnings, settings.curvature_correction)
+    let mut app = App::from_store(materials, load_warnings, settings.curvature_correction);
+    // Wire up the real settings path so preference changes are persisted.
+    // None if the platform config dir is unavailable (settings_path() returns None).
+    app.settings_path = settings::settings_path();
+    app
 }
 
 fn main() -> iced::Result {

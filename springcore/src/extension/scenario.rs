@@ -5,7 +5,7 @@ use crate::extension::design::{solve_forward, ExtensionDesign};
 use crate::extension::ends::HookEnds;
 use crate::material::Material;
 use crate::units::{Force, Length};
-use crate::Result;
+use crate::{CurvatureCorrection, Result};
 
 /// A solve scenario for extension springs: a particular fixed assignment of
 /// which quantities are inputs.
@@ -15,7 +15,7 @@ pub trait Scenario {
     fn solve(
         &self,
         material: &Material,
-        correction: crate::CurvatureCorrection,
+        correction: CurvatureCorrection,
     ) -> Result<ExtensionDesign>;
 }
 
@@ -37,7 +37,7 @@ impl Scenario for PowerUser {
     fn solve(
         &self,
         material: &Material,
-        correction: crate::CurvatureCorrection,
+        correction: CurvatureCorrection,
     ) -> Result<ExtensionDesign> {
         solve_forward(
             material,

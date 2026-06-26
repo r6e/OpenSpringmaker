@@ -8,7 +8,7 @@ use crate::mechanics::{
     EndFixity,
 };
 use crate::units::{Force, Frequency, Length, SpringRate, Stress};
-use crate::{Result, SpringError};
+use crate::{CurvatureCorrection, Result, SpringError};
 
 /// State of the spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -51,7 +51,7 @@ fn load_point(
     wire_dia: Length,
     index: f64,
     mts: Stress,
-    correction: crate::CurvatureCorrection,
+    correction: CurvatureCorrection,
 ) -> LoadPoint {
     // Deflection y = F/k (Shigley Eq. 10-9 rearranged).
     let y = force.newtons() / rate.newtons_per_meter();
@@ -77,7 +77,7 @@ pub fn solve_forward(
     active: f64,
     free_length: Length,
     loads: &[Force],
-    correction: crate::CurvatureCorrection,
+    correction: CurvatureCorrection,
 ) -> Result<SpringDesign> {
     // Wire diameter must be finite and positive; a zero/non-finite d gives a zero
     // or non-finite rate (k ∝ d⁴) that would silently flow into deflection/stresses.
