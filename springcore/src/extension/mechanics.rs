@@ -49,8 +49,6 @@ pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Len
 /// by its mean diameter `d_loop = 2·r1` (default hook `r1 = D/2` ⇒ `d_loop = D`),
 /// so `L₀ = 2·(d_loop − d) + (Na + 1)·d`. Body coils are taken equal to the
 /// active coils (close-wound body); `r2` governs torsion only and is not used.
-// No in-crate caller until extension/optimize.rs lands (later task); remove then.
-#[allow(dead_code)]
 pub fn free_length_from_geometry(wire_dia: Length, active: f64, hooks: HookEnds) -> Length {
     let d = wire_dia.meters();
     let d_loop = 2.0 * hooks.r1.meters();
