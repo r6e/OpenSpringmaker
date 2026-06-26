@@ -152,6 +152,48 @@ impl Scenario for RateBased {
     }
 }
 
+/// Outer diameter given; derive the mean diameter (D = OD − d), then solve.
+/// Mirrors the compression `Dimensional` (plus initial tension / hooks).
+#[derive(Debug, Clone)]
+pub struct Dimensional {
+    pub wire_dia: Length,
+    pub outer_dia: Length,
+    pub active: f64,
+    pub free_length: Length,
+    pub initial_tension: Force,
+    pub hooks: HookEnds,
+    pub loads: Vec<Force>,
+}
+
+impl Scenario for Dimensional {
+    fn solve(
+        &self,
+        material: &Material,
+        correction: CurvatureCorrection,
+    ) -> Result<ExtensionDesign> {
+        // Validate the outer diameter here so a non-finite/non-positive value gives
+        // a clear message rather than a derived "mean diameter" error.
+        let od = self.outer_dia.meters();
+        if !(od.is_finite() && od > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "outer diameter must be a positive finite number".into(),
+            ));
+        }
+        let mean = Length::from_meters(od - self.wire_dia.meters());
+        solve_forward(
+            material,
+            self.wire_dia,
+            mean,
+            self.active,
+            self.free_length,
+            self.initial_tension,
+            self.hooks,
+            &self.loads,
+            correction,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +412,85 @@ mod tests {
                     if m == "required rate must be a positive finite number"
             ),
             "expected RateBased guard message"
+        );
+    }
+
+    // --- Dimensional scenario tests ---
+
+    #[test]
+    fn dimensional_uses_outer_diameter() {
+        // OD=22mm, d=2mm → mean=20mm → C=10.
+        let s = Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(22.0),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        let d = s
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
+        assert_relative_eq!(d.index, 10.0, max_relative = 1e-9);
+        assert_relative_eq!(d.mean_dia.millimeters(), 20.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn dimensional_rejects_non_positive_outer() {
+        // outer=0.0 fires the >0.0 branch; message pinned to catch mutants that let
+        // bad values flow to solve_forward (which returns InconsistentInputs with a
+        // different message).
+        let s = Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(0.0),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "outer diameter must be a positive finite number"
+            ),
+            "expected Dimensional guard message"
+        );
+    }
+
+    #[test]
+    fn dimensional_rejects_non_finite_outer() {
+        // outer=+inf passes >0.0 (true), so only is_finite() rejects it — exercises
+        // that branch exclusively. NaN would also fail >0.0 so it wouldn't isolate
+        // is_finite(); +infinity is the value that requires is_finite() to fire.
+        // Pin the exact message to distinguish from solve_forward's own guards.
+        let s = Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(f64::INFINITY),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            initial_tension: Force::from_newtons(10.0),
+            hooks: HookEnds::default_for(Length::from_millimeters(20.0)),
+            loads: vec![Force::from_newtons(30.0)],
+        };
+        assert!(
+            matches!(
+                s.solve(
+                    &crate::test_support::music_wire(),
+                    CurvatureCorrection::Bergstrasser
+                ),
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "outer diameter must be a positive finite number"
+            ),
+            "expected Dimensional guard message"
         );
     }
 

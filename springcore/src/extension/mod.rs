@@ -9,4 +9,4 @@ mod scenario;
 
 pub use design::{ExtLoadPoint, ExtensionDesign};
 pub use ends::HookEnds;
-pub use scenario::{PowerUser, RateBased, Scenario, TwoLoad};
+pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
