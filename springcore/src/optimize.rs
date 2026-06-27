@@ -214,7 +214,16 @@ pub fn solve_min_weight(
         ) {
             continue;
         }
-        let Ok(design) = solve_forward(
+        // `?` is safe here: every solve_forward error mode is already pre-filtered by the
+        // guards above — wire is finite-positive (candidate validation), mean ≥ c_min·d > d
+        // (c_min ≥ floor > 1), active ≥ 1, free_length = solid + positive travel > solid, and
+        // d is in the material range (best_mean_dia's min_tensile_strength(d) already
+        // succeeded). So this never aborts a valid solve. (Unlike the extension optimizer,
+        // which uses skip-on-Err because its fixed-hook C2 ≤ 1 case is a live per-candidate
+        // failure; compression has no such per-candidate error mode, so adding a skip branch
+        // here would be unreachable dead code. If a future per-candidate error mode is added,
+        // switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
+        let design = solve_forward(
             material,
             req.end_type,
             req.fixity,
@@ -224,15 +233,7 @@ pub fn solve_min_weight(
             free_length,
             &[req.max_force],
             correction,
-        ) else {
-            continue; // Defensive skip (mirrors the extension optimizer): a candidate whose
-                      // forward design is invalid is skipped, not aborted, so one bad wire
-                      // size never discards lighter feasible finds. Every current
-                      // solve_forward error mode is already pre-filtered by the guards above
-                      // (mean ≥ c_min·d > wire, active ≥ 1, free_length > solid, d in the
-                      // material range via best_mean_dia), so this skips nothing today; it
-                      // future-proofs the loop against any new per-candidate failure mode.
-        };
+        )?;
         let mass = wire_mass(material, d, mean, design.total_coils);
         if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true) {
             best = Some(MinWeightSolution {
@@ -955,6 +956,14 @@ mod tests {
         );
     }
 
+    fn assert_accepted(req: &MinWeightRequest) {
+        let m = crate::test_support::music_wire();
+        assert!(
+            solve_min_weight(&m, req, CurvatureCorrection::Bergstrasser).is_ok(),
+            "expected Ok"
+        );
+    }
+
     #[test]
     fn zero_rate_rejected() {
         let mut req = base_request(vec![2.0]);
@@ -1000,10 +1009,9 @@ mod tests {
     #[test]
     fn clash_allowance_zero_is_accepted() {
         // Pins the `>= 0` boundary so a `>` mutant on the clash guard dies.
-        let m = crate::test_support::music_wire();
         let mut req = base_request(vec![2.0]);
         req.clash_allowance = 0.0;
-        assert!(solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok());
+        assert_accepted(&req);
     }
 
     #[test]
@@ -1062,10 +1070,9 @@ mod tests {
     #[test]
     fn index_min_exactly_at_floor_is_accepted() {
         // Pins the `c_min >= floor` boundary so a `>` mutant on the floor guard dies.
-        let m = crate::test_support::music_wire();
         let mut req = base_request(vec![2.0]);
         req.index_bounds = (min_spring_index(), 12.0);
-        assert!(solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok());
+        assert_accepted(&req);
     }
 
     #[test]
@@ -1084,11 +1091,12 @@ mod tests {
 
     #[test]
     fn min_spring_index_is_wahl_turning_point() {
-        // C* = 1 + √3/2, the minimum of the Wahl-corrected τ(C)·C curve.
-        assert_relative_eq!(
-            min_spring_index(),
-            1.0 + 3.0_f64.sqrt() / 2.0,
-            max_relative = 1e-12
-        );
+        // C* is the minimum of the Wahl-corrected τ(C)·C curve, i.e. the root of
+        // d/dC[Kw·C] = 0 ⟹ 4C² − 8C + 1 = 0. Verify the property directly (not just
+        // by recomputing the literal), so the test pins the mathematical claim.
+        let c = min_spring_index();
+        assert_relative_eq!(4.0 * c * c - 8.0 * c + 1.0, 0.0, epsilon = 1e-12);
+        // And confirm it is the upper root (≈1.866), not the lower one (≈0.134).
+        assert!(c > 1.0);
     }
 }
