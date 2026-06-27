@@ -9,6 +9,9 @@
 
 use crate::app::{App, Field};
 use crate::form::{FatigueStatus, FormOutcome, ScenarioKind};
+use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
+#[cfg(test)]
+use crate::presenter::Emphasis;
 use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
 
 // ── Unit labels and conversions ─────────────────────────────────────────────
@@ -85,63 +88,11 @@ fn display_stress(s: springcore::Stress, us: UnitSystem) -> (f64, &'static str) 
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
-/// Emphasis for a result value; the view maps this to a color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Emphasis {
-    Normal,
-    Danger,
-}
-
-/// A muted-label + value(+unit) readout row, with value emphasis.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResultRow {
-    pub label: String,
-    pub value: String,
-    pub unit: String,
-    pub emphasis: Emphasis,
-}
-
-impl ResultRow {
-    fn new(label: impl Into<String>, value: impl Into<String>, unit: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            value: value.into(),
-            unit: unit.into(),
-            emphasis: Emphasis::Normal,
-        }
-    }
-
-    fn danger(label: impl Into<String>, value: impl Into<String>, unit: impl Into<String>) -> Self {
-        Self {
-            emphasis: Emphasis::Danger,
-            ..Self::new(label, value, unit)
-        }
-    }
-}
-
 /// The hero spring-rate readout (label is constant in the view).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoverningRate {
     pub value: String,
     pub unit: String,
-}
-
-/// One row of the load-points table, all fields pre-formatted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadRow {
-    pub point: String,
-    pub force: String,
-    pub deflection: String,
-    pub length: String,
-    pub stress: String,
-    pub pct_mts: String,
-}
-
-/// The load-points table: a stress-unit header label plus per-point rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadTable {
-    pub stress_unit: String,
-    pub rows: Vec<LoadRow>,
 }
 
 /// Fatigue section state.
@@ -341,26 +292,6 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 
 // ── Status panel ────────────────────────────────────────────────────────────
 
-/// Severity class of a status line; the view maps this to a prefix and color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusKind {
-    /// A failed save/load action ([`App::action_error`]).
-    ActionError,
-    /// Startup material-load warning (can appear before any design is solved).
-    LoadWarning,
-    Info,
-    Caution,
-    /// A design-level warning ([`Severity::Warning`]).
-    DesignWarning,
-}
-
-/// One line in the status panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatusLine {
-    pub kind: StatusKind,
-    pub text: String,
-}
-
 /// Status class for a design message's severity.
 fn status_kind(severity: Severity) -> StatusKind {
     match severity {
@@ -399,24 +330,6 @@ pub fn status_view(app: &App) -> Vec<StatusLine> {
 }
 
 // ── Inputs panel ────────────────────────────────────────────────────────────
-
-/// One input field: its label (with embedded unit) and the [`Field`] the view
-/// binds it to. The current value is read from `app.form` by the view (iced's
-/// `text_input` borrows its value, which must outlive this owned descriptor).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldDescriptor {
-    pub label: String,
-    pub field: Field,
-}
-
-impl FieldDescriptor {
-    fn new(label: impl Into<String>, field: Field) -> Self {
-        Self {
-            label: label.into(),
-            field,
-        }
-    }
-}
 
 /// The scenario-driven input fields: the primary set plus an optional fatigue
 /// cycle set (empty for the min-weight scenario, which has no fatigue section).

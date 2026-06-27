@@ -4,6 +4,7 @@ mod materials_form;
 mod materials_view;
 mod materials_view_model;
 mod plot;
+mod presenter;
 mod settings;
 mod settings_view;
 mod settings_view_model;

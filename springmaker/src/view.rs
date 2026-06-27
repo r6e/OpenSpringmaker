@@ -10,9 +10,12 @@ use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Field, Message, C};
 use crate::form::ALL_SCENARIOS;
+use crate::presenter::{
+    Emphasis, FieldDescriptor, LoadTable, ResultRow, StatusKind, StatusLine,
+};
 use crate::view_model::{
-    inputs_view, results_view, status_view, Emphasis, FatigueView, FieldDescriptor, GoverningRate,
-    LoadTable, MinWeightView, PopulatedResults, ResultRow, ResultsView, StatusKind, StatusLine,
+    inputs_view, results_view, status_view, FatigueView, GoverningRate, MinWeightView,
+    PopulatedResults, ResultsView,
 };
 use springcore::UnitSystem;
 
