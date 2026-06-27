@@ -30,7 +30,7 @@ pub struct TorsionInputs {
 }
 
 /// One operating point: an applied moment and the resulting response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TorsionLoadPoint {
     /// Applied moment `M`.
     pub moment: Moment,
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn pct_bending_allow_is_sigma_i_over_allowable() {
         // pct = σᵢ / (allowable_pct_bending · MTS(d)). Music Wire: pct_bending=0.75,
-        // MTS(2mm)=2211·2^(−0.145) MPa = 2211·0.904181 = 1999.14 MPa.
+        // MTS(2mm)=2211·2^(−0.145) MPa = 2211·0.904379 ≈ 1999.58 MPa.
         let m = crate::test_support::music_wire();
         let d = solve_forward(
             &m,

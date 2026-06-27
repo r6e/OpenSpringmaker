@@ -44,7 +44,12 @@ pub fn bending_stress_inner(moment: Moment, mean_dia: Length, wire_dia: Length) 
 
 /// Effective active coils including the straight-leg contribution (Shigley Eq. 10-50):
 /// `Nₐ = N_b + (L₁ + L₂)/(3πD)`.
-pub fn active_coils_with_legs(body_coils: f64, leg1: Length, leg2: Length, mean_dia: Length) -> f64 {
+pub fn active_coils_with_legs(
+    body_coils: f64,
+    leg1: Length,
+    leg2: Length,
+    mean_dia: Length,
+) -> f64 {
     let legs = leg1.meters() + leg2.meters();
     body_coils + legs / (3.0 * PI * mean_dia.meters())
 }
@@ -93,19 +98,26 @@ mod tests {
     #[test]
     fn nominal_bending_stress_value() {
         // σ₀ = 32M/(πd³); M=1 N·m, d=2 mm → 32/(π·8e-9) = 1.2732395447e9 Pa.
-        let s = bending_stress_nominal(Moment::from_newton_meters(1.0), Length::from_millimeters(2.0));
+        let s = bending_stress_nominal(
+            Moment::from_newton_meters(1.0),
+            Length::from_millimeters(2.0),
+        );
         assert_relative_eq!(s.pascals(), 1.2732395447351628e9, max_relative = 1e-9);
     }
 
     #[test]
     fn inner_bending_stress_applies_kbi() {
-        // σᵢ = K_bi·σ₀; C=10 → 389/360 × 1.2732395447e9 = 1.375803...e9 Pa.
+        // σᵢ = K_bi·σ₀; C=10 → 389/360 × 1.2732395447e9 = 1.375806...e9 Pa.
         let si = bending_stress_inner(
             Moment::from_newton_meters(1.0),
             Length::from_millimeters(20.0),
             Length::from_millimeters(2.0),
         );
-        assert_relative_eq!(si.pascals(), (389.0 / 360.0) * 1.2732395447351628e9, max_relative = 1e-9);
+        assert_relative_eq!(
+            si.pascals(),
+            (389.0 / 360.0) * 1.2732395447351628e9,
+            max_relative = 1e-9
+        );
     }
 
     #[test]
@@ -123,7 +135,12 @@ mod tests {
 
     #[test]
     fn active_coils_body_only_when_no_legs() {
-        let na = active_coils_with_legs(5.0, Length::from_meters(0.0), Length::from_meters(0.0), Length::from_millimeters(20.0));
+        let na = active_coils_with_legs(
+            5.0,
+            Length::from_meters(0.0),
+            Length::from_meters(0.0),
+            Length::from_millimeters(20.0),
+        );
         assert_relative_eq!(na, 5.0, max_relative = 1e-12);
     }
 
@@ -152,7 +169,11 @@ mod tests {
             5.0,
             FrictionModel::ShigleyFriction,
         );
-        assert_relative_eq!(k.newton_meters_per_radian(), 0.47958689518357805, max_relative = 1e-9);
+        assert_relative_eq!(
+            k.newton_meters_per_radian(),
+            0.47958689518357805,
+            max_relative = 1e-9
+        );
     }
 
     #[test]
@@ -163,7 +184,8 @@ mod tests {
     #[test]
     fn wound_diameter_shrinks_under_load() {
         // D' = D·N_b/(N_b + θ_turns); D=20 mm, N_b=5, θ=1 turn → 0.02·5/6 = 16.6667 mm.
-        let dprime = wound_mean_diameter(Length::from_millimeters(20.0), 5.0, Angle::from_turns(1.0));
+        let dprime =
+            wound_mean_diameter(Length::from_millimeters(20.0), 5.0, Angle::from_turns(1.0));
         assert_relative_eq!(dprime.millimeters(), 100.0 / 6.0, max_relative = 1e-12);
     }
 }

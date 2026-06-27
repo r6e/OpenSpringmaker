@@ -5,6 +5,7 @@
 //! base unit kelvin. Conversion factors are exact per NIST Special Publication 811.
 
 use serde::{Deserialize, Serialize};
+use std::f64::consts::{PI, TAU};
 
 /// Exact unit-conversion constants (NIST SP 811).
 const METERS_PER_INCH: f64 = 0.0254;
@@ -190,11 +191,11 @@ impl Angle {
     }
     /// Construct from degrees (1 deg = π/180 rad).
     pub fn from_degrees(v: f64) -> Self {
-        Self(v * std::f64::consts::PI / 180.0)
+        Self(v * PI / 180.0)
     }
     /// Construct from turns / revolutions (1 turn = 2π rad).
     pub fn from_turns(v: f64) -> Self {
-        Self(v * std::f64::consts::TAU)
+        Self(v * TAU)
     }
     /// Return value in radians.
     pub fn radians(self) -> f64 {
@@ -202,11 +203,11 @@ impl Angle {
     }
     /// Return value in degrees.
     pub fn degrees(self) -> f64 {
-        self.0 * 180.0 / std::f64::consts::PI
+        self.0 * 180.0 / PI
     }
     /// Return value in turns / revolutions.
     pub fn turns(self) -> f64 {
-        self.0 / std::f64::consts::TAU
+        self.0 / TAU
     }
 }
 
@@ -217,11 +218,11 @@ impl AngularRate {
     }
     /// Construct from newton-metres per degree (1 N·m/deg = 180/π N·m/rad).
     pub fn from_newton_meters_per_degree(v: f64) -> Self {
-        Self(v * 180.0 / std::f64::consts::PI)
+        Self(v * 180.0 / PI)
     }
     /// Construct from newton-metres per turn (1 N·m/turn = 1/2π N·m/rad).
     pub fn from_newton_meters_per_turn(v: f64) -> Self {
-        Self(v / std::f64::consts::TAU)
+        Self(v / TAU)
     }
     /// Return value in newton-metres per radian.
     pub fn newton_meters_per_radian(self) -> f64 {
@@ -229,11 +230,11 @@ impl AngularRate {
     }
     /// Return value in newton-metres per degree.
     pub fn newton_meters_per_degree(self) -> f64 {
-        self.0 * std::f64::consts::PI / 180.0
+        self.0 * PI / 180.0
     }
     /// Return value in newton-metres per turn.
     pub fn newton_meters_per_turn(self) -> f64 {
-        self.0 * std::f64::consts::TAU
+        self.0 * TAU
     }
 }
 
