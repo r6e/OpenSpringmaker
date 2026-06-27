@@ -184,21 +184,29 @@ fn evaluate_status(
 ) -> DesignStatus {
     let mut messages = Vec::new();
 
-    if load_points.iter().any(|lp| lp.pct_bending_allow > 1.0) {
-        messages.push(StatusMessage {
-            severity: Severity::Warning,
-            message: "inner-fiber bending stress exceeds the allowable".into(),
-        });
-    }
-    if let Some(arbor) = arbor_dia {
-        if load_points
-            .iter()
-            .any(|lp| lp.wound_inner_dia.meters() <= arbor.meters())
-        {
+    for (i, lp) in load_points.iter().enumerate() {
+        if lp.pct_bending_allow > 1.0 {
             messages.push(StatusMessage {
                 severity: Severity::Warning,
-                message: "spring winds down onto the arbor (inner diameter binds)".into(),
+                message: format!(
+                    "load point {}: inner-fiber bending stress is {:.0}% of allowable",
+                    i + 1,
+                    lp.pct_bending_allow * 100.0
+                ),
             });
+        }
+    }
+    if let Some(arbor) = arbor_dia {
+        for (i, lp) in load_points.iter().enumerate() {
+            if lp.wound_inner_dia.meters() <= arbor.meters() {
+                messages.push(StatusMessage {
+                    severity: Severity::Warning,
+                    message: format!(
+                        "load point {}: spring winds down onto the arbor (inner diameter binds)",
+                        i + 1
+                    ),
+                });
+            }
         }
     }
     if load_points
@@ -555,6 +563,27 @@ mod tests {
         // index=10.0 (in range → no Caution), no arbor (no binding check).
         let status = evaluate_status(10.0, std::slice::from_ref(&lp), None);
         assert!(!status.has_warnings());
+    }
+
+    #[test]
+    fn arbor_binding_at_exact_clearance_raises_warning() {
+        // wound_inner_dia == arbor_dia exactly: the spring is just touching the arbor.
+        // Kills: `<= → <` mutant (0.015 < 0.015 is false; 0.015 <= 0.015 is true).
+        let lp = TorsionLoadPoint {
+            moment: Moment::from_newton_meters(1.0),
+            deflection: Angle::from_radians(1.0),
+            stress_inner: Stress::from_pascals(1.0),
+            stress_nominal: Stress::from_pascals(1.0),
+            pct_bending_allow: 0.5,
+            wound_mean_dia: Length::from_meters(0.017),
+            wound_inner_dia: Length::from_meters(0.015),
+        };
+        let status =
+            evaluate_status(10.0, std::slice::from_ref(&lp), Some(Length::from_meters(0.015)));
+        assert!(
+            status.has_warnings(),
+            "wound_inner_dia == arbor_dia must raise binding warning"
+        );
     }
 
     // ── Group A: input-domain guards (TDD — write RED first) ─────────────────
