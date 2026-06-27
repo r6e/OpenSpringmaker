@@ -57,7 +57,7 @@ fn shows(app: &App, label: &str) -> bool {
 /// then apply the resulting messages. Focus is UI-internal (not in `App`), so
 /// the focusing click and the `typewrite` must share one simulator instance.
 fn type_into(app: &mut App, field: Field, text: &str) {
-    let id = iced_test::core::widget::Id::from(crate::view::calc_field_id(field));
+    let id = iced_test::core::widget::Id::from(crate::compression::view::calc_field_id(field));
     let mut sim = ui(app);
     sim.click(id)
         .unwrap_or_else(|e| panic!("could not focus input for field {field:?}: {e}"));
