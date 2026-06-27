@@ -197,7 +197,8 @@ fn evaluate_status(
     }
     if let Some(arbor) = arbor_dia {
         for (i, lp) in load_points.iter().enumerate() {
-            if lp.wound_inner_dia.meters() <= arbor.meters() {
+            let inner = lp.wound_inner_dia.meters();
+            if inner > 0.0 && inner <= arbor.meters() {
                 messages.push(StatusMessage {
                     severity: Severity::Warning,
                     message: format!(
@@ -208,15 +209,16 @@ fn evaluate_status(
             }
         }
     }
-    if load_points
-        .iter()
-        .any(|lp| lp.wound_inner_dia.meters() <= 0.0)
-    {
-        messages.push(StatusMessage {
-            severity: Severity::Warning,
-            message: "spring over-winds: wound coil inner diameter collapses to zero or below"
-                .into(),
-        });
+    for (i, lp) in load_points.iter().enumerate() {
+        if lp.wound_inner_dia.meters() <= 0.0 {
+            messages.push(StatusMessage {
+                severity: Severity::Warning,
+                message: format!(
+                    "load point {}: spring over-winds \u{2014} wound coil inner diameter collapses to zero or below",
+                    i + 1
+                ),
+            });
+        }
     }
     if let Some(msg) = crate::design::index_caution(index) {
         messages.push(msg);
@@ -596,6 +598,7 @@ mod tests {
         // D' = D·N_b/(N_b + θ_turns) → θ_turns ≫ N_b so D' ≈ 0 and
         // wound_inner_dia = D' − d < 0. pct_bending_allow is independent of Na
         // so no overstress fires — only the new over-wind advisory.
+        // Pins: the indexed message must contain BOTH "load point 1" AND "over-winds".
         let m = crate::test_support::music_wire();
         let mut i = inputs();
         i.body_coils = 1e-300;
@@ -612,9 +615,87 @@ mod tests {
             d.status
                 .messages
                 .iter()
+                .any(|msg| msg.severity == Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("over-winds")),
+            "expected indexed over-wind warning, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    #[test]
+    fn over_wind_suppresses_arbor_binding() {
+        // A point whose wound_inner_dia <= 0 should emit the over-wind warning but NOT
+        // the arbor-binding warning ("winds down onto the arbor"), even when arbor_dia is
+        // set. Pins the `inner > 0.0 &&` guard in the arbor-binding loop: without it,
+        // inner=-0.001 <= arbor=0.019 would fire both messages.
+        let lp = TorsionLoadPoint {
+            moment: Moment::from_newton_meters(1.0),
+            deflection: Angle::from_radians(1.0),
+            stress_inner: Stress::from_pascals(1.0),
+            stress_nominal: Stress::from_pascals(1.0),
+            pct_bending_allow: 0.5,
+            wound_mean_dia: Length::from_meters(0.001),
+            wound_inner_dia: Length::from_meters(-0.001),
+        };
+        let status = evaluate_status(
+            10.0,
+            std::slice::from_ref(&lp),
+            Some(Length::from_meters(0.019)),
+        );
+        assert!(
+            status
+                .messages
+                .iter()
                 .any(|msg| msg.severity == Severity::Warning && msg.message.contains("over-winds")),
             "expected over-wind warning, got: {:?}",
-            d.status.messages
+            status.messages
+        );
+        assert!(
+            !status
+                .messages
+                .iter()
+                .any(|msg| msg.message.contains("winds down onto the arbor")),
+            "over-wound point must not also emit arbor-binding warning, got: {:?}",
+            status.messages
+        );
+    }
+
+    #[test]
+    fn over_wind_at_zero_with_arbor_suppresses_arbor_binding() {
+        // wound_inner_dia == 0.0 AND arbor is set: the over-wind check fires but the
+        // arbor-binding guard `inner > 0.0` must exclude exactly-zero, so no binding message.
+        // Kills: `> 0.0 → >= 0.0` mutant at the arbor guard (0.0 >= 0.0 is true, which would
+        // let the binding message fire alongside the over-wind message).
+        let lp = TorsionLoadPoint {
+            moment: Moment::from_newton_meters(1.0),
+            deflection: Angle::from_radians(1.0),
+            stress_inner: Stress::from_pascals(1.0),
+            stress_nominal: Stress::from_pascals(1.0),
+            pct_bending_allow: 0.5,
+            wound_mean_dia: Length::from_meters(0.002),
+            wound_inner_dia: Length::from_meters(0.0),
+        };
+        let status = evaluate_status(
+            10.0,
+            std::slice::from_ref(&lp),
+            Some(Length::from_meters(0.019)),
+        );
+        assert!(
+            status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == Severity::Warning && msg.message.contains("over-winds")),
+            "expected over-wind warning, got: {:?}",
+            status.messages
+        );
+        assert!(
+            !status
+                .messages
+                .iter()
+                .any(|msg| msg.message.contains("winds down onto the arbor")),
+            "zero inner-dia point must not also emit arbor-binding warning, got: {:?}",
+            status.messages
         );
     }
 
