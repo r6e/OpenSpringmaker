@@ -14,7 +14,6 @@ pub(crate) mod design;
 pub(crate) mod end_type;
 pub mod error;
 pub mod extension;
-pub mod torsion;
 pub(crate) mod fatigue;
 pub(crate) mod material;
 pub(crate) mod material_persist;
@@ -24,6 +23,7 @@ pub(crate) mod numeric;
 pub(crate) mod optimize;
 pub(crate) mod persistence;
 pub(crate) mod scenario;
+pub mod torsion;
 pub mod units;
 
 #[cfg(test)]

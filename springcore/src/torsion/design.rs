@@ -11,7 +11,6 @@ use crate::torsion::mechanics::{
 use crate::units::{Angle, AngularRate, Length, Moment, Stress};
 use crate::{Result, SpringError};
 
-
 /// Geometry of a torsion spring. The legs are loaded so the coils wind tighter.
 #[derive(Debug, Clone)]
 pub struct TorsionInputs {
@@ -578,8 +577,11 @@ mod tests {
             wound_mean_dia: Length::from_meters(0.017),
             wound_inner_dia: Length::from_meters(0.015),
         };
-        let status =
-            evaluate_status(10.0, std::slice::from_ref(&lp), Some(Length::from_meters(0.015)));
+        let status = evaluate_status(
+            10.0,
+            std::slice::from_ref(&lp),
+            Some(Length::from_meters(0.015)),
+        );
         assert!(
             status.has_warnings(),
             "wound_inner_dia == arbor_dia must raise binding warning"
@@ -610,8 +612,7 @@ mod tests {
             d.status
                 .messages
                 .iter()
-                .any(|msg| msg.severity == Severity::Warning
-                    && msg.message.contains("over-winds")),
+                .any(|msg| msg.severity == Severity::Warning && msg.message.contains("over-winds")),
             "expected over-wind warning, got: {:?}",
             d.status.messages
         );
@@ -678,8 +679,7 @@ mod tests {
             status
                 .messages
                 .iter()
-                .any(|msg| msg.severity == Severity::Warning
-                    && msg.message.contains("over-winds")),
+                .any(|msg| msg.severity == Severity::Warning && msg.message.contains("over-winds")),
             "wound_inner_dia == 0.0 must raise over-wind warning"
         );
     }
