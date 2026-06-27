@@ -9,9 +9,9 @@
 
 use crate::app::{App, Field};
 use crate::form::{FatigueStatus, FormOutcome, ScenarioKind};
-use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
 #[cfg(test)]
 use crate::presenter::Emphasis;
+use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
 use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
 
 // ── Unit labels and conversions ─────────────────────────────────────────────
