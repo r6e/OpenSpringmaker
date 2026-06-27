@@ -378,7 +378,11 @@ mod tests {
         assert_relative_eq!(m.newton_millimeters(), 2000.0, max_relative = 1e-12);
         // 1 lbf·in = 4.4482216152605 N × 0.0254 m = 0.112984829... N·m
         let one_lbf_in = Moment::from_pound_force_inches(1.0);
-        assert_relative_eq!(one_lbf_in.newton_meters(), 0.1129848290276167, max_relative = 1e-12);
+        assert_relative_eq!(
+            one_lbf_in.newton_meters(),
+            0.1129848290276167,
+            max_relative = 1e-12
+        );
         assert_relative_eq!(one_lbf_in.pound_force_inches(), 1.0, max_relative = 1e-12);
     }
 
@@ -398,9 +402,61 @@ mod tests {
         use std::f64::consts::{PI, TAU};
         // 1 N·m/rad → per degree = ×(π/180); per turn = ×2π.
         let k = AngularRate::from_newton_meters_per_radian(1.0);
-        assert_relative_eq!(k.newton_meters_per_degree(), PI / 180.0, max_relative = 1e-12);
+        assert_relative_eq!(
+            k.newton_meters_per_degree(),
+            PI / 180.0,
+            max_relative = 1e-12
+        );
         assert_relative_eq!(k.newton_meters_per_turn(), TAU, max_relative = 1e-12);
         let per_turn = AngularRate::from_newton_meters_per_turn(TAU);
-        assert_relative_eq!(per_turn.newton_meters_per_radian(), 1.0, max_relative = 1e-12);
+        assert_relative_eq!(
+            per_turn.newton_meters_per_radian(),
+            1.0,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn moment_from_newton_millimeters_converts_correctly() {
+        // Kills: `/ → %` and `/ → *` mutants on the 1/1000 scale factor (line 166).
+        // 1000 N·mm = 1 N·m; 2500 N·mm = 2.5 N·m.
+        assert_relative_eq!(
+            Moment::from_newton_millimeters(1000.0).newton_meters(),
+            1.0,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            Moment::from_newton_millimeters(2500.0).newton_meters(),
+            2.5,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn moment_pound_force_inches_roundtrip_at_non_unit_value() {
+        // Kills: `pound_force_inches → 1.0` constant mutant (line 182) — the existing test
+        // only asserts `from_pound_force_inches(1.0).pound_force_inches() == 1.0`, which the
+        // "return 1.0" mutant also satisfies.
+        assert_relative_eq!(
+            Moment::from_pound_force_inches(2.0).pound_force_inches(),
+            2.0,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn angular_rate_from_newton_meters_per_degree_converts_correctly() {
+        use std::f64::consts::PI;
+        // Kills: `* → +`, `* → /`, `/ → %`, `/ → *` mutants in the 180/π factor (line 220).
+        // 1 N·m/deg = 180/π N·m/rad.
+        let k = AngularRate::from_newton_meters_per_degree(1.0);
+        assert_relative_eq!(
+            k.newton_meters_per_radian(),
+            180.0 / PI,
+            max_relative = 1e-12
+        );
+        // Round-trip: π/180 N·m/deg = 1 N·m/rad.
+        let k2 = AngularRate::from_newton_meters_per_degree(PI / 180.0);
+        assert_relative_eq!(k2.newton_meters_per_radian(), 1.0, max_relative = 1e-12);
     }
 }

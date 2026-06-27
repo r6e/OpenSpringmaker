@@ -131,12 +131,8 @@ pub fn solve_forward(
     let allowable = material.allowable_pct_bending * mts;
 
     let index = dm / d;
-    let active = active_coils_with_legs(
-        inputs.body_coils,
-        inputs.leg1,
-        inputs.leg2,
-        inputs.mean_dia,
-    );
+    let active =
+        active_coils_with_legs(inputs.body_coils, inputs.leg1, inputs.leg2, inputs.mean_dia);
     let rate = angular_rate(
         material.youngs_modulus,
         inputs.wire_dia,
@@ -218,8 +214,9 @@ fn evaluate_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::design::Severity;
     use crate::torsion::FrictionModel;
-    use crate::units::{Length, Moment};
+    use crate::units::{Angle, Length, Moment, Stress};
     use approx::assert_relative_eq;
 
     fn inputs() -> TorsionInputs {
@@ -241,22 +238,58 @@ mod tests {
         // σᵢ = 389/360 × 1.2732395447e9 = 1.375806e9 Pa.
         // D' = 0.02·5/(5+0.31298907) = 0.0188218 m → inner' = 16.821797 mm.
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, inputs(), &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending).unwrap();
+        let d = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
         assert_relative_eq!(d.index, 10.0, max_relative = 1e-12);
         assert_relative_eq!(d.active_coils, 5.0, max_relative = 1e-12);
-        assert_relative_eq!(d.rate.newton_meters_per_radian(), 0.5085, max_relative = 1e-9);
+        assert_relative_eq!(
+            d.rate.newton_meters_per_radian(),
+            0.5085,
+            max_relative = 1e-9
+        );
         let lp = &d.load_points[0];
-        assert_relative_eq!(lp.deflection.radians(), 1.9665683382497539, max_relative = 1e-9);
-        assert_relative_eq!(lp.stress_inner.pascals(), (389.0 / 360.0) * 1.2732395447351628e9, max_relative = 1e-9);
-        assert_relative_eq!(lp.stress_nominal.pascals(), 1.2732395447351628e9, max_relative = 1e-9);
-        assert_relative_eq!(lp.wound_inner_dia.millimeters(), 16.821797, max_relative = 1e-4);
+        assert_relative_eq!(
+            lp.deflection.radians(),
+            1.9665683382497539,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            lp.stress_inner.pascals(),
+            (389.0 / 360.0) * 1.2732395447351628e9,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            lp.stress_nominal.pascals(),
+            1.2732395447351628e9,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            lp.wound_inner_dia.millimeters(),
+            16.821797,
+            max_relative = 1e-4
+        );
     }
 
     #[test]
     fn shigley_rate_matches_oracle() {
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, inputs(), &[Moment::from_newton_meters(1.0)], FrictionModel::ShigleyFriction).unwrap();
-        assert_relative_eq!(d.rate.newton_meters_per_radian(), 0.47958689518357805, max_relative = 1e-9);
+        let d = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::ShigleyFriction,
+        )
+        .unwrap();
+        assert_relative_eq!(
+            d.rate.newton_meters_per_radian(),
+            0.47958689518357805,
+            max_relative = 1e-9
+        );
     }
 
     #[test]
@@ -264,17 +297,36 @@ mod tests {
         // pct = σᵢ / (allowable_pct_bending · MTS(d)). Music Wire: pct_bending=0.75,
         // MTS(2mm)=2211·2^(−0.145) MPa = 2211·0.904181 = 1999.14 MPa.
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, inputs(), &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending).unwrap();
-        let mts = m.min_tensile_strength(Length::from_millimeters(2.0)).unwrap().pascals();
+        let d = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
+        let mts = m
+            .min_tensile_strength(Length::from_millimeters(2.0))
+            .unwrap()
+            .pascals();
         let expected = ((389.0 / 360.0) * 1.2732395447351628e9) / (0.75 * mts);
-        assert_relative_eq!(d.load_points[0].pct_bending_allow, expected, max_relative = 1e-9);
+        assert_relative_eq!(
+            d.load_points[0].pct_bending_allow,
+            expected,
+            max_relative = 1e-9
+        );
     }
 
     #[test]
     fn overstress_raises_warning() {
         // A large moment drives σᵢ past the allowable → Warning status.
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, inputs(), &[Moment::from_newton_meters(50.0)], FrictionModel::PureBending).unwrap();
+        let d = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(50.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
         assert!(d.status.has_warnings());
     }
 
@@ -284,7 +336,13 @@ mod tests {
         let mut i = inputs();
         i.arbor_dia = Some(Length::from_millimeters(19.0)); // inner' ≈ 16.8 mm < 19 mm
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending).unwrap();
+        let d = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
         assert!(d.status.has_warnings());
     }
 
@@ -293,7 +351,13 @@ mod tests {
         let mut i = inputs();
         i.arbor_dia = Some(Length::from_millimeters(10.0)); // inner' ≈ 16.8 mm > 10 mm
         let m = crate::test_support::music_wire();
-        let d = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending).unwrap();
+        let d = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
         // No binding warning (a low moment also keeps stress under allowable).
         assert!(!d.status.has_warnings());
     }
@@ -303,7 +367,12 @@ mod tests {
         let mut i = inputs();
         i.wire_dia = Length::from_meters(0.0);
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
@@ -312,7 +381,12 @@ mod tests {
         let mut i = inputs();
         i.mean_dia = Length::from_millimeters(2.0); // D == d → C = 1
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
@@ -321,7 +395,12 @@ mod tests {
         let mut i = inputs();
         i.body_coils = 0.0;
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
@@ -330,14 +409,24 @@ mod tests {
         let mut i = inputs();
         i.leg1 = Length::from_millimeters(-1.0);
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
     #[test]
     fn rejects_non_positive_moment() {
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, inputs(), &[Moment::from_newton_meters(0.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(0.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
@@ -353,7 +442,111 @@ mod tests {
         let mut i = inputs();
         i.arbor_dia = Some(Length::from_meters(0.0));
         let m = crate::test_support::music_wire();
-        let r = solve_forward(&m, i, &[Moment::from_newton_meters(1.0)], FrictionModel::PureBending);
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    #[test]
+    fn rejects_infinite_mean_dia() {
+        // Kills: `&& → ||` mutant (line 85:25) — infinite dm passes `is_finite() || dm > 0`
+        // but fails the original `is_finite() && dm > 0`, so the mutant propagates NaN into
+        // the computation and returns a bogus Ok instead of rejecting.
+        let mut i = inputs();
+        i.mean_dia = Length::from_meters(f64::INFINITY);
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    #[test]
+    fn rejects_zero_mean_dia_with_message() {
+        // Kills: `> → >=` mutant (line 85:31) — dm=0 passes the mutant guard but hits the
+        // subsequent `dm <= d` guard, emitting a different error message. Asserting the exact
+        // message text distinguishes the two paths.
+        let mut i = inputs();
+        i.mean_dia = Length::from_meters(0.0);
+        let m = crate::test_support::music_wire();
+        match solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        ) {
+            Err(crate::SpringError::InconsistentInputs(msg)) => {
+                assert!(msg.contains("positive finite"), "unexpected message: {msg}");
+            }
+            other => panic!("expected InconsistentInputs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_below_min_emits_caution() {
+        // C = D/d = 11 mm / 3 mm ≈ 3.67 < INDEX_MIN (4.0) → Caution advisory.
+        // Kills: `delete !` mutant (line 202:8) — inverted guard would suppress the message.
+        let mut i = inputs();
+        i.wire_dia = Length::from_millimeters(3.0);
+        i.mean_dia = Length::from_millimeters(11.0);
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(0.1)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
+        assert!(d
+            .status
+            .messages
+            .iter()
+            .any(|msg| msg.severity == Severity::Caution));
+    }
+
+    #[test]
+    fn index_above_max_emits_caution() {
+        // C = D/d = 26 mm / 2 mm = 13.0 > INDEX_MAX (12.0) → Caution advisory.
+        // Kills: `delete !` mutant (line 202:8) — inverted guard would suppress the message.
+        let mut i = inputs();
+        i.mean_dia = Length::from_millimeters(26.0);
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(0.1)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
+        assert!(d
+            .status
+            .messages
+            .iter()
+            .any(|msg| msg.severity == Severity::Caution));
+    }
+
+    #[test]
+    fn evaluate_status_at_exact_allowable_no_warning() {
+        // pct = 1.0 exactly (spring is at the bending allowable, not over it) must NOT
+        // trigger an overstress Warning. Kills: `> → >=` mutant (line 185:57).
+        let lp = TorsionLoadPoint {
+            moment: Moment::from_newton_meters(1.0),
+            deflection: Angle::from_radians(1.0),
+            stress_inner: Stress::from_pascals(1.0),
+            stress_nominal: Stress::from_pascals(1.0),
+            pct_bending_allow: 1.0,
+            wound_mean_dia: Length::from_meters(0.02),
+            wound_inner_dia: Length::from_meters(0.018),
+        };
+        // index=10.0 (in range → no Caution), no arbor (no binding check).
+        let status = evaluate_status(10.0, std::slice::from_ref(&lp), None);
+        assert!(!status.has_warnings());
     }
 }
