@@ -9,14 +9,14 @@ use crate::app::Field;
 
 /// Emphasis for a result value; the view maps this to a color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Emphasis {
+pub(crate) enum Emphasis {
     Normal,
     Danger,
 }
 
 /// A muted-label + value(+unit) readout row, with value emphasis.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResultRow {
+pub(crate) struct ResultRow {
     pub label: String,
     pub value: String,
     pub unit: String,
@@ -51,7 +51,7 @@ impl ResultRow {
 
 /// One row of the load-points table, all fields pre-formatted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadRow {
+pub(crate) struct LoadRow {
     pub point: String,
     pub force: String,
     pub deflection: String,
@@ -62,7 +62,7 @@ pub struct LoadRow {
 
 /// The load-points table: a stress-unit header label plus per-point rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadTable {
+pub(crate) struct LoadTable {
     pub stress_unit: String,
     pub rows: Vec<LoadRow>,
 }
@@ -71,7 +71,7 @@ pub struct LoadTable {
 
 /// Severity class of a status line; the view maps this to a prefix and color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusKind {
+pub(crate) enum StatusKind {
     /// A failed save/load action (see `App::action_error`).
     ActionError,
     /// Startup material-load warning (can appear before any design is solved).
@@ -84,7 +84,7 @@ pub enum StatusKind {
 
 /// One line in the status panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatusLine {
+pub(crate) struct StatusLine {
     pub kind: StatusKind,
     pub text: String,
 }
@@ -95,7 +95,7 @@ pub struct StatusLine {
 /// binds it to. The current value is read from `app.form` by the view (iced's
 /// `text_input` borrows its value, which must outlive this owned descriptor).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldDescriptor {
+pub(crate) struct FieldDescriptor {
     pub label: String,
     pub field: Field,
 }

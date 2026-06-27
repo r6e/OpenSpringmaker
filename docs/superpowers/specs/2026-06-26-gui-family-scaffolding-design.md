@@ -32,7 +32,7 @@ extension family (spec 1b) plugs in as a sibling module.
 
 ```
 compression/
-  mod.rs          declares form, view_model, view; re-exports their public items
+  mod.rs          declares form, view_model, view as pub(crate) submodules (callers use full paths)
   form.rs         (moved from src/form.rs)        — compression FormState, ScenarioKind, parse/solve
   view_model.rs   (compression-specific presenter functions, moved from src/view_model.rs)
   view.rs         (moved from src/view.rs)         — compression Calculator widget tree
