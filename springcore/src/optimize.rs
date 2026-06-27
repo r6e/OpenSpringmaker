@@ -155,15 +155,15 @@ pub fn solve_min_weight(
         ));
     }
     let (c_min, c_max) = req.index_bounds;
+    let c_floor = min_spring_index();
     // 0 < c_min is intentionally NOT checked separately: the floor (c_min ≥ 1 + √3/2 ≈
     // 1.866) strictly implies it, so a redundant positivity guard would be an unkillable
     // equivalent mutant. The floor still rejects every c_min ≤ 0.
-    if !(c_min.is_finite() && c_max.is_finite() && c_min < c_max && c_min >= min_spring_index()) {
+    if !(c_min.is_finite() && c_max.is_finite() && c_min < c_max && c_min >= c_floor) {
         return Err(SpringError::InconsistentInputs(format!(
-            "index bounds must satisfy {min:.4} ≤ c_min < c_max with both finite \
+            "index bounds must satisfy {c_floor:.4} ≤ c_min < c_max with both finite \
              (c_min floor = 1 + √3/2, the Wahl/Bergsträsser monotonicity turning point); \
-             got c_min={c_min}, c_max={c_max}",
-            min = min_spring_index()
+             got c_min={c_min}, c_max={c_max}"
         )));
     }
     if let Some(od_max) = req.max_outer_dia {
