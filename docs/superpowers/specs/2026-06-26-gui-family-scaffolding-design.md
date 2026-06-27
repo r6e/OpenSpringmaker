@@ -36,11 +36,19 @@ compression/
   form.rs         (moved from src/form.rs)        — compression FormState, ScenarioKind, parse/solve
   view_model.rs   (compression-specific presenter functions, moved from src/view_model.rs)
   view.rs         (moved from src/view.rs)         — compression Calculator widget tree
-presenter.rs      (new) — family-agnostic presenter vocabulary lifted out of view_model.rs
+presenter.rs      (new) — family-agnostic presenter DATA vocabulary lifted out of view_model.rs
+widgets.rs        (new) — family-agnostic iced WIDGET/STYLE kit lifted out of view.rs
 ```
 
 `app.rs`, `materials_*`, `settings_*`, `plot.rs`, `main.rs`, `ui_tests.rs` stay at the crate root.
-`main.rs` swaps `mod form; mod view_model; mod view;` for `mod compression; mod presenter;`.
+`main.rs` swaps `mod form; mod view_model; mod view;` for `mod compression; mod presenter; mod widgets;`.
+
+> **Amendment (during planning):** `view.rs` turned out to export a cross-screen widget/style
+> kit (`panel_container`, `section_heading`, the button styles, `SZ_*`, …) that `settings_view.rs`
+> and `materials_view.rs` already consume. Moving `view.rs` into `compression/` would force those
+> screens to depend on `compression`, violating strict module boundaries — so that kit is lifted
+> into a new shared `widgets.rs`. This adds a third shared module beyond the originally-planned
+> two; nothing else about the scope changes.
 
 ### The shared/compression split in the presenter
 
@@ -52,13 +60,23 @@ presenter.rs      (new) — family-agnostic presenter vocabulary lifted out of v
   implementation plan finalizes the exact per-type list by checking each type's dependencies; the
   binding rule is "no compression-only coupling → shared.")
 - **Stays in `compression/view_model.rs` (compression-specific)** — the presenter *functions*
-  (`results_view`, `inputs_view`, `status_view`) that read the compression `FormState`, and any
-  aggregate that couples to compression (e.g. `MinWeightView`, which carries the compression
-  `BindingConstraint`; the top-level `ResultsView`/`PopulatedResults`/`InputsView` assembled from
-  the compression form).
+  (`results_view`, `inputs_view`, `status_view`) that read the compression `FormState`, the
+  unit-conversion helpers they use, and the compression **result aggregates** they assemble
+  (`GoverningRate`, `FatigueView`, `MinWeightView`, `PopulatedResults`, `ResultsView`, `InputsView`).
+  These are the compression *results vocabulary*: built from the shared primitives, named for the
+  compression result set, and rebuilt per-family in 1b. (`min_weight_view` reads the compression
+  `BindingConstraint`; the aggregate types themselves hold only `Vec<ResultRow>` and the other
+  shared primitives, but they stay with the functions that produce them.)
 
-Dependency direction is one-way: `compression/view_model.rs` depends on `presenter.rs`; nothing in
-`presenter.rs` depends on `compression`.
+The same split applies to the iced widget layer: the cross-screen kit (`panel_container`,
+`styled_pick_list`, `text_input_style`, `field_label`, `mono_value`, `section_divider`,
+`section_heading`, the four button styles, `SZ_LABEL/BODY/TITLE`) moves to `widgets.rs`; the
+compression-only widgets (`KeyLabel`/`END_TYPES`/`FIXITIES`, `styled_text_input`, `calc_field_id`,
+`SZ_CAPTION`, `SZ_HERO`, `view`) stay in `compression/view.rs`.
+
+Dependency direction is one-way: `compression/{view_model,view}.rs` depend on `presenter.rs` and
+`widgets.rs`; the shared modules depend only on the `app` shell (`Field`, `C`, `Message`), never on
+`compression`.
 
 ### Call-site updates (mechanical)
 
@@ -66,7 +84,9 @@ Dependency direction is one-way: `compression/view_model.rs` depends on `present
   `crate::compression::view::view(self)`.
 - Every `use crate::form::…` / `crate::view_model::…` / `crate::view::…` across `app.rs`,
   `materials_view.rs`, `settings_view.rs`, and `ui_tests.rs` repoints to
-  `crate::compression::{form,view_model,view}::…` or `crate::presenter::…` as appropriate.
+  `crate::compression::{form,view_model,view}::…`, `crate::presenter::…`, or `crate::widgets::…`
+  as appropriate. In particular, `settings_view.rs` and `materials_view.rs` repoint their shared
+  widget-kit imports to `crate::widgets::…` (never to `crate::compression`).
 - The compression presenter unit tests move with their code (they live in `#[cfg(test)] mod tests`
   inside `form.rs`/`view_model.rs`); the `ui_tests.rs` E2E tests stay put and only their `use`
   paths change.
@@ -112,9 +132,9 @@ No new tests are required (no new behavior); adding any would be over-build for 
 
 - `Family` enum + family selector widget + `App` family dispatch.
 - `SavedDesign.family` tag (additive, serde-default `Compression`, no schema bump).
-- Extension family GUI module (`extension/{form,view_model,view}.rs`) consuming `presenter.rs`,
-  including hook inputs, initial tension, the existing curvature-correction toggle, and three-stress
-  results.
+- Extension family GUI module (`extension/{form,view_model,view}.rs`) consuming `presenter.rs` and
+  `widgets.rs`, including hook inputs, initial tension, the existing curvature-correction toggle, and
+  three-stress results.
 - Torsion family GUI (a later spec): moment/angle inputs, `FrictionModel` toggle.
 - Generalizing any compression-flavored aggregate (e.g. a shared min-weight/binding view) only when
   extension actually needs it — not speculatively here.
