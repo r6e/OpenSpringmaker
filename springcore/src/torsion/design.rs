@@ -133,6 +133,11 @@ pub fn solve_forward(
     let index = dm / d;
     let active =
         active_coils_with_legs(inputs.body_coils, inputs.leg1, inputs.leg2, inputs.mean_dia);
+    if !active.is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            "effective active coils (including legs) must be finite".into(),
+        ));
+    }
     let rate = angular_rate(
         material.youngs_modulus,
         inputs.wire_dia,
@@ -198,6 +203,16 @@ fn evaluate_status(
                 message: "spring winds down onto the arbor (inner diameter binds)".into(),
             });
         }
+    }
+    if load_points
+        .iter()
+        .any(|lp| lp.wound_inner_dia.meters() <= 0.0)
+    {
+        messages.push(StatusMessage {
+            severity: Severity::Warning,
+            message: "spring over-winds: wound coil inner diameter collapses to zero or below"
+                .into(),
+        });
     }
     if !(INDEX_MIN..=INDEX_MAX).contains(&index) {
         messages.push(StatusMessage {
@@ -548,5 +563,103 @@ mod tests {
         // index=10.0 (in range → no Caution), no arbor (no binding check).
         let status = evaluate_status(10.0, std::slice::from_ref(&lp), None);
         assert!(!status.has_warnings());
+    }
+
+    // ── Group A: input-domain guards (TDD — write RED first) ─────────────────
+
+    #[test]
+    fn over_wind_collapse_raises_warning() {
+        // body_coils=1e-300 causes wound mean diameter to collapse toward 0.
+        // D' = D·N_b/(N_b + θ_turns) → θ_turns ≫ N_b so D' ≈ 0 and
+        // wound_inner_dia = D' − d < 0. pct_bending_allow is independent of Na
+        // so no overstress fires — only the new over-wind advisory.
+        let m = crate::test_support::music_wire();
+        let mut i = inputs();
+        i.body_coils = 1e-300;
+        i.leg1 = Length::from_millimeters(50.0);
+        i.leg2 = Length::from_millimeters(50.0);
+        let d = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == Severity::Warning
+                    && msg.message.contains("over-winds")),
+            "expected over-wind warning, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    #[test]
+    fn non_finite_active_rejected() {
+        // leg1=1e308 m is finite but active_coils_with_legs overflows to +Inf.
+        // The new guard rejects that before computing rate/load-points.
+        let m = crate::test_support::music_wire();
+        let i = TorsionInputs {
+            wire_dia: Length::from_millimeters(0.1),
+            mean_dia: Length::from_millimeters(0.2),
+            body_coils: 5.0,
+            leg1: Length::from_meters(1e308),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+        };
+        let r = solve_forward(
+            &m,
+            i,
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    #[test]
+    fn normal_design_no_over_wind_warning() {
+        // Standard in-range design must NOT raise the over-wind warning.
+        // Boundary complement: kills the `any(...)` body if the guard is absent or inverted.
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            inputs(),
+            &[Moment::from_newton_meters(1.0)],
+            FrictionModel::PureBending,
+        )
+        .unwrap();
+        assert!(
+            !d.status
+                .messages
+                .iter()
+                .any(|msg| msg.message.contains("over-winds")),
+            "normal design must not raise over-wind warning"
+        );
+    }
+
+    #[test]
+    fn over_wind_at_zero_inner_dia_raises_warning() {
+        // wound_inner_dia == 0.0 exactly: the spring is exactly at collapse.
+        // Kills: `<= 0.0` → `< 0.0` mutant (0.0 < 0.0 is false; 0.0 <= 0.0 is true).
+        let lp = TorsionLoadPoint {
+            moment: Moment::from_newton_meters(1.0),
+            deflection: Angle::from_radians(1.0),
+            stress_inner: Stress::from_pascals(1.0),
+            stress_nominal: Stress::from_pascals(1.0),
+            pct_bending_allow: 0.5,
+            wound_mean_dia: Length::from_meters(0.002),
+            wound_inner_dia: Length::from_meters(0.0),
+        };
+        let status = evaluate_status(10.0, std::slice::from_ref(&lp), None);
+        assert!(
+            status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == Severity::Warning
+                    && msg.message.contains("over-winds")),
+            "wound_inner_dia == 0.0 must raise over-wind warning"
+        );
     }
 }
