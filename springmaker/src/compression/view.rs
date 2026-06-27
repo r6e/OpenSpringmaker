@@ -7,12 +7,12 @@ use iced::widget::{button, column, container, radio, row, scrollable, space, tex
 use iced::{Background, Color, Element, Font, Length};
 
 use crate::app::{App, Field, Message, C};
-use crate::form::ALL_SCENARIOS;
-use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow, StatusKind, StatusLine};
-use crate::view_model::{
+use crate::compression::form::ALL_SCENARIOS;
+use crate::compression::view_model::{
     inputs_view, results_view, status_view, FatigueView, GoverningRate, MinWeightView,
     PopulatedResults, ResultsView,
 };
+use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow, StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, field_label, ghost_button_style, mono_value, nav_button_style,
     panel_container, section_divider, section_heading, styled_pick_list, text_input_style, SZ_BODY,
@@ -369,7 +369,7 @@ fn render_input<'a>(app: &'a App, fd: &FieldDescriptor) -> Element<'a, Message> 
 }
 
 /// Map a [`Field`] to its current string value in the form state.
-fn field_value(form: &crate::form::FormState, field: Field) -> &str {
+fn field_value(form: &crate::compression::form::FormState, field: Field) -> &str {
     match field {
         Field::WireDia => &form.wire_dia,
         Field::MeanDia => &form.mean_dia,

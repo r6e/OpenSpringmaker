@@ -72,13 +72,13 @@ pub struct LoadTable {
 /// Severity class of a status line; the view maps this to a prefix and color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusKind {
-    /// A failed save/load action ([`App::action_error`]).
+    /// A failed save/load action (see `App::action_error`).
     ActionError,
     /// Startup material-load warning (can appear before any design is solved).
     LoadWarning,
     Info,
     Caution,
-    /// A design-level warning ([`Severity::Warning`]).
+    /// A design-level warning (see `springcore::Severity::Warning`).
     DesignWarning,
 }
 

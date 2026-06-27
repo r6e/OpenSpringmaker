@@ -8,7 +8,7 @@
 //! verbatim.
 
 use crate::app::{App, Field};
-use crate::form::{FatigueStatus, FormOutcome, ScenarioKind};
+use crate::compression::form::{FatigueStatus, FormOutcome, ScenarioKind};
 #[cfg(test)]
 use crate::presenter::Emphasis;
 use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
@@ -433,7 +433,7 @@ pub fn inputs_view(app: &App) -> InputsView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::form::FormState;
+    use crate::compression::form::FormState;
     use approx::assert_relative_eq;
     use springcore::{
         Force, Length, LoadWarning, MaterialSet, MaterialStore, SpringRate, Stress, UnitSystem,

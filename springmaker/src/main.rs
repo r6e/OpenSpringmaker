@@ -1,5 +1,5 @@
 mod app;
-mod form;
+mod compression;
 mod materials_form;
 mod materials_view;
 mod materials_view_model;
@@ -8,8 +8,6 @@ mod presenter;
 mod settings;
 mod settings_view;
 mod settings_view_model;
-mod view;
-mod view_model;
 mod widgets;
 
 #[cfg(test)]
