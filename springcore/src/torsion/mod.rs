@@ -8,8 +8,5 @@ mod mechanics;
 mod scenario;
 
 pub use design::{solve_forward, TorsionDesign, TorsionInputs, TorsionLoadPoint};
-pub use mechanics::{
-    active_coils_with_legs, angular_rate, bending_stress_inner, bending_stress_nominal, kbi_factor,
-    wound_mean_diameter, FrictionModel,
-};
+pub use mechanics::FrictionModel;
 pub use scenario::{PowerUser, Scenario};

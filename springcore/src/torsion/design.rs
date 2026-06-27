@@ -11,9 +11,6 @@ use crate::torsion::mechanics::{
 use crate::units::{Angle, AngularRate, Length, Moment, Stress};
 use crate::{Result, SpringError};
 
-/// Recommended spring-index band (SMI Handbook; Shigley §10-2), shared across families.
-const INDEX_MIN: f64 = 4.0;
-const INDEX_MAX: f64 = 12.0;
 
 /// Geometry of a torsion spring. The legs are loaded so the coils wind tighter.
 #[derive(Debug, Clone)]
@@ -214,13 +211,8 @@ fn evaluate_status(
                 .into(),
         });
     }
-    if !(INDEX_MIN..=INDEX_MAX).contains(&index) {
-        messages.push(StatusMessage {
-            severity: Severity::Caution,
-            message: format!(
-                "spring index {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
-            ),
-        });
+    if let Some(msg) = crate::design::index_caution(index) {
+        messages.push(msg);
     }
 
     DesignStatus { messages }

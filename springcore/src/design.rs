@@ -250,19 +250,28 @@ impl DesignStatus {
 const INDEX_MIN: f64 = 4.0;
 const INDEX_MAX: f64 = 12.0;
 
+/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2).
+/// Shared by every spring family's status check.
+pub(crate) fn index_caution(index: f64) -> Option<StatusMessage> {
+    if !(INDEX_MIN..=INDEX_MAX).contains(&index) {
+        Some(StatusMessage {
+            severity: Severity::Caution,
+            message: format!(
+                "spring index {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
+            ),
+        })
+    } else {
+        None
+    }
+}
+
 /// Apply engineering checks to a computed design.
 pub fn evaluate_status(design: &SpringDesign, material: &Material) -> DesignStatus {
     let mut messages = Vec::new();
 
     // Spring index outside the practical manufacturing range (SMI; Shigley §10-2).
-    if design.index < INDEX_MIN || design.index > INDEX_MAX {
-        messages.push(StatusMessage {
-            severity: Severity::Caution,
-            message: format!(
-                "spring index {:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}",
-                design.index
-            ),
-        });
+    if let Some(msg) = index_caution(design.index) {
+        messages.push(msg);
     }
 
     // Operating stress above the allowable fraction of MTS (SMI design stress).
