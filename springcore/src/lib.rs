@@ -23,6 +23,7 @@ pub(crate) mod numeric;
 pub(crate) mod optimize;
 pub(crate) mod persistence;
 pub(crate) mod scenario;
+pub mod torsion;
 pub mod units;
 
 #[cfg(test)]
@@ -43,4 +44,7 @@ pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
-pub use units::{Force, Frequency, Length, MassDensity, SpringRate, Stress, Temperature};
+pub use units::{
+    Angle, AngularRate, Force, Frequency, Length, MassDensity, Moment, SpringRate, Stress,
+    Temperature,
+};
