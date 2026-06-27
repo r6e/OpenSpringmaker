@@ -6,7 +6,7 @@ use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Message, Screen, C};
 use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
-use crate::view::{
+use crate::widgets::{
     nav_button_style, panel_container, section_divider, section_heading, SZ_BODY, SZ_LABEL,
     SZ_TITLE,
 };
