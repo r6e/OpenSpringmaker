@@ -14,6 +14,18 @@ use crate::CurvatureCorrection;
 use crate::{Result, SpringError};
 use std::f64::consts::PI;
 
+/// Smallest spring index for which the Wahl/Bergsträsser-corrected shear stress is
+/// monotone increasing in the mean diameter, so the single-endpoint feasibility test in
+/// [`best_mean_dia`] is valid. The corrected stress `τ(C) = Kw(C)·C` is U-shaped: solving
+/// `d/dC[Kw·C] = 0` gives `4C² − 8C + 1 = 0`, whose relevant root is `C* = 1 + √3/2 ≈
+/// 1.866` (the minimum). Below `C*` the stress decreases with `C`, so a request whose
+/// `c_min` sits there violates the monotonicity precondition and can make `best_mean_dia`
+/// accept an overstressed design. Bergsträsser's `K_B·C` turns slightly lower (≈ 1.718),
+/// so this floor is conservative for both correction factors. Cf. Shigley Eq. 10-5/10-6.
+pub(crate) fn min_spring_index() -> f64 {
+    1.0 + 3.0_f64.sqrt() / 2.0 // 1 + √3/2 ≈ 1.866
+}
+
 /// Which constraint limits the chosen design.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindingConstraint {
@@ -103,7 +115,66 @@ pub fn solve_min_weight(
     req: &MinWeightRequest,
     correction: CurvatureCorrection,
 ) -> Result<MinWeightSolution> {
-    let (c_min, _c_max) = req.index_bounds;
+    // Input validation (bad inputs → InconsistentInputs, NOT Infeasible). `solve_min_weight`
+    // is a public entry point: the scenario path validates raw TOML in
+    // `min_weight_request_from_spec`, but a direct caller bypasses that, so the SI request
+    // is validated here too (defense in depth, mirroring the extension optimizer). These
+    // reject malformed requests up front rather than letting non-finite/degenerate values
+    // poison the search (a zero rate diverges Na → ∞; a sub-floor c_min breaks the
+    // monotonicity precondition `best_mean_dia` relies on, see [`min_spring_index`]).
+    let rate = req.required_rate.newtons_per_meter();
+    if !(rate.is_finite() && rate > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "required rate must be a positive finite number (N/m)".into(),
+        ));
+    }
+    let force = req.max_force.newtons();
+    if !(force.is_finite() && force > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "max force must be a positive finite number (N)".into(),
+        ));
+    }
+    if !(req.clash_allowance.is_finite() && req.clash_allowance >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "clash allowance must be a finite number ≥ 0".into(),
+        ));
+    }
+    if req.candidate_diameters.is_empty() {
+        return Err(SpringError::InconsistentInputs(
+            "candidate_diameters must contain at least one diameter".into(),
+        ));
+    }
+    // Reject non-finite/zero/negative diameters explicitly rather than silently skipping
+    // them downstream, so a malformed candidate list is InconsistentInputs.
+    if req.candidate_diameters.iter().any(|d| {
+        let m = d.meters();
+        !(m.is_finite() && m > 0.0)
+    }) {
+        return Err(SpringError::InconsistentInputs(
+            "candidate diameters must be finite and positive".into(),
+        ));
+    }
+    let (c_min, c_max) = req.index_bounds;
+    // 0 < c_min is intentionally NOT checked separately: the floor (c_min ≥ 1 + √3/2 ≈
+    // 1.866) strictly implies it, so a redundant positivity guard would be an unkillable
+    // equivalent mutant. The floor still rejects every c_min ≤ 0.
+    if !(c_min.is_finite() && c_max.is_finite() && c_min < c_max && c_min >= min_spring_index()) {
+        return Err(SpringError::InconsistentInputs(format!(
+            "index bounds must satisfy {min:.4} ≤ c_min < c_max with both finite \
+             (c_min floor = 1 + √3/2, the Wahl/Bergsträsser monotonicity turning point); \
+             got c_min={c_min}, c_max={c_max}",
+            min = min_spring_index()
+        )));
+    }
+    if let Some(od_max) = req.max_outer_dia {
+        let od = od_max.meters();
+        if !(od.is_finite() && od > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "max_outer_dia must be a positive finite number".into(),
+            ));
+        }
+    }
+
     let mut best: Option<MinWeightSolution> = None;
 
     for &d in &req.candidate_diameters {
@@ -143,7 +214,7 @@ pub fn solve_min_weight(
         ) {
             continue;
         }
-        let design = solve_forward(
+        let Ok(design) = solve_forward(
             material,
             req.end_type,
             req.fixity,
@@ -153,7 +224,15 @@ pub fn solve_min_weight(
             free_length,
             &[req.max_force],
             correction,
-        )?;
+        ) else {
+            continue; // Defensive skip (mirrors the extension optimizer): a candidate whose
+                      // forward design is invalid is skipped, not aborted, so one bad wire
+                      // size never discards lighter feasible finds. Every current
+                      // solve_forward error mode is already pre-filtered by the guards above
+                      // (mean ≥ c_min·d > wire, active ≥ 1, free_length > solid, d in the
+                      // material range via best_mean_dia), so this skips nothing today; it
+                      // future-proofs the loop against any new per-candidate failure mode.
+        };
         let mass = wire_mass(material, d, mean, design.total_coils);
         if best.as_ref().map(|b| mass < b.mass_kg).unwrap_or(true) {
             best = Some(MinWeightSolution {
@@ -855,5 +934,161 @@ mod tests {
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser),
             Err(SpringError::Infeasible(_))
         ));
+    }
+
+    // ── direct-call input validation ─────────────────────────────────────────
+    //
+    // solve_min_weight is a public entry point; a direct caller bypasses the
+    // scenario-path validation in min_weight_request_from_spec. These pin each
+    // up-front guard so malformed inputs return InconsistentInputs (not a
+    // misleading Infeasible, and never a silently-overstressed design). Each is
+    // a distinct guard so the in-diff mutation gate can kill the new comparisons.
+
+    fn assert_inconsistent(req: &MinWeightRequest) {
+        let m = crate::test_support::music_wire();
+        assert!(
+            matches!(
+                solve_min_weight(&m, req, CurvatureCorrection::Bergstrasser),
+                Err(SpringError::InconsistentInputs(_))
+            ),
+            "expected InconsistentInputs"
+        );
+    }
+
+    #[test]
+    fn zero_rate_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.required_rate = SpringRate::from_newtons_per_meter(0.0);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_rate_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.required_rate = SpringRate::from_newtons_per_meter(f64::NAN);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn zero_force_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.max_force = Force::from_newtons(0.0);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_force_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.max_force = Force::from_newtons(f64::INFINITY);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn negative_clash_allowance_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.clash_allowance = -0.1;
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_clash_allowance_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.clash_allowance = f64::NAN;
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn clash_allowance_zero_is_accepted() {
+        // Pins the `>= 0` boundary so a `>` mutant on the clash guard dies.
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.clash_allowance = 0.0;
+        assert!(solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok());
+    }
+
+    #[test]
+    fn empty_candidates_rejected() {
+        let req = base_request(vec![]);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_candidate_diameter_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.candidate_diameters
+            .push(Length::from_millimeters(f64::NAN));
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_positive_candidate_diameter_rejected() {
+        let req = base_request(vec![0.0]);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_index_bound_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (4.0, f64::INFINITY);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn inverted_index_bounds_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (12.0, 4.0); // c_min > c_max
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn equal_index_bounds_rejected() {
+        // Pins the strict `c_min < c_max` boundary: a degenerate range where
+        // c_min == c_max must be rejected (kills the `< → <=` mutant).
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (4.0, 4.0);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn sub_floor_index_min_rejected() {
+        // c_min below the Wahl monotonicity floor (1 + √3/2 ≈ 1.866) would let
+        // best_mean_dia's single-endpoint feasibility test accept an overstressed
+        // design; the floor guard rejects it. (Same bug class as the extension pole.)
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (1.5, 12.0);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn index_min_exactly_at_floor_is_accepted() {
+        // Pins the `c_min >= floor` boundary so a `>` mutant on the floor guard dies.
+        let m = crate::test_support::music_wire();
+        let mut req = base_request(vec![2.0]);
+        req.index_bounds = (min_spring_index(), 12.0);
+        assert!(solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok());
+    }
+
+    #[test]
+    fn non_finite_max_outer_dia_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.max_outer_dia = Some(Length::from_millimeters(f64::NAN));
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_positive_max_outer_dia_rejected() {
+        let mut req = base_request(vec![2.0]);
+        req.max_outer_dia = Some(Length::from_millimeters(0.0));
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn min_spring_index_is_wahl_turning_point() {
+        // C* = 1 + √3/2, the minimum of the Wahl-corrected τ(C)·C curve.
+        assert_relative_eq!(
+            min_spring_index(),
+            1.0 + 3.0_f64.sqrt() / 2.0,
+            max_relative = 1e-12
+        );
     }
 }
