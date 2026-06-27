@@ -151,8 +151,9 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
             // The optimizer's single-endpoint feasibility test in best_mean_dia is only
             // valid when τ(D) is monotonic increasing, which holds only for C ≥ C*
             // where C* = 1 + √3/2 ≈ 1.866 (minimum of the Wahl-corrected stress curve,
-            // from d/dC[Kw·C] = 0 ⟹ 4C²−8C+1 = 0).
-            let c_star = 1.0 + 3.0_f64.sqrt() / 2.0; // ≈ 1.866
+            // from d/dC[Kw·C] = 0 ⟹ 4C²−8C+1 = 0). Shared with `solve_min_weight`'s own
+            // SI-request guard so the floor is defined once (see [`crate::optimize::min_spring_index`]).
+            let c_star = crate::optimize::min_spring_index();
             if *index_min < c_star {
                 return Err(SpringError::InconsistentInputs(format!(
                     "index_min={index_min:.4} is below the Wahl monotonicity threshold \
