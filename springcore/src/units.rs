@@ -51,6 +51,18 @@ si_quantity!(
     /// any spring calculation.
     Temperature
 );
+si_quantity!(
+    /// Bending/torsional moment (torque), stored in newton-metres.
+    Moment
+);
+si_quantity!(
+    /// Angle, stored in radians (SI).
+    Angle
+);
+si_quantity!(
+    /// Angular spring rate (moment per angle), stored in newton-metres per radian.
+    AngularRate
+);
 
 impl Length {
     /// Construct from metres (SI base unit).
@@ -141,6 +153,87 @@ impl SpringRate {
     /// Return value in pounds-force per inch.
     pub fn pounds_per_inch(self) -> f64 {
         self.0 * METERS_PER_INCH / NEWTONS_PER_LBF
+    }
+}
+
+impl Moment {
+    /// Construct from newton-metres (SI base unit).
+    pub fn from_newton_meters(v: f64) -> Self {
+        Self(v)
+    }
+    /// Construct from newton-millimetres (1 N·mm = 0.001 N·m).
+    pub fn from_newton_millimeters(v: f64) -> Self {
+        Self(v / 1000.0)
+    }
+    /// Construct from pound-force inches (1 lbf·in = 4.4482216152605 N × 0.0254 m).
+    pub fn from_pound_force_inches(v: f64) -> Self {
+        Self(v * NEWTONS_PER_LBF * METERS_PER_INCH)
+    }
+    /// Return value in newton-metres.
+    pub fn newton_meters(self) -> f64 {
+        self.0
+    }
+    /// Return value in newton-millimetres.
+    pub fn newton_millimeters(self) -> f64 {
+        self.0 * 1000.0
+    }
+    /// Return value in pound-force inches.
+    pub fn pound_force_inches(self) -> f64 {
+        self.0 / (NEWTONS_PER_LBF * METERS_PER_INCH)
+    }
+}
+
+impl Angle {
+    /// Construct from radians (SI base unit).
+    pub fn from_radians(v: f64) -> Self {
+        Self(v)
+    }
+    /// Construct from degrees (1 deg = π/180 rad).
+    pub fn from_degrees(v: f64) -> Self {
+        Self(v * std::f64::consts::PI / 180.0)
+    }
+    /// Construct from turns / revolutions (1 turn = 2π rad).
+    pub fn from_turns(v: f64) -> Self {
+        Self(v * std::f64::consts::TAU)
+    }
+    /// Return value in radians.
+    pub fn radians(self) -> f64 {
+        self.0
+    }
+    /// Return value in degrees.
+    pub fn degrees(self) -> f64 {
+        self.0 * 180.0 / std::f64::consts::PI
+    }
+    /// Return value in turns / revolutions.
+    pub fn turns(self) -> f64 {
+        self.0 / std::f64::consts::TAU
+    }
+}
+
+impl AngularRate {
+    /// Construct from newton-metres per radian (SI base unit).
+    pub fn from_newton_meters_per_radian(v: f64) -> Self {
+        Self(v)
+    }
+    /// Construct from newton-metres per degree (1 N·m/deg = 180/π N·m/rad).
+    pub fn from_newton_meters_per_degree(v: f64) -> Self {
+        Self(v * 180.0 / std::f64::consts::PI)
+    }
+    /// Construct from newton-metres per turn (1 N·m/turn = 1/2π N·m/rad).
+    pub fn from_newton_meters_per_turn(v: f64) -> Self {
+        Self(v / std::f64::consts::TAU)
+    }
+    /// Return value in newton-metres per radian.
+    pub fn newton_meters_per_radian(self) -> f64 {
+        self.0
+    }
+    /// Return value in newton-metres per degree.
+    pub fn newton_meters_per_degree(self) -> f64 {
+        self.0 * std::f64::consts::PI / 180.0
+    }
+    /// Return value in newton-metres per turn.
+    pub fn newton_meters_per_turn(self) -> f64 {
+        self.0 * std::f64::consts::TAU
     }
 }
 
@@ -276,5 +369,38 @@ mod tests {
         // (32-32)*k = 0 for any k). 212 °F = 100 °C.
         let boiling = Temperature::from_fahrenheit(212.0);
         assert_relative_eq!(boiling.celsius(), 100.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn moment_conversions_round_trip() {
+        let m = Moment::from_newton_meters(2.0);
+        assert_relative_eq!(m.newton_meters(), 2.0, max_relative = 1e-12);
+        assert_relative_eq!(m.newton_millimeters(), 2000.0, max_relative = 1e-12);
+        // 1 lbf·in = 4.4482216152605 N × 0.0254 m = 0.112984829... N·m
+        let one_lbf_in = Moment::from_pound_force_inches(1.0);
+        assert_relative_eq!(one_lbf_in.newton_meters(), 0.1129848290276167, max_relative = 1e-12);
+        assert_relative_eq!(one_lbf_in.pound_force_inches(), 1.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn angle_conversions_round_trip() {
+        use std::f64::consts::{PI, TAU};
+        let a = Angle::from_degrees(180.0);
+        assert_relative_eq!(a.radians(), PI, max_relative = 1e-12);
+        assert_relative_eq!(a.turns(), 0.5, max_relative = 1e-12);
+        let one_turn = Angle::from_turns(1.0);
+        assert_relative_eq!(one_turn.radians(), TAU, max_relative = 1e-12);
+        assert_relative_eq!(one_turn.degrees(), 360.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn angular_rate_conversions_round_trip() {
+        use std::f64::consts::{PI, TAU};
+        // 1 N·m/rad → per degree = ×(π/180); per turn = ×2π.
+        let k = AngularRate::from_newton_meters_per_radian(1.0);
+        assert_relative_eq!(k.newton_meters_per_degree(), PI / 180.0, max_relative = 1e-12);
+        assert_relative_eq!(k.newton_meters_per_turn(), TAU, max_relative = 1e-12);
+        let per_turn = AngularRate::from_newton_meters_per_turn(TAU);
+        assert_relative_eq!(per_turn.newton_meters_per_radian(), 1.0, max_relative = 1e-12);
     }
 }
