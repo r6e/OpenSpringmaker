@@ -498,7 +498,7 @@ impl App {
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
         match self.screen {
-            Screen::Calculator => crate::compression::view::view(self),
+            Screen::Calculator => crate::calculator::view(self),
             Screen::Materials => crate::materials_view::view(self),
             Screen::Settings => crate::settings_view::view(self),
         }

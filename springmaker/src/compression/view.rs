@@ -3,22 +3,20 @@
 //! All business logic lives in `form` and `springcore`. This module only
 //! assembles iced widgets from the current [`App`] state.
 
-use iced::widget::{button, column, container, radio, row, scrollable, space, text, text_input};
-use iced::{Background, Color, Element, Font, Length};
+use iced::widget::{column, container, row, text, text_input};
+use iced::{Color, Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
-    inputs_view, results_view, status_view, FatigueView, GoverningRate, MinWeightView,
-    PopulatedResults, ResultsView,
+    inputs_view, results_view, FatigueView, GoverningRate, MinWeightView, PopulatedResults,
+    ResultsView,
 };
-use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow, StatusKind, StatusLine};
+use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow};
 use crate::widgets::{
-    accent_button_style, field_label, ghost_button_style, mono_value, nav_button_style,
-    panel_container, section_divider, section_heading, styled_pick_list, text_input_style, SZ_BODY,
-    SZ_LABEL, SZ_TITLE,
+    field_label, mono_value, panel_container, section_divider, section_heading, styled_pick_list,
+    text_input_style, SZ_BODY, SZ_LABEL,
 };
-use springcore::UnitSystem;
 
 // --------------------------------------------------------------------------
 // Font-size constants
@@ -187,97 +185,10 @@ fn result_row<'a>(
 }
 
 // --------------------------------------------------------------------------
-// Top-level view
-// --------------------------------------------------------------------------
-
-/// Build the complete application UI.
-pub fn view(app: &App) -> Element<'_, Message> {
-    let header = build_header(app);
-    let left = build_design_panel(app);
-    let right = build_results_panel(app);
-    let status = build_status_panel(app);
-    let footer = build_footer();
-
-    let header_divider = section_divider();
-
-    let content = column![
-        header,
-        header_divider,
-        row![left, right].spacing(16),
-        status,
-        footer,
-    ]
-    .spacing(16)
-    .max_width(1200);
-
-    let root = container(scrollable(
-        container(content).padding(24).width(Length::Fill),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(Background::Color(C::INK)),
-        ..Default::default()
-    });
-
-    root.into()
-}
-
-// --------------------------------------------------------------------------
-// Header
-// --------------------------------------------------------------------------
-
-fn build_header(app: &App) -> Element<'_, Message> {
-    let app_name = text("OpenSpringmaker")
-        .size(SZ_TITLE)
-        .color(C::ACCENT)
-        .font(Font {
-            weight: iced::font::Weight::Semibold,
-            ..Font::DEFAULT
-        });
-
-    let unit_metric = radio(
-        "Metric (mm, N)",
-        UnitSystem::Metric,
-        Some(app.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let unit_us = radio(
-        "US (in, lbf)",
-        UnitSystem::Us,
-        Some(app.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
-        .on_press(Message::NavigateTo(crate::app::Screen::Materials))
-        .style(nav_button_style);
-
-    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(C::ACCENT))
-        .on_press(Message::NavigateTo(crate::app::Screen::Settings))
-        .style(nav_button_style);
-
-    row![
-        app_name,
-        space().width(Length::Fill),
-        materials_btn,
-        settings_btn,
-        unit_metric,
-        unit_us,
-    ]
-    .spacing(16)
-    .align_y(iced::Alignment::Center)
-    .into()
-}
-
-// --------------------------------------------------------------------------
 // Design (left) panel
 // --------------------------------------------------------------------------
 
-fn build_design_panel(app: &App) -> Element<'_, Message> {
+pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let material_names: Vec<String> = app
         .materials
         .names()
@@ -529,7 +440,7 @@ fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
 // Results (right) panel
 // --------------------------------------------------------------------------
 
-fn build_results_panel(app: &App) -> Element<'_, Message> {
+pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
@@ -582,61 +493,4 @@ fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> El
     ]
     .spacing(6)
     .into()
-}
-
-// --------------------------------------------------------------------------
-// Status panel
-// --------------------------------------------------------------------------
-
-fn build_status_panel(app: &App) -> Element<'_, Message> {
-    // The presenter decides suppression, ordering (load warnings first), and
-    // each line's severity class; the view maps that class to prefix and color.
-    let lines = status_view(app);
-    if lines.is_empty() {
-        return column![].into();
-    }
-
-    // Neutral heading: this panel carries both startup material-load warnings
-    // (which can appear before any design is computed) and design-status messages.
-    let mut col = column![section_heading("Status")].spacing(6);
-    for line in &lines {
-        col = col.push(render_status_line(line));
-    }
-
-    panel_container(col)
-}
-
-fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
-    let (prefix, color) = match line.kind {
-        StatusKind::ActionError => ("Error:", C::DANGER),
-        StatusKind::LoadWarning => ("Warning:", C::WARN),
-        StatusKind::Info => ("Info:", C::MUTED),
-        StatusKind::Caution => ("Caution:", C::WARN),
-        StatusKind::DesignWarning => ("Warning:", C::DANGER),
-    };
-    row![
-        text(prefix)
-            .size(SZ_LABEL)
-            .color(color)
-            .width(Length::Fixed(72.0)),
-        text(line.text.clone()).size(SZ_LABEL).color(color),
-    ]
-    .spacing(8)
-    .into()
-}
-
-// --------------------------------------------------------------------------
-// Footer
-// --------------------------------------------------------------------------
-
-fn build_footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
-        .on_press(Message::Save)
-        .style(accent_button_style);
-
-    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
-        .on_press(Message::Load)
-        .style(ghost_button_style);
-
-    row![save_btn, load_btn].spacing(12).into()
 }
