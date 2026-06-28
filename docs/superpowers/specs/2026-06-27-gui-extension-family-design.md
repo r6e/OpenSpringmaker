@@ -159,12 +159,20 @@ returns `SpringError::DataFile` and the app already shows load errors in the sta
 silent data loss); the user re-saves. (This overrides the 1a "additive, no schema bump" note,
 chosen for a clean schema in design review.)
 
-`SavedDesign::solve*` dispatch on the `DesignSpec` variant: `Compression(spec)` as today;
-`Extension(ExtScenarioSpec::PowerUser{…})` resolves the hooks (`HookSpecSpec` → `HookEnds`, with
-`Default` using `mean_dia`) and solves via `extension::scenario::PowerUser`. The GUI continues to
-round-trip spec↔form and re-solve through the form: `extension::form::build_spec` (FormState →
-`DesignSpec::Extension`) and `populate_from_spec` (→ FormState); `App::save_to`/`apply_saved`
-dispatch on `family`.
+**`SavedDesign::solve*` are compression-only (amended during 1b implementation).** They dispatch
+on the `DesignSpec` variant: `Compression(spec)` solves as today and yields a compression
+`SpringDesign`; an `Extension(_)` design returns `SpringError::InconsistentInputs` rather than
+solving through `SavedDesign`. The original design routed extension through
+`extension::scenario::PowerUser` here too, but that proved redundant: the return type
+`Result<SpringDesign>` is the *compression* design, and the GUI already re-solves extension
+designs through the form. So `SavedDesign` serializes extension inputs but does not solve them,
+and the method keeps its name (the `SpringDesign` return type already signals the restriction).
+The GUI round-trips spec↔form and re-solves through the form: `populate_from_spec` (`ExtScenarioSpec`
+→ FormState) then `extension::form::parse_and_solve` on recompute. `extension::form::build_spec`
+returns an `ExtScenarioSpec` that `App::save_to` wraps in `DesignSpec::Extension` — mirroring
+compression's `ScenarioSpec` → `DesignSpec::Compression`; `App::save_to`/`apply_saved` dispatch on
+`family`. On load, `SavedDesign::from_toml` rejects any non-finite (`inf`/`nan`) float before it
+reaches a `DesignSpec`, and `SavedDesign::save` writes atomically (temp file + rename).
 
 ## Data flow
 
