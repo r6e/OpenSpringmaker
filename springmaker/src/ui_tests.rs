@@ -463,3 +463,71 @@ fn ext_save_load_round_trip() {
     // Clean up — no temp files must remain in the repo or working directory.
     let _ = std::fs::remove_file(&path);
 }
+
+/// Custom-hook save/load round-trip through the full `App::save_to` →
+/// `App::load_from` chain: the hook mode and both radii must survive, not just
+/// the Default-hook path covered above.
+#[test]
+fn ext_save_load_round_trip_custom_hooks() {
+    let path = std::env::temp_dir().join(format!("osm_ext_custom_{}.toml", std::process::id()));
+
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    for (field, value) in [
+        (crate::extension::form::Field::WireDia, "2.0"),
+        (crate::extension::form::Field::MeanDia, "20.0"),
+        (crate::extension::form::Field::Active, "10"),
+        (crate::extension::form::Field::FreeLength, "60"),
+        (crate::extension::form::Field::InitialTension, "10"),
+        (crate::extension::form::Field::Loads, "10, 30"),
+    ] {
+        app.update(Message::ExtField(field, value.into()));
+    }
+
+    // Switch to Custom hooks and enter explicit radii.
+    app.update(Message::ExtHookMode(HookMode::Custom));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::HookR1,
+        "8".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::HookR2,
+        "4".into(),
+    ));
+    assert!(
+        app.ext_outcome.is_some(),
+        "custom-hook design must solve before save"
+    );
+
+    let spec_before = build_spec(&app.extension, UnitSystem::Metric)
+        .expect("solved custom-hook form must produce a valid spec");
+
+    app.save_to(&path);
+    assert!(
+        app.action_error.is_none(),
+        "save must succeed without error"
+    );
+
+    let mut app2 = test_app();
+    assert!(
+        app2.load_from(&path),
+        "load_from must return true on success"
+    );
+    assert_eq!(app2.family, Family::Extension);
+    assert_eq!(
+        app2.extension.hook_mode,
+        HookMode::Custom,
+        "hook mode must be restored to Custom after load"
+    );
+    assert_eq!(app2.extension.hook_r1, "8", "hook r1 must be restored");
+    assert_eq!(app2.extension.hook_r2, "4", "hook r2 must be restored");
+
+    let spec_after = build_spec(&app2.extension, UnitSystem::Metric)
+        .expect("loaded custom-hook form must produce a valid spec");
+    assert_eq!(
+        spec_before, spec_after,
+        "custom-hook save/load round-trip must preserve the full spec"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
