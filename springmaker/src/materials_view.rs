@@ -8,7 +8,7 @@ use iced::{Background, Element, Font, Length};
 
 use crate::app::{App, MatField, Message, Screen, C};
 use crate::materials_view_model::{edit_panel, feedback, list_rows, Badge, FeedbackKind};
-use crate::view::{
+use crate::widgets::{
     accent_button_style, danger_button_style, field_label, ghost_button_style, mono_value,
     nav_button_style, panel_container, section_divider, section_heading, styled_pick_list,
     text_input_style, SZ_BODY, SZ_LABEL, SZ_TITLE,

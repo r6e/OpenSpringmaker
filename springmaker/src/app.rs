@@ -1,6 +1,8 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
-use crate::form::{format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind};
+use crate::compression::form::{
+    format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind,
+};
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
@@ -513,7 +515,7 @@ impl App {
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
         match self.screen {
-            Screen::Calculator => crate::view::view(self),
+            Screen::Calculator => crate::compression::view::view(self),
             Screen::Materials => crate::materials_view::view(self),
             Screen::Settings => crate::settings_view::view(self),
         }
@@ -595,7 +597,7 @@ impl App {
     /// intact. The leading clear makes a successful save dismiss a prior failure.
     fn save_to(&mut self, path: &std::path::Path) {
         self.action_error = None;
-        let spec = match crate::form::build_spec(&self.form) {
+        let spec = match crate::compression::form::build_spec(&self.form) {
             Ok(s) => s,
             Err(e) => {
                 self.action_error = Some(e.to_string());
@@ -643,7 +645,7 @@ impl App {
     fn apply_saved(&mut self, saved: SavedDesign) {
         self.form.material = saved.material;
         self.form.unit_system = saved.unit_system;
-        crate::form::populate_from_spec(&mut self.form, &saved.scenario);
+        crate::compression::form::populate_from_spec(&mut self.form, &saved.scenario);
     }
 }
 
@@ -730,7 +732,7 @@ mod tests {
             springcore::CurvatureCorrection::Bergstrasser,
         );
         // PowerUser design with spring index C = mean_dia / wire_dia = 20 / 2 = 10.
-        app.form.scenario = crate::form::ScenarioKind::PowerUser;
+        app.form.scenario = crate::compression::form::ScenarioKind::PowerUser;
         app.form.wire_dia = "2.0".into();
         app.form.mean_dia = "20.0".into();
         app.form.active = "10".into();
@@ -768,7 +770,7 @@ mod tests {
     #[test]
     fn recompute_produces_outcome_for_valid_form() {
         let mut app = App::default();
-        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.scenario = crate::compression::form::ScenarioKind::RateBased;
         app.form.wire_dia = "2.0".into();
         app.form.mean_dia = "20.0".into();
         app.form.rate = "2.0".into(); // 2 N/mm = 2000 N/m (internal)
@@ -782,7 +784,7 @@ mod tests {
     #[test]
     fn recompute_sets_error_for_invalid_form() {
         let mut app = App::default();
-        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.scenario = crate::compression::form::ScenarioKind::RateBased;
         app.form.wire_dia = "oops".into();
         app.recompute();
         assert!(app.outcome.is_none());
@@ -792,7 +794,7 @@ mod tests {
     /// A hermetic app with a valid rate-based design already solved.
     fn solved_app() -> App {
         let mut app = test_app();
-        app.form.scenario = crate::form::ScenarioKind::RateBased;
+        app.form.scenario = crate::compression::form::ScenarioKind::RateBased;
         app.form.wire_dia = "2.0".into();
         app.form.mean_dia = "20.0".into();
         app.form.rate = "2.0".into();
