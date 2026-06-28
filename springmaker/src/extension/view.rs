@@ -55,7 +55,6 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
             move |s| Message::ExtField(field, s),
         ));
     }
-    let inputs_group = inputs_col;
 
     // Hooks group — mode toggle + optional custom-radius inputs.
     let hooks_group = hooks_group(app);
@@ -63,7 +62,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let inner = column![
         setup_group,
         section_divider(),
-        inputs_group,
+        inputs_col,
         section_divider(),
         hooks_group,
     ]

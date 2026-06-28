@@ -33,14 +33,11 @@ pub struct ExtPopulatedResults {
 
 /// Build the extension results panel view model from app state.
 ///
-/// Mirrors the compression `results_view` logic: error beats populated, blank
-/// state with no error is Empty.
+/// Mirrors the compression `results_view` logic: a solved outcome takes
+/// priority over an error string (the two are mutually exclusive after any
+/// recompute); blank state with neither is Empty.
 pub fn ext_results_view(app: &App) -> ExtResultsView {
-    if let Some(err) = &app.error {
-        return ExtResultsView::Error(err.clone());
-    }
     match &app.ext_outcome {
-        None => ExtResultsView::Empty,
         Some(out) => {
             let us = app.unit_system;
             let rate = display_rate(out.design.rate, us);
@@ -53,6 +50,10 @@ pub fn ext_results_view(app: &App) -> ExtResultsView {
                 geometry: geometry_rows(&out.design, us),
             }))
         }
+        None => match &app.error {
+            Some(err) => ExtResultsView::Error(err.clone()),
+            None => ExtResultsView::Empty,
+        },
     }
 }
 

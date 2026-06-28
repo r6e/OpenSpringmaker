@@ -30,7 +30,7 @@ impl std::fmt::Display for HookMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             HookMode::Default => "Default (machine loops)",
-            HookMode::Custom => "Custom",
+            HookMode::Custom => "Custom radii",
         })
     }
 }
@@ -298,6 +298,30 @@ mod tests {
             CurvatureCorrection::default()
         )
         .is_err());
+    }
+
+    /// Blank `loads` is explicitly allowed: extension springs have geometry and
+    /// rate regardless of applied loads, so a zero-load form is a valid query
+    /// for spring properties (index, rate, dimensions) without stress analysis.
+    #[test]
+    fn blank_loads_returns_ok_with_empty_load_points() {
+        let materials = default_materials();
+        let form = ExtFormState {
+            loads: String::new(),
+            ..metric_form()
+        };
+        let out = parse_and_solve(
+            &form,
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect("blank loads should be allowed");
+        assert!(
+            out.design.load_points.is_empty(),
+            "no load points when loads field is blank"
+        );
     }
 
     #[test]

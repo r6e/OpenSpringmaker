@@ -29,7 +29,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ),
     };
     let status = status_panel(app);
-    let footer = footer();
+    let footer = footer(app.family);
 
     let header_divider = section_divider();
 
@@ -160,14 +160,22 @@ fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
 // Footer
 // --------------------------------------------------------------------------
 
-fn footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
-        .on_press(Message::Save)
-        .style(accent_button_style);
+fn footer(family: Family) -> Element<'static, Message> {
+    match family {
+        Family::Compression => {
+            let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
+                .on_press(Message::Save)
+                .style(accent_button_style);
 
-    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
-        .on_press(Message::Load)
-        .style(ghost_button_style);
+            let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
+                .on_press(Message::Load)
+                .style(ghost_button_style);
 
-    row![save_btn, load_btn].spacing(12).into()
+            row![save_btn, load_btn].spacing(12).into()
+        }
+        Family::Extension => text("Save/Load for extension springs: coming in Task 7.")
+            .size(SZ_BODY)
+            .color(C::MUTED)
+            .into(),
+    }
 }

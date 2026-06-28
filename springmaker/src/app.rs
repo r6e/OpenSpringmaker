@@ -188,9 +188,10 @@ pub struct App {
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
-    /// Solve error: set/cleared by [`App::recompute`] as an exclusive pair with
-    /// `outcome` (a present `outcome` means the solve succeeded). Surfaced in the
-    /// results panel only when `outcome` is `None`.
+    /// Solve error: set/cleared by [`App::recompute`]. Exclusive pair with
+    /// `outcome` (Compression) or `ext_outcome` (Extension) depending on the active
+    /// family — a present outcome means the solve succeeded. Surfaced in the results
+    /// panel only when the corresponding outcome is `None`.
     pub error: Option<String>,
     /// Save/load action error. Independent of `outcome`/`error` so a failed save
     /// or load is surfaced (in the status panel) without wiping the design the
@@ -264,6 +265,8 @@ impl App {
         self.action_error = None;
         match self.family {
             Family::Compression => {
+                // Stale extension outcome from a prior solve is no longer active.
+                self.ext_outcome = None;
                 match parse_and_solve(
                     &self.form,
                     &self.material,
@@ -282,6 +285,20 @@ impl App {
                 }
             }
             Family::Extension => {
+                // Stale compression outcome from a prior solve is no longer active.
+                self.outcome = None;
+                // A completely blank extension form means the user hasn't entered
+                // anything yet. Treat it as the Empty/initial state (no error) rather
+                // than surfacing a parse error on every family switch.
+                let ext = &self.extension;
+                if ext.wire_dia.trim().is_empty()
+                    && ext.mean_dia.trim().is_empty()
+                    && ext.active.trim().is_empty()
+                {
+                    self.error = None;
+                    self.ext_outcome = None;
+                    return;
+                }
                 match crate::extension::form::parse_and_solve(
                     &self.extension,
                     &self.material,
