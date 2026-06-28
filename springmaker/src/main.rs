@@ -1,6 +1,7 @@
 mod app;
 mod calculator;
 mod compression;
+mod extension;
 mod form_helpers;
 mod materials_form;
 mod materials_view;

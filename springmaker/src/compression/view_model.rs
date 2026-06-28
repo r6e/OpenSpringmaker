@@ -10,11 +10,11 @@
 use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
-    display_force, display_len, display_rate, display_stress, unit_force_label, unit_length_label,
-    unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable,
-    ResultRow, StatusKind, StatusLine,
+    display_force, display_len, display_rate, display_stress, status_kind, unit_force_label,
+    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
+    LoadTable, ResultRow, StatusKind, StatusLine,
 };
-use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
+use springcore::{BindingConstraint, SpringDesign, UnitSystem};
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
@@ -215,15 +215,6 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 
 // ── Status panel ────────────────────────────────────────────────────────────
 
-/// Status class for a design message's severity.
-fn status_kind(severity: Severity) -> StatusKind {
-    match severity {
-        Severity::Info => StatusKind::Info,
-        Severity::Caution => StatusKind::Caution,
-        Severity::Warning => StatusKind::DesignWarning,
-    }
-}
-
 /// Status lines to show: a save/load action error first (most recent), then
 /// load warnings, then design messages. An empty vector means the status panel
 /// is suppressed entirely.
@@ -359,7 +350,7 @@ mod tests {
     use super::*;
     use crate::compression::form::FormState;
     use crate::presenter::Emphasis;
-    use springcore::{LoadWarning, MaterialSet, MaterialStore, UnitSystem};
+    use springcore::{LoadWarning, MaterialSet, MaterialStore, Severity, UnitSystem};
 
     fn store() -> MaterialStore {
         MaterialStore::new(MaterialSet::load_default())

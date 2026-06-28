@@ -22,7 +22,7 @@ pub enum FatigueStatus {
     Computed(FatigueResult),
 }
 
-/// Which text field a [`crate::app::Message::Field`] targets.
+/// Which text field a [`crate::app::Message::CompField`] targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     WireDia,

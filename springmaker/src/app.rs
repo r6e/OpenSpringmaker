@@ -1,12 +1,13 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
 use crate::compression::form::{parse_and_solve, Field, FormOutcome, FormState, ScenarioKind};
+use crate::extension::form::{ExtFormOutcome, ExtFormState};
 use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
 use springcore::{
-    CurvatureCorrection, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
+    CurvatureCorrection, Family, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
     UnitSystem,
 };
 
@@ -138,8 +139,8 @@ pub enum MatField {
 /// All UI events.
 #[derive(Debug, Clone)]
 pub enum Message {
-    // Calculator screen
-    Field(Field, String),
+    // Calculator screen — compression
+    CompField(Field, String),
     Material(String),
     Scenario(ScenarioKind),
     Units(UnitSystem),
@@ -147,6 +148,11 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
+    // Calculator screen — family selector
+    SelectFamily(Family),
+    // Calculator screen — extension
+    ExtField(crate::extension::form::Field, String),
+    ExtHookMode(crate::extension::form::HookMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -168,7 +174,13 @@ pub enum Message {
 
 /// Top-level application state.
 pub struct App {
+    /// Active spring family (Compression | Extension).
+    pub family: Family,
     pub form: FormState,
+    /// Extension PowerUser form inputs.
+    pub extension: ExtFormState,
+    /// Solved extension outcome; `None` until a valid extension form is solved.
+    pub ext_outcome: Option<ExtFormOutcome>,
     /// Selected material name (shared across families). Lifted out of `FormState`.
     pub material: String,
     /// Active unit system (shared across families). Lifted out of `FormState`.
@@ -214,7 +226,10 @@ impl App {
         correction: CurvatureCorrection,
     ) -> Self {
         Self {
+            family: Family::default(),
             form: FormState::default(),
+            extension: ExtFormState::default(),
+            ext_outcome: None,
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
             materials,
@@ -247,20 +262,42 @@ impl App {
         // A form edit (or successful load / return to the calculator) dismisses a
         // stale save/load error.
         self.action_error = None;
-        match parse_and_solve(
-            &self.form,
-            &self.material,
-            self.unit_system,
-            &self.materials,
-            self.correction,
-        ) {
-            Ok(out) => {
-                self.outcome = Some(out);
-                self.error = None;
+        match self.family {
+            Family::Compression => {
+                match parse_and_solve(
+                    &self.form,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
             }
-            Err(e) => {
-                self.outcome = None;
-                self.error = Some(format_error(&e, self.unit_system));
+            Family::Extension => {
+                match crate::extension::form::parse_and_solve(
+                    &self.extension,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.ext_outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.ext_outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
             }
         }
     }
@@ -283,8 +320,20 @@ impl App {
     /// Process a UI event, updating state and re-solving the design where needed.
     pub fn update(&mut self, message: Message) {
         let should_recompute = match message {
-            Message::Field(field, value) => {
+            Message::CompField(field, value) => {
                 self.set_field(field, value);
+                true
+            }
+            Message::SelectFamily(fam) => {
+                self.family = fam;
+                true
+            }
+            Message::ExtField(f, v) => {
+                self.set_ext_field(f, v);
+                true
+            }
+            Message::ExtHookMode(m) => {
+                self.extension.hook_mode = m;
                 true
             }
             Message::Material(m) => {
@@ -540,6 +589,21 @@ impl App {
             Field::MaxOuterDia => f.max_outer_dia = value,
             Field::CandidateDiameters => f.candidate_diameters = value,
             Field::ClashAllowance => f.clash_allowance = value,
+        }
+    }
+
+    fn set_ext_field(&mut self, field: crate::extension::form::Field, value: String) {
+        use crate::extension::form::Field as EF;
+        let f = &mut self.extension;
+        match field {
+            EF::WireDia => f.wire_dia = value,
+            EF::MeanDia => f.mean_dia = value,
+            EF::Active => f.active = value,
+            EF::FreeLength => f.free_length = value,
+            EF::InitialTension => f.initial_tension = value,
+            EF::Loads => f.loads = value,
+            EF::HookR1 => f.hook_r1 = value,
+            EF::HookR2 => f.hook_r2 = value,
         }
     }
 

@@ -4,7 +4,7 @@
 //! functions and result aggregates live in each family's `view_model`.
 
 use crate::form_helpers::MM_PER_M;
-use springcore::{Force, Length, SpringRate, Stress, UnitSystem};
+use springcore::{Force, Length, Severity, SpringRate, Stress, UnitSystem};
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
@@ -177,6 +177,15 @@ pub(crate) fn display_stress(s: Stress, us: UnitSystem) -> (f64, &'static str) {
         UnitSystem::Us => s.psi() / 1000.0,
     };
     (value, unit_stress_label(us))
+}
+
+/// Map a design-message severity to its status-line class. Shared by every family.
+pub(crate) fn status_kind(severity: Severity) -> StatusKind {
+    match severity {
+        Severity::Info => StatusKind::Info,
+        Severity::Caution => StatusKind::Caution,
+        Severity::Warning => StatusKind::DesignWarning,
+    }
 }
 
 // ── Hero rate readout ────────────────────────────────────────────────────────

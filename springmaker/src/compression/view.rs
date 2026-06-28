@@ -221,7 +221,7 @@ fn render_input<'a>(app: &'a App, fd: &FieldDescriptor<Field>) -> Element<'a, Me
         &fd.label,
         field_value(&app.form, field),
         calc_field_id(field),
-        move |s| Message::Field(field, s),
+        move |s| Message::CompField(field, s),
     )
 }
 

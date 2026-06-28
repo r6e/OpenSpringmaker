@@ -1,26 +1,33 @@
 //! Family-agnostic Calculator screen shell.
 //!
 //! Provides the chrome (header, status panel, footer) that wraps any spring
-//! family's design and results panels. Currently wires directly to the
-//! compression family; Task 6 swaps the inner panels for a family-dispatched call.
+//! family's design and results panels. The active family is dispatched via
+//! [`App::family`]; the inner panels are supplied by the family's own view module.
 
 use iced::widget::{button, column, container, radio, row, scrollable, space, text};
 use iced::{Background, Element, Font, Length};
 
 use crate::app::{App, Message, Screen, C};
-use crate::compression::view_model::status_view;
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    section_heading, styled_pick_list, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
-use springcore::UnitSystem;
+use springcore::{Family, UnitSystem, ALL_FAMILIES};
 
 /// Build the complete Calculator screen UI.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let header = header(app);
-    let left = crate::compression::view::design_panel(app);
-    let right = crate::compression::view::results_panel(app);
+    let (left, right) = match app.family {
+        Family::Compression => (
+            crate::compression::view::design_panel(app),
+            crate::compression::view::results_panel(app),
+        ),
+        Family::Extension => (
+            crate::extension::view::design_panel(app),
+            crate::extension::view::results_panel(app),
+        ),
+    };
     let status = status_panel(app);
     let footer = footer();
 
@@ -62,6 +69,12 @@ fn header(app: &App) -> Element<'_, Message> {
             ..Font::DEFAULT
         });
 
+    let family_selector = styled_pick_list(
+        ALL_FAMILIES.to_vec(),
+        Some(app.family),
+        Message::SelectFamily,
+    );
+
     let unit_metric = radio(
         "Metric (mm, N)",
         UnitSystem::Metric,
@@ -88,6 +101,8 @@ fn header(app: &App) -> Element<'_, Message> {
 
     row![
         app_name,
+        space().width(Length::Fixed(160.0)),
+        family_selector,
         space().width(Length::Fill),
         materials_btn,
         settings_btn,
@@ -104,15 +119,15 @@ fn header(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn status_panel(app: &App) -> Element<'_, Message> {
-    // The presenter decides suppression, ordering (load warnings first), and
-    // each line's severity class; the view maps that class to prefix and color.
-    let lines = status_view(app);
+    let lines = match app.family {
+        Family::Compression => crate::compression::view_model::status_view(app),
+        Family::Extension => crate::extension::view_model::ext_status_view(app),
+    };
+
     if lines.is_empty() {
         return column![].into();
     }
 
-    // Neutral heading: this panel carries both startup material-load warnings
-    // (which can appear before any design is computed) and design-status messages.
     let mut col = column![section_heading("Status")].spacing(6);
     for line in &lines {
         col = col.push(render_status_line(line));
