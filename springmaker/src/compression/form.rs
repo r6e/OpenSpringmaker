@@ -136,6 +136,57 @@ impl Default for FormState {
     }
 }
 
+impl FormState {
+    /// Whether the user has entered none of the active scenario's required inputs.
+    ///
+    /// Drives the "untouched form" suppression in `App::recompute`: an entirely
+    /// empty form (e.g. just after a family/scenario switch) stays in the initial
+    /// Empty state instead of surfacing a parse error, but once ANY required field
+    /// for the active scenario is filled the form is no longer blank and parse
+    /// feedback shows. Each scenario lists the fields it actually reads — Dimensional
+    /// uses `outer_dia` (not `mean_dia`), MinWeight optimises over
+    /// `candidate_diameters` — so a partially-filled form is never mistaken for blank.
+    /// Pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) are not user
+    /// input and are excluded.
+    pub fn is_blank(&self) -> bool {
+        let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
+        match self.scenario {
+            ScenarioKind::PowerUser => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.active,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::TwoLoad => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.force1,
+                &self.length1,
+                &self.force2,
+                &self.length2,
+            ]),
+            ScenarioKind::RateBased => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.rate,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::Dimensional => all_empty(&[
+                &self.wire_dia,
+                &self.outer_dia,
+                &self.active,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::MinWeight => {
+                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
+            }
+        }
+    }
+}
+
 /// Extra outputs produced only by the Min Weight optimisation path.
 #[derive(Debug, Clone)]
 pub struct MinWeightExtra {
@@ -438,6 +489,68 @@ mod tests {
             fatigue_max: "30".into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn is_blank_true_for_untouched_form_false_once_filled() {
+        let mut f = FormState::default();
+        assert!(f.is_blank(), "a default PowerUser form is blank");
+        f.wire_dia = "2".into();
+        assert!(!f.is_blank(), "filling a required field clears blank");
+    }
+
+    #[test]
+    fn is_blank_dimensional_uses_outer_dia_not_mean_dia() {
+        let mut f = FormState {
+            scenario: ScenarioKind::Dimensional,
+            ..FormState::default()
+        };
+        assert!(f.is_blank(), "an untouched Dimensional form is blank");
+        // mean_dia is not a Dimensional input — filling it must not clear blank.
+        f.mean_dia = "20".into();
+        assert!(
+            f.is_blank(),
+            "mean_dia is not a Dimensional input; the form stays blank"
+        );
+        // outer_dia IS a Dimensional input.
+        f.outer_dia = "30".into();
+        assert!(
+            !f.is_blank(),
+            "outer_dia is a Dimensional input; the form is no longer blank"
+        );
+    }
+
+    #[test]
+    fn is_blank_minweight_ignores_prefilled_defaults_but_not_required_rate() {
+        let mut f = FormState {
+            scenario: ScenarioKind::MinWeight,
+            ..FormState::default()
+        };
+        // index_min/index_max/clash_allowance default non-empty but are not user
+        // input, so a default MinWeight form is still blank.
+        assert!(f.is_blank(), "a default MinWeight form is blank");
+        // ...but the required rate IS user input — and it is the first field shown,
+        // so filling only it must clear blank.
+        f.rate = "2".into();
+        assert!(
+            !f.is_blank(),
+            "filling the required MinWeight rate clears blank"
+        );
+    }
+
+    #[test]
+    fn is_blank_minweight_optional_max_outer_dia_does_not_count() {
+        let mut f = FormState {
+            scenario: ScenarioKind::MinWeight,
+            ..FormState::default()
+        };
+        // max_outer_dia is an optional cap, not a required input — filling only it
+        // must NOT clear blank (else an optional field would trigger a parse error).
+        f.max_outer_dia = "30".into();
+        assert!(
+            f.is_blank(),
+            "the optional max_outer_dia is not required input; the form stays blank"
+        );
     }
 
     #[test]

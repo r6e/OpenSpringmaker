@@ -69,6 +69,33 @@ impl Default for ExtFormState {
     }
 }
 
+impl ExtFormState {
+    /// Whether the user has entered none of the PowerUser scenario's required
+    /// inputs. Drives the "untouched form" suppression in `App::recompute`: the
+    /// results panel stays in its initial Empty state until ANY required field is
+    /// filled, after which parse feedback shows. In Default hook mode the radii are
+    /// auto-resolved from the mean diameter and are not input; in Custom mode they
+    /// are required, so they count toward blankness only then. Mirrors
+    /// `compression::form::FormState::is_blank`.
+    pub fn is_blank(&self) -> bool {
+        let core_blank = [
+            &self.wire_dia,
+            &self.mean_dia,
+            &self.active,
+            &self.free_length,
+            &self.initial_tension,
+            &self.loads,
+        ]
+        .iter()
+        .all(|f| f.trim().is_empty());
+        let hooks_blank = match self.hook_mode {
+            HookMode::Default => true,
+            HookMode::Custom => self.hook_r1.trim().is_empty() && self.hook_r2.trim().is_empty(),
+        };
+        core_blank && hooks_blank
+    }
+}
+
 /// A solved extension form: the design (which carries engine-computed status).
 #[derive(Debug, Clone)]
 pub struct ExtFormOutcome {
@@ -201,6 +228,35 @@ mod tests {
             hook_r1: String::new(),
             hook_r2: String::new(),
         }
+    }
+
+    #[test]
+    fn is_blank_true_until_any_required_field_filled() {
+        let mut f = ExtFormState::default();
+        assert!(f.is_blank(), "a default extension form is blank");
+        // initial_tension is a required PowerUser input — filling it clears blank,
+        // even though wire/mean/active are still empty.
+        f.initial_tension = "5".into();
+        assert!(
+            !f.is_blank(),
+            "filling initial tension (a required input) clears blank"
+        );
+    }
+
+    #[test]
+    fn is_blank_custom_hook_radius_counts_as_input() {
+        let mut f = ExtFormState {
+            hook_mode: HookMode::Custom,
+            ..ExtFormState::default()
+        };
+        assert!(f.is_blank(), "an untouched Custom-hook form is blank");
+        // In Custom mode a hook radius is required input, so entering one (even with
+        // the core geometry still empty) must clear blank.
+        f.hook_r1 = "8".into();
+        assert!(
+            !f.is_blank(),
+            "a Custom-mode hook radius is required input; the form is no longer blank"
+        );
     }
 
     #[test]

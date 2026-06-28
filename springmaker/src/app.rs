@@ -267,25 +267,12 @@ impl App {
             Family::Compression => {
                 // Stale extension outcome from a prior solve is no longer active.
                 self.ext_outcome = None;
-                // If the scenario's primary required fields are all blank (e.g.
-                // the user switched families on an untouched form), treat this
-                // as the initial state rather than surfacing a parse error.
-                // MinWeight does not require wire_dia/mean_dia upfront — it
-                // optimises over candidate_diameters — so it gets its own check.
-                let is_blank_compression_form = {
-                    use crate::compression::form::ScenarioKind;
-                    match self.form.scenario {
-                        ScenarioKind::MinWeight => {
-                            self.form.candidate_diameters.trim().is_empty()
-                                && self.form.max_force.trim().is_empty()
-                        }
-                        _ => {
-                            self.form.wire_dia.trim().is_empty()
-                                && self.form.mean_dia.trim().is_empty()
-                        }
-                    }
-                };
-                if is_blank_compression_form {
+                // If the user has entered none of the active scenario's required
+                // inputs (e.g. switched families on an untouched form), treat this
+                // as the initial state rather than surfacing a parse error. Once any
+                // required field is filled the form is no longer blank and parse
+                // feedback shows — see `FormState::is_blank`.
+                if self.form.is_blank() {
                     self.error = None;
                     self.outcome = None;
                     return;
@@ -310,14 +297,12 @@ impl App {
             Family::Extension => {
                 // Stale compression outcome from a prior solve is no longer active.
                 self.outcome = None;
-                // If the primary geometry fields are all blank (e.g. the user
-                // switched families on an untouched form), treat this as the
-                // initial state rather than surfacing a parse error.
-                let ext = &self.extension;
-                if ext.wire_dia.trim().is_empty()
-                    && ext.mean_dia.trim().is_empty()
-                    && ext.active.trim().is_empty()
-                {
+                // If the user has entered none of the PowerUser required inputs
+                // (e.g. switched families on an untouched form), treat this as the
+                // initial state rather than surfacing a parse error. Once any
+                // required field is filled, parse feedback shows — see
+                // `ExtFormState::is_blank`.
+                if self.extension.is_blank() {
                     self.error = None;
                     self.ext_outcome = None;
                     return;
@@ -1218,5 +1203,43 @@ mod tests {
             app.outcome.is_none(),
             "blank compression form must not produce an outcome"
         );
+    }
+
+    /// A partially-filled Dimensional form (outer diameter entered, wire diameter
+    /// still blank) must NOT be suppressed as "blank" — Dimensional reads `outer_dia`,
+    /// not `mean_dia`, so the form carries real input and the missing wire diameter
+    /// must surface as a parse error. Regression: the old guard checked `mean_dia`
+    /// (which Dimensional never fills), so any Dimensional form with a blank wire was
+    /// wrongly treated as blank and left in the Empty state.
+    #[test]
+    fn partially_filled_dimensional_form_surfaces_parse_error() {
+        use crate::compression::form::ScenarioKind;
+        let mut app = test_app();
+        app.form.scenario = ScenarioKind::Dimensional;
+        app.form.outer_dia = "30".into();
+        app.recompute();
+        assert!(
+            app.error.is_some(),
+            "a Dimensional form with input but a missing wire diameter must show a parse error, not stay Empty"
+        );
+        assert!(app.outcome.is_none());
+    }
+
+    /// A partially-filled extension form (free length entered, geometry blank) must
+    /// surface a parse error rather than staying Empty. Regression: the old guard
+    /// only checked wire/mean/active, so entering free length or initial tension
+    /// first was wrongly suppressed.
+    #[test]
+    fn partially_filled_extension_form_surfaces_parse_error() {
+        use springcore::Family;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Extension));
+        app.extension.free_length = "60".into();
+        app.recompute();
+        assert!(
+            app.error.is_some(),
+            "an extension form with input but missing geometry must show a parse error, not stay Empty"
+        );
+        assert!(app.ext_outcome.is_none());
     }
 }
