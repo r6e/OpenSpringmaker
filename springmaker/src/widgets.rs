@@ -3,10 +3,11 @@
 //! the app shell's color palette (`C`) and `Message`. Screen-specific widgets live
 //! in that screen's own view module.
 
-use iced::widget::{container, pick_list, rule, text};
+use iced::widget::{column, container, pick_list, row, rule, text, text_input};
 use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{Message, C};
+use crate::presenter::{Emphasis, GoverningRate, ResultRow};
 
 // --------------------------------------------------------------------------
 // Font-size constants
@@ -233,4 +234,114 @@ pub(crate) fn nav_button_style(
         shadow: Default::default(),
         snap: Default::default(),
     }
+}
+
+// ── Results panel helpers ────────────────────────────────────────────────────
+
+/// Hero font size for the governing-rate readout.
+pub(crate) const SZ_HERO: u32 = 22;
+
+/// A muted label + mono value row with an explicit value color.
+pub(crate) fn result_row_colored<'a>(
+    label: impl Into<String>,
+    value: impl Into<String>,
+    unit: impl Into<String>,
+    value_color: Color,
+) -> Element<'a, Message> {
+    let value = value.into();
+    let unit = unit.into();
+    let display = if unit.is_empty() {
+        value
+    } else {
+        format!("{value} {unit}")
+    };
+    row![
+        text(label.into())
+            .size(SZ_LABEL)
+            .color(C::MUTED)
+            .width(Length::FillPortion(2)),
+        text(display)
+            .font(Font::MONOSPACE)
+            .size(SZ_BODY)
+            .color(value_color)
+            .width(Length::FillPortion(3)),
+    ]
+    .spacing(8)
+    .into()
+}
+
+/// A muted label + mono value row in standard text color, used in results readouts.
+pub(crate) fn result_row<'a>(
+    label: impl Into<String>,
+    value: impl Into<String>,
+    unit: impl Into<String>,
+) -> Element<'a, Message> {
+    result_row_colored(label, value, unit, C::TEXT)
+}
+
+/// Render one result row, mapping the presenter's emphasis to a color.
+pub(crate) fn render_result_row(r: &ResultRow) -> Element<'static, Message> {
+    match r.emphasis {
+        Emphasis::Normal => result_row(r.label.clone(), r.value.clone(), r.unit.clone()),
+        Emphasis::Danger => {
+            result_row_colored(r.label.clone(), r.value.clone(), r.unit.clone(), C::DANGER)
+        }
+    }
+}
+
+/// A heading followed by result rows (spacing 6), as used by every readout section.
+pub(crate) fn rows_section(
+    heading: &str,
+    rows: &[ResultRow],
+) -> iced::widget::Column<'static, Message> {
+    let mut col = column![section_heading(heading)].spacing(6);
+    for r in rows {
+        col = col.push(render_result_row(r));
+    }
+    col
+}
+
+/// A divider, a heading, then result rows (spacing 6) — the fatigue/min-weight
+/// section shape. Built flat (not by wrapping `rows_section`) so the
+/// divider→heading gap stays at the section's own spacing of 6.
+pub(crate) fn divided_result_section(
+    heading: &str,
+    rows: &[ResultRow],
+) -> Element<'static, Message> {
+    let mut col = column![section_divider(), section_heading(heading)].spacing(6);
+    for r in rows {
+        col = col.push(render_result_row(r));
+    }
+    col.into()
+}
+
+/// The hero spring-rate readout widget.
+pub(crate) fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Message> {
+    let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
+    let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), C::ACCENT, SZ_HERO);
+    column![rate_label, rate_value].spacing(6).into()
+}
+
+// ── Labeled input ────────────────────────────────────────────────────────────
+
+/// A labeled text input: muted label above a styled monospace input. The caller
+/// supplies the stable widget id and the message constructor, so both families
+/// reuse this (compression emits `Message::Field`, extension `Message::ExtField`).
+pub(crate) fn labeled_input<'a>(
+    label: &str,
+    value: &str,
+    id: &'static str,
+    on_input: impl Fn(String) -> Message + 'a,
+) -> Element<'a, Message> {
+    column![
+        field_label(label),
+        text_input("", value)
+            .id(id)
+            .on_input(on_input)
+            .size(SZ_BODY)
+            .font(Font::MONOSPACE)
+            .style(text_input_style),
+    ]
+    .spacing(4)
+    .into()
 }

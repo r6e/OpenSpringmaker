@@ -3,19 +3,18 @@
 //! All business logic lives in `form` and `springcore`. This module only
 //! assembles iced widgets from the current [`App`] state.
 
-use iced::widget::{column, container, row, text, text_input};
-use iced::{Color, Element, Font, Length};
+use iced::widget::{column, container, row, text};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
-    inputs_view, results_view, FatigueView, GoverningRate, MinWeightView, PopulatedResults,
-    ResultsView,
+    inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
 };
-use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow};
+use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
-    field_label, mono_value, panel_container, section_divider, section_heading, styled_pick_list,
-    text_input_style, SZ_BODY, SZ_LABEL,
+    divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
+    rows_section, section_divider, section_heading, styled_pick_list, SZ_BODY, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -23,7 +22,6 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 const SZ_CAPTION: u32 = 11;
-const SZ_HERO: u32 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -95,16 +93,6 @@ fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
 // Style helpers
 // --------------------------------------------------------------------------
 
-fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
-    text_input(placeholder, value)
-        .id(calc_field_id(field))
-        .on_input(move |s| Message::Field(field, s))
-        .size(SZ_BODY)
-        .font(Font::MONOSPACE)
-        .style(text_input_style)
-        .into()
-}
-
 /// Stable widget id for a calculator field's text input. The inputs are empty by
 /// default, so headless Simulator tests can't target them by text content and
 /// select by this id instead. An explicit, exhaustive match (rather than a
@@ -134,54 +122,6 @@ pub(crate) fn calc_field_id(field: Field) -> &'static str {
         Field::CandidateDiameters => "calc-candidate-diameters",
         Field::ClashAllowance => "calc-clash-allowance",
     }
-}
-
-/// A labeled input: muted label above a styled text_input.
-fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Message> {
-    column![
-        field_label(label.to_owned()),
-        styled_text_input("", value, field),
-    ]
-    .spacing(4)
-    .into()
-}
-
-/// A muted label + mono value row with an explicit value color.
-fn result_row_colored<'a>(
-    label: impl Into<String>,
-    value: impl Into<String>,
-    unit: impl Into<String>,
-    value_color: Color,
-) -> Element<'a, Message> {
-    let value = value.into();
-    let unit = unit.into();
-    let display = if unit.is_empty() {
-        value
-    } else {
-        format!("{value} {unit}")
-    };
-    row![
-        text(label.into())
-            .size(SZ_LABEL)
-            .color(C::MUTED)
-            .width(Length::FillPortion(2)),
-        text(display)
-            .font(Font::MONOSPACE)
-            .size(SZ_BODY)
-            .color(value_color)
-            .width(Length::FillPortion(3)),
-    ]
-    .spacing(8)
-    .into()
-}
-
-/// A muted label + mono value row in standard text color, used in results readouts.
-fn result_row<'a>(
-    label: impl Into<String>,
-    value: impl Into<String>,
-    unit: impl Into<String>,
-) -> Element<'a, Message> {
-    result_row_colored(label, value, unit, C::TEXT)
 }
 
 // --------------------------------------------------------------------------
@@ -276,7 +216,13 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
 
 /// Render one descriptor as a labeled input, binding the live value from `app.form`.
 fn render_input<'a>(app: &'a App, fd: &FieldDescriptor<Field>) -> Element<'a, Message> {
-    labeled_input(&fd.label, field_value(&app.form, fd.field), fd.field)
+    let field = fd.field;
+    labeled_input(
+        &fd.label,
+        field_value(&app.form, field),
+        calc_field_id(field),
+        move |s| Message::Field(field, s),
+    )
 }
 
 /// Map a [`Field`] to its current string value in the form state.
@@ -307,42 +253,6 @@ fn field_value(form: &crate::compression::form::FormState, field: Field) -> &str
 // --------------------------------------------------------------------------
 // Results (right) panel — renderers (data from view_model::results_view)
 // --------------------------------------------------------------------------
-
-/// Render one result row, mapping the presenter's emphasis to a color.
-fn render_result_row(r: &ResultRow) -> Element<'static, Message> {
-    match r.emphasis {
-        Emphasis::Normal => result_row(r.label.clone(), r.value.clone(), r.unit.clone()),
-        Emphasis::Danger => {
-            result_row_colored(r.label.clone(), r.value.clone(), r.unit.clone(), C::DANGER)
-        }
-    }
-}
-
-/// A heading followed by result rows (spacing 6), as used by every readout section.
-fn rows_section(heading: &str, rows: &[ResultRow]) -> iced::widget::Column<'static, Message> {
-    let mut col = column![section_heading(heading)].spacing(6);
-    for r in rows {
-        col = col.push(render_result_row(r));
-    }
-    col
-}
-
-/// A divider, a heading, then result rows (spacing 6) — the fatigue/min-weight
-/// section shape. Built flat (not by wrapping `rows_section`) so the
-/// divider→heading gap stays at the section's own spacing of 6.
-fn divided_result_section(heading: &str, rows: &[ResultRow]) -> Element<'static, Message> {
-    let mut col = column![section_divider(), section_heading(heading)].spacing(6);
-    for r in rows {
-        col = col.push(render_result_row(r));
-    }
-    col.into()
-}
-
-fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Message> {
-    let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
-    let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), C::ACCENT, SZ_HERO);
-    column![rate_label, rate_value].spacing(6).into()
-}
 
 fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
     let mut load_col = column![section_heading("Load points")].spacing(4);

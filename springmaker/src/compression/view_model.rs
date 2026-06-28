@@ -9,89 +9,14 @@
 
 use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
-use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
+use crate::presenter::{
+    display_force, display_len, display_rate, display_stress, unit_force_label, unit_length_label,
+    unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable,
+    ResultRow, StatusKind, StatusLine,
+};
 use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
 
-// ── Unit labels and conversions ─────────────────────────────────────────────
-
-/// Length unit label for the active unit system.
-fn unit_length_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "mm",
-        UnitSystem::Us => "in",
-    }
-}
-
-/// Force unit label for the active unit system.
-fn unit_force_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N",
-        UnitSystem::Us => "lbf",
-    }
-}
-
-/// Spring-rate unit label for the active unit system.
-fn unit_rate_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N/mm",
-        UnitSystem::Us => "lbf/in",
-    }
-}
-
-/// Stress unit label for the active unit system.
-fn unit_stress_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "MPa",
-        UnitSystem::Us => "ksi",
-    }
-}
-
-/// Length in the active unit system: mm (metric) or inches (US).
-fn display_len(l: springcore::Length, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => l.millimeters(),
-        UnitSystem::Us => l.inches(),
-    }
-}
-
-/// Force in the active unit system: N (metric) or lbf (US).
-fn display_force(f: springcore::Force, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => f.newtons(),
-        UnitSystem::Us => f.pounds_force(),
-    }
-}
-
-/// Conversion factor: N/mm displayed ↔ N/m stored internally.
-const MM_PER_M: f64 = 1000.0;
-
-/// Spring rate in the active unit system: N/mm (metric) or lbf/in (US).
-fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
-    match us {
-        // Display in N/mm (= N/m ÷ MM_PER_M) so rate is consistent with mm lengths and
-        // the chart axes (deflection in mm, force in N → slope in N/mm).
-        UnitSystem::Metric => r.newtons_per_meter() / MM_PER_M,
-        UnitSystem::Us => r.pounds_per_inch(),
-    }
-}
-
-/// Stress `(value, label)` in the active unit system: MPa (metric) or ksi (US).
-fn display_stress(s: springcore::Stress, us: UnitSystem) -> (f64, &'static str) {
-    let value = match us {
-        UnitSystem::Metric => s.megapascals(),
-        UnitSystem::Us => s.psi() / 1000.0,
-    };
-    (value, unit_stress_label(us))
-}
-
 // ── Results panel ───────────────────────────────────────────────────────────
-
-/// The hero spring-rate readout (label is constant in the view).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GoverningRate {
-    pub value: String,
-    pub unit: String,
-}
 
 /// Fatigue section state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,10 +359,7 @@ mod tests {
     use super::*;
     use crate::compression::form::FormState;
     use crate::presenter::Emphasis;
-    use approx::assert_relative_eq;
-    use springcore::{
-        Force, Length, LoadWarning, MaterialSet, MaterialStore, SpringRate, Stress, UnitSystem,
-    };
+    use springcore::{LoadWarning, MaterialSet, MaterialStore, UnitSystem};
 
     fn store() -> MaterialStore {
         MaterialStore::new(MaterialSet::load_default())
@@ -493,63 +415,6 @@ mod tests {
 
     fn labels(d: &[FieldDescriptor<Field>]) -> Vec<&str> {
         d.iter().map(|fd| fd.label.as_str()).collect()
-    }
-
-    // ── Unit conversions (the surface of the prior 1000× magnitude bug) ──
-
-    #[test]
-    fn length_conversion_matches_unit_system() {
-        let one_mm = Length::from_millimeters(1.0);
-        assert_relative_eq!(display_len(one_mm, UnitSystem::Metric), 1.0);
-        assert_relative_eq!(
-            display_len(one_mm, UnitSystem::Us),
-            1.0 / 25.4,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn force_conversion_matches_unit_system() {
-        // Each side built from its own native constructor, so a metric↔US
-        // accessor swap is caught (not just a tautology against the impl).
-        assert_relative_eq!(
-            display_force(Force::from_newtons(10.0), UnitSystem::Metric),
-            10.0
-        );
-        assert_relative_eq!(
-            display_force(Force::from_pounds_force(7.0), UnitSystem::Us),
-            7.0,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn rate_is_displayed_in_per_mm_not_per_meter() {
-        // 2000 N/m stored must read as 2 N/mm — the magnitude that bit us before.
-        assert_relative_eq!(
-            display_rate(
-                SpringRate::from_newtons_per_meter(2000.0),
-                UnitSystem::Metric
-            ),
-            2.0
-        );
-        assert_relative_eq!(
-            display_rate(SpringRate::from_pounds_per_inch(5.0), UnitSystem::Us),
-            5.0,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn stress_conversion_carries_the_right_label() {
-        let (v_metric, l_metric) =
-            display_stress(Stress::from_megapascals(500.0), UnitSystem::Metric);
-        assert_relative_eq!(v_metric, 500.0);
-        assert_eq!(l_metric, "MPa");
-        // 2000 psi = 2 ksi (independent magnitude, not a restatement of psi()/1000).
-        let (v_us, l_us) = display_stress(Stress::from_psi(2000.0), UnitSystem::Us);
-        assert_relative_eq!(v_us, 2.0, epsilon = 1e-9);
-        assert_eq!(l_us, "ksi");
     }
 
     // ── results_view: the three mutually-exclusive modes ──
