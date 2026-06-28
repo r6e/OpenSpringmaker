@@ -69,11 +69,12 @@ fn header(app: &App) -> Element<'_, Message> {
             ..Font::DEFAULT
         });
 
-    let family_selector = styled_pick_list(
+    let family_selector = container(styled_pick_list(
         ALL_FAMILIES.to_vec(),
         Some(app.family),
         Message::SelectFamily,
-    );
+    ))
+    .width(Length::Fixed(180.0));
 
     let unit_metric = radio(
         "Metric (mm, N)",
