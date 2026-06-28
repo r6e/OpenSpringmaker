@@ -14,8 +14,8 @@ use crate::compression::view_model::{
 use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading,
-    styled_pick_list, SZ_CAPTION, SZ_LABEL,
+    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
+    SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------

@@ -480,7 +480,11 @@ mod tests {
         };
         populate_from_spec(&mut form, &default_spec_inner, us);
 
-        assert_eq!(form.hook_mode, HookMode::Default, "mode must switch to Default");
+        assert_eq!(
+            form.hook_mode,
+            HookMode::Default,
+            "mode must switch to Default"
+        );
         assert!(
             form.hook_r1.is_empty(),
             "hook_r1 must be cleared when loading a Default-hook spec"

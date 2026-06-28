@@ -456,8 +456,7 @@ fn ext_save_load_round_trip() {
     let spec_after = build_spec(&app2.extension, UnitSystem::Metric)
         .expect("loaded form must produce a valid spec");
     assert_eq!(
-        spec_before,
-        spec_after,
+        spec_before, spec_after,
         "save/load round-trip must preserve the full extension spec"
     );
 

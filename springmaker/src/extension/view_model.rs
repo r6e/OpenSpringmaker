@@ -291,8 +291,7 @@ mod tests {
         );
         // Distinctness check: the two stresses differ for this geometry.
         assert_ne!(
-            r0.hook_bending,
-            r0.hook_torsion,
+            r0.hook_bending, r0.hook_torsion,
             "hook bending and torsion stresses are distinct for this design point"
         );
     }

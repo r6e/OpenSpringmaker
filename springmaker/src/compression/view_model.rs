@@ -329,7 +329,7 @@ pub fn inputs_view(app: &App) -> InputsView {
 mod tests {
     use super::*;
     use crate::compression::form::FormState;
-    use crate::presenter::{Emphasis, StatusKind, status_kind};
+    use crate::presenter::{status_kind, Emphasis, StatusKind};
     use springcore::{LoadWarning, MaterialSet, MaterialStore, Severity, UnitSystem};
 
     fn store() -> MaterialStore {
