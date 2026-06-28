@@ -681,7 +681,7 @@ impl App {
     /// Build and write the current design to `path`, recording any failure in
     /// `action_error` (not `error`) so a failed save leaves the displayed design
     /// intact. The leading clear makes a successful save dismiss a prior failure.
-    fn save_to(&mut self, path: &std::path::Path) {
+    pub(crate) fn save_to(&mut self, path: &std::path::Path) {
         self.action_error = None;
         let design = match self.family {
             Family::Compression => {
@@ -727,7 +727,7 @@ impl App {
     /// Load a design from `path` into the form. On failure, records it in
     /// `action_error` and returns `false`, leaving the current form untouched.
     /// Returns `true` (form mutated) on success.
-    fn load_from(&mut self, path: &std::path::Path) -> bool {
+    pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
             Ok(saved) => {
