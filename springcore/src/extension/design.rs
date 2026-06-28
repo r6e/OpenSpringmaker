@@ -231,6 +231,21 @@ pub fn solve_forward(
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
+    // A finite-but-extreme geometry (e.g. an enormous mean diameter) can overflow
+    // D³ in the rate denominator to +Inf, collapsing the computed rate to zero;
+    // that rate then flows into deflection (y = ΔF/k) and the stress formulas,
+    // silently producing a NaN/Inf design. Reject it here.
+    // With all preceding guards satisfied, the rate is always >= 0 (all factors
+    // are finite-positive), so `<= 0.0` is the complete and minimal condition —
+    // it rejects the zero-overflow case and is equivalent to `!(> 0.0)` for the
+    // reachable domain. (Mirrors the torsion family's computed-quantity guard.)
+    if rate.newtons_per_meter() <= 0.0 {
+        return Err(SpringError::InconsistentInputs(
+            "computed spring rate is not a positive finite number \
+             (check mean diameter and active coils)"
+                .into(),
+        ));
+    }
 
     let load_points: Vec<ExtLoadPoint> = loads
         .iter()
@@ -798,6 +813,33 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A finite-but-enormous mean diameter overflows D³ in the rate denominator,
+    /// collapsing the computed rate to zero, which would silently flow into
+    /// deflection/stresses as Inf/NaN. Custom hooks (r1=10mm, r2=5mm) keep the
+    /// c1/c2 curvature guards from firing first, so this isolates the rate guard.
+    #[test]
+    fn rejects_non_positive_computed_rate() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_meters(1e308),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds {
+                r1: Length::from_millimeters(10.0),
+                r2: Length::from_millimeters(5.0),
+            },
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(_))),
+            "extreme mean_dia must be rejected via the computed-rate guard, got {r:?}"
+        );
     }
 
     /// The selected correction factor governs extension body shear (only the
