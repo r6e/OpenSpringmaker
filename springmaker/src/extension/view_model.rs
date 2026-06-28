@@ -24,7 +24,7 @@ pub enum ExtResultsView {
 }
 
 /// Everything the extension results panel shows when a design is solved.
-/// (load_table is added in Task 7.)
+/// (load_table is added when stress-analysis results are wired up.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtPopulatedResults {
     pub governing_rate: GoverningRate,
@@ -343,7 +343,7 @@ mod tests {
         app.family = Family::Extension;
         app.ext_outcome = Some(out);
 
-        // Switch to Compression — recompute() Extension arm must clear ext_outcome.
+        // Switch to Compression — recompute() Compression arm clears ext_outcome.
         app.update(Message::SelectFamily(Family::Compression));
 
         assert!(
@@ -369,7 +369,10 @@ mod tests {
         app.form.free_length = "60".into();
         app.form.loads = "10, 30".into();
         app.recompute();
-        assert!(app.outcome.is_some(), "pre-condition: compression must be solved");
+        assert!(
+            app.outcome.is_some(),
+            "pre-condition: compression must be solved"
+        );
 
         // Switch to Extension — recompute() Compression arm must clear outcome.
         app.update(Message::SelectFamily(Family::Extension));

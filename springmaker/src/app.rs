@@ -267,6 +267,29 @@ impl App {
             Family::Compression => {
                 // Stale extension outcome from a prior solve is no longer active.
                 self.ext_outcome = None;
+                // If the scenario's primary required fields are all blank (e.g.
+                // the user switched families on an untouched form), treat this
+                // as the initial state rather than surfacing a parse error.
+                // MinWeight does not require wire_dia/mean_dia upfront — it
+                // optimises over candidate_diameters — so it gets its own check.
+                let is_blank_compression_form = {
+                    use crate::compression::form::ScenarioKind;
+                    match self.form.scenario {
+                        ScenarioKind::MinWeight => {
+                            self.form.candidate_diameters.trim().is_empty()
+                                && self.form.max_force.trim().is_empty()
+                        }
+                        _ => {
+                            self.form.wire_dia.trim().is_empty()
+                                && self.form.mean_dia.trim().is_empty()
+                        }
+                    }
+                };
+                if is_blank_compression_form {
+                    self.error = None;
+                    self.outcome = None;
+                    return;
+                }
                 match parse_and_solve(
                     &self.form,
                     &self.material,
@@ -287,9 +310,9 @@ impl App {
             Family::Extension => {
                 // Stale compression outcome from a prior solve is no longer active.
                 self.outcome = None;
-                // A completely blank extension form means the user hasn't entered
-                // anything yet. Treat it as the Empty/initial state (no error) rather
-                // than surfacing a parse error on every family switch.
+                // If the primary geometry fields are all blank (e.g. the user
+                // switched families on an untouched form), treat this as the
+                // initial state rather than surfacing a parse error.
                 let ext = &self.extension;
                 if ext.wire_dia.trim().is_empty()
                     && ext.mean_dia.trim().is_empty()
@@ -1144,5 +1167,30 @@ mod tests {
         step!(Message::MatCommit); // invalid -> error set, status must be clear
         step!(Message::MatCancel);
         step!(Message::NavigateTo(Screen::Calculator));
+    }
+
+    /// R1/R2 regression: Compression arm must also have a blank-form guard.
+    ///
+    /// Before this fix, `SelectFamily(Compression)` on a blank form called
+    /// `parse_and_solve` immediately, producing "wire diameter required" on a
+    /// form the user never touched.
+    #[test]
+    fn select_compression_on_blank_form_shows_no_error() {
+        use springcore::Family;
+
+        let mut app = test_app();
+        // Switch to Extension first (triggering recompute with blank guard).
+        app.update(Message::SelectFamily(Family::Extension));
+        // Switch back to Compression — Compression arm must apply the same guard.
+        app.update(Message::SelectFamily(Family::Compression));
+
+        assert!(
+            app.error.is_none(),
+            "blank compression form must not produce a parse error after SelectFamily"
+        );
+        assert!(
+            app.outcome.is_none(),
+            "blank compression form must not produce an outcome"
+        );
     }
 }

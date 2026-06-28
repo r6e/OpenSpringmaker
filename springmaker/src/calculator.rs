@@ -173,7 +173,7 @@ fn footer(family: Family) -> Element<'static, Message> {
 
             row![save_btn, load_btn].spacing(12).into()
         }
-        Family::Extension => text("Save/Load for extension springs: coming in Task 7.")
+        Family::Extension => text("Save/Load for extension springs is not yet available.")
             .size(SZ_BODY)
             .color(C::MUTED)
             .into(),
