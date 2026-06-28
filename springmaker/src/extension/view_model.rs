@@ -262,6 +262,41 @@ mod tests {
         assert_ne!(r0.body_shear, r0.hook_bending);
     }
 
+    /// Pin each hook-stress cell against its source field to catch column-swap mutants.
+    ///
+    /// `assert_ne!` alone is swap-blind (both `(A,B)` and `(B,A)` pass `A≠B`).
+    /// Comparing each cell to the formatter output of the matching engine field
+    /// catches a mutant that swaps `hook_bending` and `hook_torsion` columns.
+    #[test]
+    fn ext_load_table_pins_hook_bending_and_torsion_cells() {
+        let app = app_with_ext(power_user_metric());
+        let p = ext_populated(&app);
+        let r0 = &p.load_table.rows[0];
+
+        let out = app.ext_outcome.as_ref().expect("must be solved");
+        let lp0 = &out.design.load_points[0];
+
+        let (expected_bending, _) = display_stress(lp0.hook_bending, UnitSystem::Metric);
+        let (expected_torsion, _) = display_stress(lp0.hook_torsion, UnitSystem::Metric);
+
+        assert_eq!(
+            r0.hook_bending,
+            format!("{expected_bending:.3}"),
+            "hook_bending column must map to hook_bending stress"
+        );
+        assert_eq!(
+            r0.hook_torsion,
+            format!("{expected_torsion:.3}"),
+            "hook_torsion column must map to hook_torsion stress"
+        );
+        // Distinctness check: the two stresses differ for this geometry.
+        assert_ne!(
+            r0.hook_bending,
+            r0.hook_torsion,
+            "hook bending and torsion stresses are distinct for this design point"
+        );
+    }
+
     // ── inputs view ──
 
     #[test]
