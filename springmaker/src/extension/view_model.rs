@@ -5,10 +5,83 @@
 use crate::app::App;
 use crate::extension::form::Field;
 use crate::presenter::{
-    display_force, display_len, display_rate, status_kind, unit_force_label, unit_length_label,
-    unit_rate_label, FieldDescriptor, GoverningRate, ResultRow, StatusLine,
+    display_force, display_len, display_rate, display_stress, status_kind, unit_force_label,
+    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate,
+    ResultRow, StatusLine,
 };
 use springcore::extension::ExtensionDesign;
+
+// ── Extension load-point table ───────────────────────────────────────────────
+
+/// One row of the extension load-points table, all fields pre-formatted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExtLoadRow {
+    pub point: String,
+    pub force: String,
+    pub deflection: String,
+    pub length: String,
+    /// Body shear stress magnitude (e.g. "412.345").
+    pub body_shear: String,
+    /// Hook bending stress magnitude (e.g. "567.890").
+    pub hook_bending: String,
+    /// Hook torsion stress magnitude (e.g. "234.567").
+    pub hook_torsion: String,
+    /// body_shear as % of allowable (e.g. "72.3%").
+    pub pct_body: String,
+    /// hook_bending as % of allowable (e.g. "85.1%").
+    pub pct_bending: String,
+    /// hook_torsion as % of allowable (e.g. "61.4%").
+    pub pct_torsion: String,
+}
+
+/// Stress-unit header label plus per-point rows for the extension load-points table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExtLoadTable {
+    pub stress_unit: String,
+    pub rows: Vec<ExtLoadRow>,
+}
+
+/// Build an [`ExtLoadTable`] from a solved extension design.
+fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTable {
+    let rows = d
+        .load_points
+        .iter()
+        .enumerate()
+        .map(|(i, lp)| {
+            let (body_val, _) = display_stress(lp.body_shear, us);
+            let (bending_val, _) = display_stress(lp.hook_bending, us);
+            let (torsion_val, _) = display_stress(lp.hook_torsion, us);
+            ExtLoadRow {
+                point: format!("{}", i + 1),
+                force: format!(
+                    "{:.3} {}",
+                    display_force(lp.force, us),
+                    unit_force_label(us)
+                ),
+                deflection: format!(
+                    "{:.4} {}",
+                    display_len(lp.deflection, us),
+                    unit_length_label(us)
+                ),
+                length: format!(
+                    "{:.4} {}",
+                    display_len(lp.length, us),
+                    unit_length_label(us)
+                ),
+                body_shear: format!("{body_val:.3}"),
+                hook_bending: format!("{bending_val:.3}"),
+                hook_torsion: format!("{torsion_val:.3}"),
+                pct_body: format!("{:.1}%", lp.pct_body_allow * 100.0),
+                pct_bending: format!("{:.1}%", lp.pct_hook_bending_allow * 100.0),
+                pct_torsion: format!("{:.1}%", lp.pct_hook_torsion_allow * 100.0),
+            }
+        })
+        .collect();
+    ExtLoadTable {
+        stress_unit: unit_stress_label(us).to_string(),
+        rows,
+    }
+}
 
 // ── Results panel ────────────────────────────────────────────────────────────
 
@@ -24,11 +97,11 @@ pub enum ExtResultsView {
 }
 
 /// Everything the extension results panel shows when a design is solved.
-/// (load_table is added when stress-analysis results are wired up.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtPopulatedResults {
     pub governing_rate: GoverningRate,
     pub geometry: Vec<ResultRow>,
+    pub load_table: ExtLoadTable,
 }
 
 /// Build the extension results panel view model from app state.
@@ -48,6 +121,7 @@ pub fn ext_results_view(app: &App) -> ExtResultsView {
             ExtResultsView::Populated(Box::new(ExtPopulatedResults {
                 governing_rate,
                 geometry: geometry_rows(&out.design, us),
+                load_table: ext_load_table(&out.design, us),
             }))
         }
         None => match &app.error {
@@ -130,7 +204,7 @@ mod tests {
     use crate::app::App;
     use crate::extension::form::{parse_and_solve, ExtFormState};
     use crate::presenter::StatusKind;
-    use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+    use springcore::{CurvatureCorrection, Family, MaterialSet, MaterialStore, UnitSystem};
 
     fn store() -> MaterialStore {
         MaterialStore::new(MaterialSet::load_default())
@@ -150,6 +224,52 @@ mod tests {
             loads: "50".to_string(),
             ..ExtFormState::default()
         }
+    }
+
+    /// Two-load metric form for load-table tests.
+    fn power_user_metric() -> ExtFormState {
+        ExtFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            active: "10".to_string(),
+            free_length: "100".to_string(),
+            initial_tension: "5".to_string(),
+            loads: "10, 30".to_string(),
+            ..ExtFormState::default()
+        }
+    }
+
+    /// Build a hermetic App already switched to Extension and solved.
+    fn app_with_ext(form: ExtFormState) -> App {
+        let mut app = App::from_store(store(), Vec::new(), CurvatureCorrection::Bergstrasser);
+        app.family = Family::Extension;
+        app.extension = form;
+        app.recompute();
+        app
+    }
+
+    /// Unwrap an [`ExtResultsView::Populated`], panicking on anything else.
+    fn ext_populated(app: &App) -> ExtPopulatedResults {
+        match ext_results_view(app) {
+            ExtResultsView::Populated(p) => *p,
+            other => panic!("expected Populated, got {other:?}"),
+        }
+    }
+
+    // ── load-point table ──
+
+    #[test]
+    fn ext_load_table_has_three_stress_columns_per_point() {
+        let p = ext_populated(&app_with_ext(power_user_metric()));
+        assert_eq!(p.load_table.stress_unit, "MPa");
+        assert_eq!(p.load_table.rows.len(), 2);
+        let r0 = &p.load_table.rows[0];
+        assert_eq!(r0.point, "1");
+        assert!(r0.pct_body.ends_with('%'));
+        assert!(r0.pct_bending.ends_with('%'));
+        assert!(r0.pct_torsion.ends_with('%'));
+        // distinct stress columns (hook bending typically ≠ body shear).
+        assert_ne!(r0.body_shear, r0.hook_bending);
     }
 
     // ── inputs view ──

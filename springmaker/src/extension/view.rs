@@ -4,17 +4,21 @@
 //! iced widgets from the current [`App`] state, delegating data decisions to
 //! the presenter layer (ADR 0008).
 
-use iced::widget::{column, container, radio, text};
-use iced::{Element, Length};
+use iced::widget::{column, container, radio, row, text};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::extension::form::{ExtFormState, Field, HookMode};
-use crate::extension::view_model::{ext_inputs_view, ext_results_view, ExtResultsView};
+use crate::extension::view_model::{
+    ext_inputs_view, ext_results_view, ExtLoadTable, ExtResultsView,
+};
 use crate::presenter::unit_length_label;
 use crate::widgets::{
     labeled_input, panel_container, render_governing_rate, rows_section, section_divider,
     section_heading, styled_pick_list, SZ_BODY, SZ_LABEL,
 };
+
+const SZ_CAPTION: u32 = 11;
 
 // --------------------------------------------------------------------------
 // Design (left) panel
@@ -151,6 +155,119 @@ fn ext_field_id(field: Field) -> &'static str {
 }
 
 // --------------------------------------------------------------------------
+// Results (right) panel — renderers
+// --------------------------------------------------------------------------
+
+fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading("Load points")].spacing(4);
+
+    col = col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Body \u{03c4} ({})", lt.stress_unit))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Hook \u{03c3} ({})", lt.stress_unit))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Hook \u{03c4} ({})", lt.stress_unit))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("%\u{03c4}")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+            text("%\u{03c3}")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+            text("%\u{03c4}_end")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4),
+    );
+
+    for lp in &lt.rows {
+        let data_row = row![
+            text(lp.point.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text(lp.force.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.deflection.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.length.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.body_shear.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.hook_bending.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.hook_torsion.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(2)),
+            text(lp.pct_body.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(1)),
+            text(lp.pct_bending.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(1)),
+            text(lp.pct_torsion.clone())
+                .font(Font::MONOSPACE)
+                .size(SZ_LABEL)
+                .color(C::TEXT)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4);
+        col = col.push(data_row);
+    }
+
+    col.into()
+}
+
+// --------------------------------------------------------------------------
 // Results (right) panel
 // --------------------------------------------------------------------------
 
@@ -176,6 +293,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             render_governing_rate(&p.governing_rate),
             section_divider(),
             rows_section("Geometry", &p.geometry),
+            section_divider(),
+            render_ext_load_table(&p.load_table),
         ]
         .spacing(6)
         .into(),
