@@ -239,7 +239,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
     let unit_metric = radio(
         "Metric (mm, N)",
         UnitSystem::Metric,
-        Some(app.form.unit_system),
+        Some(app.unit_system),
         Message::Units,
     )
     .text_size(SZ_LABEL);
@@ -247,7 +247,7 @@ fn build_header(app: &App) -> Element<'_, Message> {
     let unit_us = radio(
         "US (in, lbf)",
         UnitSystem::Us,
-        Some(app.form.unit_system),
+        Some(app.unit_system),
         Message::Units,
     )
     .text_size(SZ_LABEL);
@@ -294,7 +294,7 @@ fn build_design_panel(app: &App) -> Element<'_, Message> {
             field_label("Material"),
             styled_pick_list(
                 material_names,
-                Some(app.form.material.clone()),
+                Some(app.material.clone()),
                 Message::Material,
             ),
         ]
@@ -530,7 +530,7 @@ fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 fn build_results_panel(app: &App) -> Element<'_, Message> {
-    let us = app.form.unit_system;
+    let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
         ResultsView::Error(msg) => column![

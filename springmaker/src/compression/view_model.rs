@@ -143,7 +143,7 @@ pub enum ResultsView {
 /// matching the prior inline order (outcome checked first).
 pub fn results_view(app: &App) -> ResultsView {
     match &app.outcome {
-        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app.form.unit_system))),
+        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app.unit_system))),
         None => match &app.error {
             Some(err) => ResultsView::Error(err.clone()),
             None => ResultsView::Empty,
@@ -340,9 +340,10 @@ pub struct InputsView {
 /// Which input fields to show for the current scenario, with unit-aware labels.
 pub fn inputs_view(app: &App) -> InputsView {
     let f = &app.form;
-    let len = unit_length_label(f.unit_system);
-    let force = unit_force_label(f.unit_system);
-    let rate = unit_rate_label(f.unit_system);
+    let us = app.unit_system;
+    let len = unit_length_label(us);
+    let force = unit_force_label(us);
+    let rate = unit_rate_label(us);
 
     if f.scenario == ScenarioKind::MinWeight {
         return InputsView {
@@ -456,8 +457,6 @@ mod tests {
 
     fn rate_based_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: UnitSystem::Metric,
             scenario: ScenarioKind::RateBased,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -474,8 +473,6 @@ mod tests {
 
     fn min_weight_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: UnitSystem::Metric,
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -646,9 +643,10 @@ mod tests {
 
     #[test]
     fn fatigue_no_data_for_material_without_endurance() {
-        let mut form = rate_based_metric();
-        form.material = "Stainless 302".into(); // no cited endurance data
-        let p = populated(&app_with(form));
+        let mut app = app_with(rate_based_metric());
+        app.material = "Stainless 302".into(); // no cited endurance data
+        app.recompute();
+        let p = populated(&app);
         assert_eq!(p.fatigue, FatigueView::Note(FATIGUE_NO_DATA));
     }
 
@@ -818,12 +816,12 @@ mod tests {
 
     #[test]
     fn input_labels_track_the_unit_system() {
-        let mut metric = min_weight_metric();
-        metric.unit_system = UnitSystem::Metric;
-        assert!(labels(&inputs_view(&app_with(metric)).primary).contains(&"Required rate (N/mm)"));
+        // App::from_store defaults to UnitSystem::Metric, so no override needed.
+        let metric = app_with(min_weight_metric());
+        assert!(labels(&inputs_view(&metric).primary).contains(&"Required rate (N/mm)"));
 
-        let mut us = min_weight_metric();
+        let mut us = app_with(min_weight_metric());
         us.unit_system = UnitSystem::Us;
-        assert!(labels(&inputs_view(&app_with(us)).primary).contains(&"Required rate (lbf/in)"));
+        assert!(labels(&inputs_view(&us).primary).contains(&"Required rate (lbf/in)"));
     }
 }

@@ -199,6 +199,10 @@ pub enum Message {
 /// Top-level application state.
 pub struct App {
     pub form: FormState,
+    /// Selected material name (shared across families). Lifted out of `FormState`.
+    pub material: String,
+    /// Active unit system (shared across families). Lifted out of `FormState`.
+    pub unit_system: UnitSystem,
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
@@ -241,6 +245,8 @@ impl App {
     ) -> Self {
         Self {
             form: FormState::default(),
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
             materials,
             load_warnings,
             outcome: None,
@@ -271,14 +277,20 @@ impl App {
         // A form edit (or successful load / return to the calculator) dismisses a
         // stale save/load error.
         self.action_error = None;
-        match parse_and_solve(&self.form, &self.materials, self.correction) {
+        match parse_and_solve(
+            &self.form,
+            &self.material,
+            self.unit_system,
+            &self.materials,
+            self.correction,
+        ) {
             Ok(out) => {
                 self.outcome = Some(out);
                 self.error = None;
             }
             Err(e) => {
                 self.outcome = None;
-                self.error = Some(format_error(&e, self.form.unit_system));
+                self.error = Some(format_error(&e, self.unit_system));
             }
         }
     }
@@ -306,7 +318,7 @@ impl App {
                 true
             }
             Message::Material(m) => {
-                self.form.material = m;
+                self.material = m;
                 true
             }
             Message::Scenario(s) => {
@@ -314,7 +326,7 @@ impl App {
                 true
             }
             Message::Units(u) => {
-                self.form.unit_system = u;
+                self.unit_system = u;
                 true
             }
             Message::EndType(e) => {
@@ -457,8 +469,8 @@ impl App {
                                 // If editing renamed the material the calculator had
                                 // selected, follow the rename so the selection stays valid.
                                 if let Some(EditTarget::Existing(orig)) = &target {
-                                    if self.form.material == *orig && new_name != *orig {
-                                        self.form.material = new_name;
+                                    if self.material == *orig && new_name != *orig {
+                                        self.material = new_name;
                                     }
                                 }
                                 self.editing = None;
@@ -487,11 +499,11 @@ impl App {
                         }
                         // If the calculator had it selected, fall back to a valid
                         // remaining material so navigating back doesn't error.
-                        if self.form.material == name {
+                        if self.material == name {
                             if let Some(first) =
                                 self.materials.names().first().map(|s| s.to_string())
                             {
-                                self.form.material = first;
+                                self.material = first;
                             }
                         }
                     }
@@ -597,7 +609,7 @@ impl App {
     /// intact. The leading clear makes a successful save dismiss a prior failure.
     fn save_to(&mut self, path: &std::path::Path) {
         self.action_error = None;
-        let spec = match crate::compression::form::build_spec(&self.form) {
+        let spec = match crate::compression::form::build_spec(&self.form, self.unit_system) {
             Ok(s) => s,
             Err(e) => {
                 self.action_error = Some(e.to_string());
@@ -605,8 +617,8 @@ impl App {
             }
         };
         let saved = SavedDesign {
-            material: self.form.material.clone(),
-            unit_system: self.form.unit_system,
+            material: self.material.clone(),
+            unit_system: self.unit_system,
             scenario: spec,
         };
         if let Err(e) = saved.save(path) {
@@ -643,9 +655,13 @@ impl App {
     }
 
     fn apply_saved(&mut self, saved: SavedDesign) {
-        self.form.material = saved.material;
-        self.form.unit_system = saved.unit_system;
-        crate::compression::form::populate_from_spec(&mut self.form, &saved.scenario);
+        self.material = saved.material;
+        self.unit_system = saved.unit_system;
+        crate::compression::form::populate_from_spec(
+            &mut self.form,
+            &saved.scenario,
+            self.unit_system,
+        );
     }
 }
 
@@ -758,7 +774,7 @@ mod tests {
     fn default_app_has_no_outcome_until_filled() {
         let app = App::default();
         assert!(app.outcome.is_none());
-        assert_eq!(app.form.material, "Music Wire");
+        assert_eq!(app.material, "Music Wire");
     }
 
     #[test]
@@ -831,7 +847,7 @@ mod tests {
     #[test]
     fn load_failure_surfaces_action_error_and_preserves_form() {
         let mut app = solved_app();
-        let before_material = app.form.material.clone();
+        let before_material = app.material.clone();
         let mutated = app.load_from(&unwritable_path());
         assert!(!mutated, "a failed load reports no form mutation");
         assert!(app.action_error.is_some(), "load failure must be surfaced");
@@ -840,7 +856,7 @@ mod tests {
             "a failed load must not clear results"
         );
         assert_eq!(
-            app.form.material, before_material,
+            app.material, before_material,
             "the form is untouched on a failed load"
         );
     }
@@ -986,14 +1002,14 @@ mod tests {
         let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
         let copy_name = editing_name(&a); // editor is open on the clone
-        a.form.material = copy_name.clone(); // calculator selects it too
+        a.material = copy_name.clone(); // calculator selects it too
         a.update(Message::MatDelete(copy_name.clone()));
         assert!(a.mat_error.is_none());
         assert!(!a.materials.names().contains(&copy_name.as_str()));
         // Editor closed and calculator selection moved to a valid material.
         assert!(a.editing.is_none());
-        assert_ne!(a.form.material, copy_name);
-        assert!(a.materials.names().contains(&a.form.material.as_str()));
+        assert_ne!(a.material, copy_name);
+        assert!(a.materials.names().contains(&a.material.as_str()));
     }
 
     #[test]
@@ -1012,15 +1028,15 @@ mod tests {
         let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
         let orig = editing_name(&a); // the editor is open on the clone
-        a.form.material = orig.clone(); // calculator selects it
-                                        // Rename it via the editor and commit.
+        a.material = orig.clone(); // calculator selects it
+                                   // Rename it via the editor and commit.
         a.update(Message::MatField(MatField::Name, "Renamed Wire".into()));
         a.update(Message::MatCommit);
         assert!(a.mat_error.is_none());
         assert!(a.materials.names().contains(&"Renamed Wire"));
         assert!(!a.materials.names().contains(&orig.as_str()));
         // The calculator selection followed the rename (no stale MaterialNotFound).
-        assert_eq!(a.form.material, "Renamed Wire");
+        assert_eq!(a.material, "Renamed Wire");
     }
 
     // ── Cross-state invariants ──────────────────────────────────────────────
@@ -1038,9 +1054,9 @@ mod tests {
     /// prioritizes error, so a lingering error would mask a success).
     fn assert_editor_invariants(a: &App) {
         assert!(
-            a.materials.names().contains(&a.form.material.as_str()),
-            "INV1 violated: form.material '{}' is not in the store",
-            a.form.material
+            a.materials.names().contains(&a.material.as_str()),
+            "INV1 violated: material '{}' is not in the store",
+            a.material
         );
         assert!(
             !(a.mat_error.is_some() && a.mat_status.is_some()),
