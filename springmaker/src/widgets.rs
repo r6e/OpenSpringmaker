@@ -257,10 +257,10 @@ pub(crate) fn results_empty() -> Element<'static, Message> {
 }
 
 /// Results panel for the error (solve failed) state.
-pub(crate) fn results_error(msg: &str) -> Element<'static, Message> {
+pub(crate) fn results_error(msg: String) -> Element<'static, Message> {
     column![
         section_heading("Results"),
-        text(msg.to_owned()).size(SZ_LABEL).color(C::DANGER),
+        text(msg).size(SZ_LABEL).color(C::DANGER),
     ]
     .spacing(12)
     .into()

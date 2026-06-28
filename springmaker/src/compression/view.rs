@@ -349,7 +349,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
-        ResultsView::Error(msg) => results_error(&msg),
+        ResultsView::Error(msg) => results_error(msg),
         ResultsView::Empty => results_empty(),
         ResultsView::Populated(p) => {
             // The chart is pure rendering of the design (no decision); build it

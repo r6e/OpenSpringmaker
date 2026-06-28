@@ -271,7 +271,7 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let content: Element<'_, Message> = match ext_results_view(app) {
-        ExtResultsView::Error(msg) => results_error(&msg),
+        ExtResultsView::Error(msg) => results_error(msg),
         ExtResultsView::Empty => results_empty(),
         ExtResultsView::Populated(p) => column![
             section_heading("Results"),
