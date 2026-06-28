@@ -10,11 +10,11 @@
 
 use crate::app::{App, Message, Screen};
 use crate::compression::form::Field;
-use crate::extension::form::HookMode;
+use crate::extension::form::{build_spec, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use iced_test::core::Settings;
 use iced_test::Simulator;
-use springcore::{Family, MaterialSet, MaterialStore};
+use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
 
 /// A viewport large enough that no widget is clipped: as wide as the app's
 /// 1200px design width and tall enough for the full materials edit-form
@@ -362,6 +362,15 @@ fn ext_hook_toggle_shows_radii_and_resolves() {
 /// Solving an extension design, saving it to a temp file, loading it into a
 /// fresh App, and recomputing must reproduce the same family and a solved
 /// ext_outcome (covers the persistence round-trip through `app.rs`).
+///
+/// Also verifies (item 1) that the Extension footer renders real Save/Load
+/// buttons by asserting they are visible in the widget tree, and (item 8)
+/// that the round-trip preserves field values exactly via spec equality.
+///
+/// Note: `Message::Save`/`Message::Load` dispatch native `rfd` dialogs that
+/// cannot run headlessly. Save/load is tested directly via `app.save_to` /
+/// `app.load_from`; the `shows()` check below confirms the buttons that wire
+/// up those messages are present in the rendered tree.
 #[test]
 fn ext_save_load_round_trip() {
     let path = std::env::temp_dir().join(format!("osm_ext_{}.toml", std::process::id()));
@@ -369,6 +378,17 @@ fn ext_save_load_round_trip() {
     // Build and solve a valid extension design.
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));
+
+    // Item 1/2: Extension footer must render real Save/Load buttons.
+    assert!(
+        shows(&app, "Save design"),
+        "Extension footer must show the Save button"
+    );
+    assert!(
+        shows(&app, "Load design"),
+        "Extension footer must show the Load button"
+    );
+
     app.update(Message::ExtField(
         crate::extension::form::Field::WireDia,
         "2.0".into(),
@@ -394,6 +414,10 @@ fn ext_save_load_round_trip() {
         "10, 30".into(),
     ));
     assert!(app.ext_outcome.is_some(), "design must solve before save");
+
+    // Item 8: capture the spec before saving for round-trip value equality.
+    let spec_before = build_spec(&app.extension, UnitSystem::Metric)
+        .expect("solved form must produce a valid spec");
 
     // Save to a process-unique temp path.
     app.save_to(&path);
@@ -426,6 +450,15 @@ fn ext_save_load_round_trip() {
     assert!(
         app2.ext_outcome.is_some(),
         "recompute on the loaded extension form must produce an ext_outcome"
+    );
+
+    // Item 8: spec equality — the round-trip must preserve all field values exactly.
+    let spec_after = build_spec(&app2.extension, UnitSystem::Metric)
+        .expect("loaded form must produce a valid spec");
+    assert_eq!(
+        spec_before,
+        spec_after,
+        "save/load round-trip must preserve the full extension spec"
     );
 
     // Clean up — no temp files must remain in the repo or working directory.
