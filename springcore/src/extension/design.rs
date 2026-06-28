@@ -231,15 +231,16 @@ pub fn solve_forward(
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
-    // A finite-but-extreme geometry (e.g. an enormous mean diameter) can overflow
-    // D³ in the rate denominator to +Inf, collapsing the computed rate to zero;
-    // that rate then flows into deflection (y = ΔF/k) and the stress formulas,
-    // silently producing a NaN/Inf design. Reject it here.
-    // With all preceding guards satisfied, the rate is always >= 0 (all factors
-    // are finite-positive), so `<= 0.0` is the complete and minimal condition —
-    // it rejects the zero-overflow case and is equivalent to `!(> 0.0)` for the
-    // reachable domain. (Mirrors the torsion family's computed-quantity guard.)
-    if rate.newtons_per_meter() <= 0.0 {
+    // Finite-but-extreme geometry can drive the rate (k = G·d⁴/(8·D³·Na)) non-finite
+    // in BOTH directions, and either then flows into deflection (y = ΔF/k) and the
+    // stress formulas to silently produce a degenerate design:
+    //   * an enormous mean diameter overflows D³ → rate collapses to 0 (y → ∞), and
+    //   * a subnormal active count (or huge D) underflows the denominator to 0 →
+    //     rate = +Inf (y → 0, a spurious zero-deflection "valid" design).
+    // `<= 0.0` alone catches the first but NOT +Inf (+Inf is not ≤ 0). Require the
+    // rate to be finite AND strictly positive. (Mirrors the family's other
+    // finite-and-positive guards above and the torsion computed-quantity guard.)
+    if !(rate.newtons_per_meter().is_finite() && rate.newtons_per_meter() > 0.0) {
         return Err(SpringError::InconsistentInputs(
             "computed spring rate is not a positive finite number \
              (check mean diameter and active coils)"
@@ -504,6 +505,55 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A subnormal active-coil count (e.g. 1e-320) passes the `active > 0` guard yet
+    /// underflows the rate denominator (8·D³·Na) to exactly 0.0, so the computed rate
+    /// is +Inf. A bare `rate <= 0.0` check lets +Inf through (it is not ≤ 0), silently
+    /// yielding a zero-deflection "valid" design. The rate guard must reject any
+    /// non-finite rate. (Without the `is_finite()` conjunct this test goes red.)
+    #[test]
+    fn rejects_plus_inf_rate_from_subnormal_active() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            1e-320, // subnormal: passes `active > 0` yet underflows the rate denominator to 0
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
+            "subnormal active (+Inf rate) must be rejected by the rate guard, got {r:?}"
+        );
+    }
+
+    /// An enormous mean diameter overflows D³ in the rate denominator to +Inf,
+    /// collapsing the computed rate to 0. The only test that reaches the rate guard
+    /// with a finite zero rate; pins the `> 0.0` half of the guard. (Without the
+    /// `> 0.0` conjunct this test goes red.)
+    #[test]
+    fn rejects_zero_rate_from_extreme_mean_dia() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(1e308), // D³ overflows to +Inf → rate collapses to 0
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
+            "extreme mean diameter (zero rate) must be rejected by the rate guard, got {r:?}"
+        );
     }
 
     /// An out-of-range wire diameter must surface as DiameterOutOfRange even when a
