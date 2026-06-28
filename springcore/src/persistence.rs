@@ -73,6 +73,13 @@ pub enum ScenarioSpec {
     },
 }
 
+// `#[serde(deny_unknown_fields)]` is intentionally NOT applied to the
+// family/type/mode-tagged enums below: serde rejects that attribute on
+// internally-tagged enums. Forward-compat safety is structural instead — every
+// payload field is required (none carry `#[serde(default)]`), so a misspelled
+// key surfaces as a "missing field" error on the correctly-spelled field rather
+// than silently defaulting. (A genuinely unknown extra key is ignored, which is
+// the desired additive-forward-compatibility behavior.)
 /// A design's family-tagged scenario inputs. `family` is the discriminant tag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "family")]
@@ -249,6 +256,22 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
     }
 }
 
+/// Reject any non-finite float (`inf`/`nan`) anywhere in a parsed TOML tree.
+///
+/// TOML 1.1 admits `inf`/`nan` float literals; no design field may hold one, so
+/// a single recursive scan guards every current and future float field uniformly
+/// — across both families and at any nesting depth.
+fn reject_non_finite(value: &toml::Value) -> Result<()> {
+    match value {
+        toml::Value::Float(f) if !f.is_finite() => Err(SpringError::DataFile(
+            "design file contains a non-finite number (inf/nan)".into(),
+        )),
+        toml::Value::Array(items) => items.iter().try_for_each(reject_non_finite),
+        toml::Value::Table(table) => table.values().try_for_each(reject_non_finite),
+        _ => Ok(()),
+    }
+}
+
 impl SavedDesign {
     /// Serialize this design to a TOML string.
     pub fn to_toml(&self) -> Result<String> {
@@ -256,13 +279,27 @@ impl SavedDesign {
     }
 
     /// Deserialize a design from a TOML string.
+    ///
+    /// TOML 1.1 accepts `inf`/`nan` as float literals, so a hand-edited or
+    /// machine-generated file could carry a non-finite number into any float
+    /// field. Reject those at this boundary (defense in depth) before the value
+    /// reaches a `DesignSpec`; the GUI form-parse layer rejects them again on
+    /// recompute, but deserialization must never yield a non-finite design input.
     pub fn from_toml(s: &str) -> Result<Self> {
+        let value: toml::Value =
+            toml::from_str(s).map_err(|e| SpringError::DataFile(e.to_string()))?;
+        reject_non_finite(&value)?;
         toml::from_str(s).map_err(|e| SpringError::DataFile(e.to_string()))
     }
 
     /// Write this design to a TOML file at `path`.
+    ///
+    /// Writes atomically (temp file + rename) via the shared atomic-write helper,
+    /// matching the material-store and settings save paths, so a crash mid-write
+    /// cannot corrupt an existing saved design.
     pub fn save(&self, path: &Path) -> Result<()> {
-        std::fs::write(path, self.to_toml()?).map_err(|e| SpringError::DataFile(e.to_string()))
+        crate::material_persist::atomic_write(path, &self.to_toml()?)
+            .map_err(|e| SpringError::DataFile(e.to_string()))
     }
 
     /// Load and deserialize a design from the TOML file at `path`.
@@ -714,6 +751,92 @@ mod tests {
         let pre_1b = "material = \"Music Wire\"\nunit_system = \"Metric\"\n[scenario]\ntype = \"PowerUser\"\nend_type = \"squared_ground\"\nfixity = \"fixed_fixed\"\nwire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\nfree_length_mm = 60.0\nloads_n = [10.0, 30.0]\n";
         assert!(matches!(
             SavedDesign::from_toml(pre_1b),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Non-finite rejection at the deserialization boundary (TOML 1.1 inf/nan)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn from_toml_rejects_non_finite_extension_floats() {
+        // A structurally valid extension file with Custom hooks...
+        let base = "material = \"Music Wire\"\nunit_system = \"Metric\"\n\
+                    [design]\nfamily = \"Extension\"\ntype = \"PowerUser\"\n\
+                    wire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\n\
+                    free_length_mm = 60.0\ninitial_tension_n = 10.0\nloads_n = [10.0, 30.0]\n\
+                    [design.hooks]\nmode = \"Custom\"\nr1_mm = 10.0\nr2_mm = 5.0\n";
+        assert!(
+            SavedDesign::from_toml(base).is_ok(),
+            "base fixture must deserialize cleanly"
+        );
+        // ...but every non-finite substitution is rejected as DataFile. The three
+        // sites exercise a scalar in [design], an element of an array, and a
+        // scalar in the [design.hooks] subtable (table + array + nested recursion).
+        for (from, to) in [
+            ("active = 10.0", "active = inf"),
+            ("loads_n = [10.0, 30.0]", "loads_n = [nan, 30.0]"),
+            ("r2_mm = 5.0", "r2_mm = -inf"),
+        ] {
+            let mutated = base.replace(from, to);
+            assert_ne!(mutated, base, "substitution '{from}' must apply");
+            assert!(
+                matches!(
+                    SavedDesign::from_toml(&mutated),
+                    Err(SpringError::DataFile(_))
+                ),
+                "non-finite via '{to}' must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_compression_float() {
+        let base = "material = \"Music Wire\"\nunit_system = \"Metric\"\n\
+                    [design]\nfamily = \"Compression\"\ntype = \"PowerUser\"\n\
+                    end_type = \"squared_ground\"\nfixity = \"fixed_fixed\"\n\
+                    wire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\n\
+                    free_length_mm = 60.0\nloads_n = [10.0, 30.0]\n";
+        assert!(
+            SavedDesign::from_toml(base).is_ok(),
+            "base fixture must deserialize cleanly"
+        );
+        let mutated = base.replace("wire_dia_mm = 2.0", "wire_dia_mm = nan");
+        assert!(matches!(
+            SavedDesign::from_toml(&mutated),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Atomic save (temp file + rename) — disk round-trip and error path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn save_writes_atomically_and_round_trips_through_disk() {
+        // Unique per-process+thread path so the round-trip genuinely depends on
+        // save() writing (and so concurrent test threads don't collide).
+        let path = std::env::temp_dir().join(format!(
+            "osm_design_save_{}_{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let original = ext_power_user_saved();
+        original.save(&path).unwrap();
+        let loaded = SavedDesign::load(&path).unwrap();
+        assert_eq!(original, loaded);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_to_path_with_missing_parent_errors() {
+        let path = std::env::temp_dir()
+            .join("osm_nonexistent_subdir_zzz")
+            .join("design.toml");
+        assert!(matches!(
+            ext_power_user_saved().save(&path),
             Err(SpringError::DataFile(_))
         ));
     }
