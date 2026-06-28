@@ -6,7 +6,7 @@
 use iced::widget::{column, container, pick_list, row, rule, text, text_input};
 use iced::{Background, Border, Color, Element, Font, Length};
 
-use crate::app::{Message, C};
+use crate::app::{App, Message, C};
 use crate::presenter::{Emphasis, GoverningRate, ResultRow};
 
 // --------------------------------------------------------------------------
@@ -99,6 +99,28 @@ pub(crate) fn text_input_style(
 /// A field label in the muted color at 13px.
 pub(crate) fn field_label(label: impl Into<String>) -> Element<'static, Message> {
     text(label.into()).size(SZ_LABEL).color(C::MUTED).into()
+}
+
+/// The material selector (`Material` label + pick-list), shared by every family's
+/// design panel. Reads only app-shell state (`app.materials`, `app.material`), so
+/// it carries no family dependency.
+pub(crate) fn material_picker(app: &App) -> Element<'_, Message> {
+    let material_names: Vec<String> = app
+        .materials
+        .names()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    column![
+        field_label("Material"),
+        styled_pick_list(
+            material_names,
+            Some(app.material.clone()),
+            Message::Material
+        ),
+    ]
+    .spacing(4)
+    .into()
 }
 
 /// A mono-spaced data value with color control.

@@ -124,27 +124,12 @@ pub(crate) fn calc_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    let material_names: Vec<String> = app
-        .materials
-        .names()
-        .into_iter()
-        .map(String::from)
-        .collect();
-
     let selected_end = find_by_key(END_TYPES, &app.form.end_type).copied();
     let selected_fix = find_by_key(FIXITIES, &app.form.fixity).copied();
 
     // Setup group — two columns: material+scenario left, end_type+fixity right.
     let setup_col_a = column![
-        column![
-            field_label("Material"),
-            styled_pick_list(
-                material_names,
-                Some(app.material.clone()),
-                Message::Material,
-            ),
-        ]
-        .spacing(4),
+        crate::widgets::material_picker(app),
         column![
             field_label("Scenario"),
             styled_pick_list(ALL_SCENARIOS, Some(app.form.scenario), Message::Scenario),

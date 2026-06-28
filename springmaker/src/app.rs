@@ -695,7 +695,7 @@ impl App {
             }
             Family::Extension => {
                 match crate::extension::form::build_spec(&self.extension, self.unit_system) {
-                    Ok(d) => d,
+                    Ok(e) => springcore::DesignSpec::Extension(e),
                     Err(e) => {
                         self.action_error = Some(e.to_string());
                         return;

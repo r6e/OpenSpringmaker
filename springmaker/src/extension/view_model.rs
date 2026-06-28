@@ -88,10 +88,10 @@ fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTab
 /// The three mutually-exclusive states of the extension results panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtResultsView {
-    /// Inputs are empty or invalid; nothing to show.
-    Empty,
     /// A parse/solve error.
     Error(String),
+    /// Inputs are empty or invalid; nothing to show.
+    Empty,
     /// A solved design with geometry ready to render.
     Populated(Box<ExtPopulatedResults>),
 }

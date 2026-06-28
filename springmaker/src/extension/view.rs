@@ -15,7 +15,7 @@ use crate::extension::view_model::{
 use crate::presenter::unit_length_label;
 use crate::widgets::{
     labeled_input, panel_container, render_governing_rate, results_empty, results_error,
-    rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
+    rows_section, section_divider, section_heading, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -23,25 +23,10 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    let material_names: Vec<String> = app
-        .materials
-        .names()
-        .into_iter()
-        .map(String::from)
-        .collect();
-
     // Setup group — material only (no end-type/fixity for extension springs).
     let setup_group = column![
         section_heading("Setup"),
-        column![
-            crate::widgets::field_label("Material"),
-            styled_pick_list(
-                material_names,
-                Some(app.material.clone()),
-                Message::Material
-            ),
-        ]
-        .spacing(4),
+        crate::widgets::material_picker(app),
     ]
     .spacing(10);
 
