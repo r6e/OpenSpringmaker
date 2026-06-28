@@ -20,7 +20,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - No `#[allow(dead_code)]` or lint-suppression scaffolding; internal enums stay exhaustive (no `#[non_exhaustive]` on GUI-matched enums).
 - **DRY on the second occurrence — lift, don't duplicate.** Shared logic blocks (numeric parsing, unit conversion/labels, output-row rendering) are extracted to shared modules and consumed by both families; only family-specific *glue* (a family's own field enum → its own message variant) stays per-family.
 - `springmaker` is not mutation-gated (GUI); its correctness bar is the presenter unit tests + the headless `Simulator` E2E tests. `springcore` **is** mutation-gated.
-- `typos` flags a standalone `mis` token — write "mistargeted", never "mis-targeted".
+- `typos` rejects a three-letter prefix split off by a hyphen — write words like "mistargeted" as a single token, never hyphenated.
 - Mandatory adversarial multi-agent review panel before push, cycling to convergence.
 
 ## Design decisions locked before planning (rationale for reviewers)
