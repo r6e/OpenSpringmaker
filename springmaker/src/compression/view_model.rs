@@ -12,7 +12,7 @@ use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     display_force, display_len, display_rate, display_stress, status_kind, unit_force_label,
     unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
-    LoadTable, ResultRow, StatusKind, StatusLine,
+    LoadTable, ResultRow, StatusLine,
 };
 use springcore::{BindingConstraint, SpringDesign, UnitSystem};
 
@@ -219,19 +219,7 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 /// load warnings, then design messages. An empty vector means the status panel
 /// is suppressed entirely.
 pub fn status_view(app: &App) -> Vec<StatusLine> {
-    let mut lines = Vec::new();
-    if let Some(text) = &app.action_error {
-        lines.push(StatusLine {
-            kind: StatusKind::ActionError,
-            text: text.clone(),
-        });
-    }
-    for warn in &app.load_warnings {
-        lines.push(StatusLine {
-            kind: StatusKind::LoadWarning,
-            text: warn.message.clone(),
-        });
-    }
+    let mut lines = crate::presenter::common_status_lines(app);
     if let Some(out) = &app.outcome {
         for msg in &out.status.messages {
             lines.push(StatusLine {
@@ -349,7 +337,7 @@ pub fn inputs_view(app: &App) -> InputsView {
 mod tests {
     use super::*;
     use crate::compression::form::FormState;
-    use crate::presenter::Emphasis;
+    use crate::presenter::{Emphasis, StatusKind};
     use springcore::{LoadWarning, MaterialSet, MaterialStore, Severity, UnitSystem};
 
     fn store() -> MaterialStore {

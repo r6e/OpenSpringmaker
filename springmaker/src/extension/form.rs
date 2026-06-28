@@ -325,6 +325,26 @@ mod tests {
     }
 
     #[test]
+    fn negative_initial_tension_errors() {
+        let materials = default_materials();
+        let form = ExtFormState {
+            initial_tension: "-5".to_string(),
+            ..metric_form()
+        };
+        assert!(
+            parse_and_solve(
+                &form,
+                default_material_name(),
+                UnitSystem::Metric,
+                &materials,
+                CurvatureCorrection::Bergstrasser,
+            )
+            .is_err(),
+            "negative initial_tension must be rejected via non_negative_force_n"
+        );
+    }
+
+    #[test]
     fn custom_hook_with_blank_r1_errors() {
         let materials = default_materials();
         let form = ExtFormState {

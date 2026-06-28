@@ -6,7 +6,7 @@ use crate::app::App;
 use crate::extension::form::Field;
 use crate::presenter::{
     display_force, display_len, display_rate, status_kind, unit_force_label, unit_length_label,
-    unit_rate_label, FieldDescriptor, GoverningRate, ResultRow, StatusKind, StatusLine,
+    unit_rate_label, FieldDescriptor, GoverningRate, ResultRow, StatusLine,
 };
 use springcore::extension::ExtensionDesign;
 
@@ -58,7 +58,7 @@ pub fn ext_results_view(app: &App) -> ExtResultsView {
 }
 
 /// Geometry result rows for a solved extension design.
-pub fn geometry_rows(d: &ExtensionDesign, us: springcore::UnitSystem) -> Vec<ResultRow> {
+pub(crate) fn geometry_rows(d: &ExtensionDesign, us: springcore::UnitSystem) -> Vec<ResultRow> {
     let len = unit_length_label(us);
     let force = unit_force_label(us);
     let rate = unit_rate_label(us);
@@ -93,19 +93,7 @@ pub fn geometry_rows(d: &ExtensionDesign, us: springcore::UnitSystem) -> Vec<Res
 
 /// Status lines for the extension family: mirrors compression `status_view`.
 pub fn ext_status_view(app: &App) -> Vec<StatusLine> {
-    let mut lines = Vec::new();
-    if let Some(text) = &app.action_error {
-        lines.push(StatusLine {
-            kind: StatusKind::ActionError,
-            text: text.clone(),
-        });
-    }
-    for warn in &app.load_warnings {
-        lines.push(StatusLine {
-            kind: StatusKind::LoadWarning,
-            text: warn.message.clone(),
-        });
-    }
+    let mut lines = crate::presenter::common_status_lines(app);
     if let Some(out) = &app.ext_outcome {
         for msg in &out.design.status.messages {
             lines.push(StatusLine {
@@ -141,6 +129,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::extension::form::{parse_and_solve, ExtFormState};
+    use crate::presenter::StatusKind;
     use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
 
     fn store() -> MaterialStore {

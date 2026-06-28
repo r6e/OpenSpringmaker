@@ -188,6 +188,26 @@ pub(crate) fn status_kind(severity: Severity) -> StatusKind {
     }
 }
 
+/// Shared status prefix: the save/load action error (if any) then material-load
+/// warnings, in that order. Every family's status view opens with this before
+/// appending its own design messages.
+pub(crate) fn common_status_lines(app: &crate::app::App) -> Vec<StatusLine> {
+    let mut lines = Vec::new();
+    if let Some(text) = &app.action_error {
+        lines.push(StatusLine {
+            kind: StatusKind::ActionError,
+            text: text.clone(),
+        });
+    }
+    for warn in &app.load_warnings {
+        lines.push(StatusLine {
+            kind: StatusKind::LoadWarning,
+            text: warn.message.clone(),
+        });
+    }
+    lines
+}
+
 // ── Hero rate readout ────────────────────────────────────────────────────────
 
 /// The hero spring-rate readout (label is constant in the view).
