@@ -3,8 +3,6 @@
 //! reusable by any spring family's presenter. Family-specific presenter
 //! functions and result aggregates live in each family's `view_model`.
 
-use crate::app::Field;
-
 // ── Results panel ───────────────────────────────────────────────────────────
 
 /// Emphasis for a result value; the view maps this to a color.
@@ -91,17 +89,17 @@ pub(crate) struct StatusLine {
 
 // ── Inputs panel ────────────────────────────────────────────────────────────
 
-/// One input field: its label (with embedded unit) and the [`Field`] the view
-/// binds it to. The current value is read from `app.form` by the view (iced's
-/// `text_input` borrows its value, which must outlive this owned descriptor).
+/// A labeled input descriptor, generic over the family's field enum. Each family
+/// builds `FieldDescriptor<its Field>`; its humble view maps `field` to that
+/// family's message variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FieldDescriptor {
+pub(crate) struct FieldDescriptor<F> {
     pub label: String,
-    pub field: Field,
+    pub field: F,
 }
 
-impl FieldDescriptor {
-    pub(crate) fn new(label: impl Into<String>, field: Field) -> Self {
+impl<F> FieldDescriptor<F> {
+    pub(crate) fn new(label: impl Into<String>, field: F) -> Self {
         Self {
             label: label.into(),
             field,

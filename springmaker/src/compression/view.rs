@@ -6,8 +6,8 @@
 use iced::widget::{button, column, container, radio, row, scrollable, space, text, text_input};
 use iced::{Background, Color, Element, Font, Length};
 
-use crate::app::{App, Field, Message, C};
-use crate::compression::form::ALL_SCENARIOS;
+use crate::app::{App, Message, C};
+use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
     inputs_view, results_view, status_view, FatigueView, GoverningRate, MinWeightView,
     PopulatedResults, ResultsView,
@@ -364,7 +364,7 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
 }
 
 /// Render one descriptor as a labeled input, binding the live value from `app.form`.
-fn render_input<'a>(app: &'a App, fd: &FieldDescriptor) -> Element<'a, Message> {
+fn render_input<'a>(app: &'a App, fd: &FieldDescriptor<Field>) -> Element<'a, Message> {
     labeled_input(&fd.label, field_value(&app.form, fd.field), fd.field)
 }
 

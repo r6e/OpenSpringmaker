@@ -3,6 +3,8 @@
 use crate::compression::form::{
     format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind,
 };
+// Re-export so `crate::app::Field` remains valid for callers (e.g. ui_tests).
+pub use crate::compression::form::Field;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
@@ -134,35 +136,6 @@ pub enum MatField {
     EnduranceSsa,
     EnduranceSsm,
     MaxTemp,
-}
-
-// --------------------------------------------------------------------------
-// Calculator field enum
-// --------------------------------------------------------------------------
-
-/// Which text field a [`Message::Field`] targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Field {
-    WireDia,
-    MeanDia,
-    OuterDia,
-    Active,
-    FreeLength,
-    Rate,
-    Loads,
-    Force1,
-    Length1,
-    Force2,
-    Length2,
-    FatigueMin,
-    FatigueMax,
-    // Min Weight fields
-    MaxForce,
-    IndexMin,
-    IndexMax,
-    MaxOuterDia,
-    CandidateDiameters,
-    ClashAllowance,
 }
 
 /// All UI events.

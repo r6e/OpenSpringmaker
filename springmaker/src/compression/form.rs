@@ -54,6 +54,31 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
     }
 }
 
+/// Which text field a [`crate::app::Message::Field`] targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    WireDia,
+    MeanDia,
+    OuterDia,
+    Active,
+    FreeLength,
+    Rate,
+    Loads,
+    Force1,
+    Length1,
+    Force2,
+    Length2,
+    FatigueMin,
+    FatigueMax,
+    // Min Weight fields
+    MaxForce,
+    IndexMin,
+    IndexMax,
+    MaxOuterDia,
+    CandidateDiameters,
+    ClashAllowance,
+}
+
 /// Which scenario the form is editing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScenarioKind {

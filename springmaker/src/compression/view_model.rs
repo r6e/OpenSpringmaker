@@ -7,8 +7,8 @@
 //! conversion is unit-testable without a renderer; `view` renders this data
 //! verbatim.
 
-use crate::app::{App, Field};
-use crate::compression::form::{FatigueStatus, FormOutcome, ScenarioKind};
+use crate::app::App;
+use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
 use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
 
@@ -333,8 +333,8 @@ pub fn status_view(app: &App) -> Vec<StatusLine> {
 /// cycle set (empty for the min-weight scenario, which has no fatigue section).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputsView {
-    pub primary: Vec<FieldDescriptor>,
-    pub fatigue: Vec<FieldDescriptor>,
+    pub primary: Vec<FieldDescriptor<Field>>,
+    pub fatigue: Vec<FieldDescriptor<Field>>,
 }
 
 /// Which input fields to show for the current scenario, with unit-aware labels.
@@ -487,11 +487,11 @@ mod tests {
         }
     }
 
-    fn fields(d: &[FieldDescriptor]) -> Vec<Field> {
+    fn fields(d: &[FieldDescriptor<Field>]) -> Vec<Field> {
         d.iter().map(|fd| fd.field).collect()
     }
 
-    fn labels(d: &[FieldDescriptor]) -> Vec<&str> {
+    fn labels(d: &[FieldDescriptor<Field>]) -> Vec<&str> {
         d.iter().map(|fd| fd.label.as_str()).collect()
     }
 
