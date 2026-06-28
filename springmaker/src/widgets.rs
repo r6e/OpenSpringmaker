@@ -373,7 +373,7 @@ pub(crate) fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Mess
 
 /// A labeled text input: muted label above a styled monospace input. The caller
 /// supplies the stable widget id and the message constructor, so both families
-/// reuse this (compression emits `Message::Field`, extension `Message::ExtField`).
+/// reuse this (compression emits `Message::CompField`, extension `Message::ExtField`).
 pub(crate) fn labeled_input<'a>(
     label: &str,
     value: &str,
