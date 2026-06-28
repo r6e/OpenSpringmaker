@@ -1,10 +1,8 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
 use crate::compression::form::{
-    format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind,
+    format_error, parse_and_solve, Field, FormOutcome, FormState, ScenarioKind,
 };
-// Re-export so `crate::app::Field` remains valid for callers (e.g. ui_tests).
-pub use crate::compression::form::Field;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};

@@ -8,7 +8,8 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
-use crate::app::{App, Field, Message, Screen};
+use crate::app::{App, Message, Screen};
+use crate::compression::form::Field;
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{MaterialSet, MaterialStore};
