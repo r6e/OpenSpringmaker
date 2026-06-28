@@ -292,4 +292,91 @@ mod tests {
             ExtResultsView::Populated(_)
         ));
     }
+
+    // ── Regression tests for review-panel findings ──
+
+    /// R1 finding H2: selecting Extension on a fresh (all-blank) form used to
+    /// immediately parse the blank state, produce a "wire diameter required"
+    /// error, and land in `Error` rather than `Empty`.
+    ///
+    /// The blank-form guard in `recompute()` must intercept this path.
+    #[test]
+    fn select_extension_on_blank_form_shows_empty_not_error() {
+        use crate::app::Message;
+        use springcore::Family;
+
+        // App starts as Compression; extension form is all-blank by default.
+        let mut app = fresh_app();
+        app.update(Message::SelectFamily(Family::Extension));
+
+        assert!(
+            app.error.is_none(),
+            "blank extension form must not produce a parse error"
+        );
+        assert_eq!(
+            ext_results_view(&app),
+            ExtResultsView::Empty,
+            "blank extension form must show Empty, not Error"
+        );
+    }
+
+    /// R1 finding M1: after switching from Extension back to Compression,
+    /// `ext_outcome` must be cleared so the stale solved design can't
+    /// resurface if the user switches back without re-entering data.
+    #[test]
+    fn switch_to_compression_clears_ext_outcome() {
+        use crate::app::Message;
+        use springcore::Family;
+
+        let materials = store();
+        let mut app = fresh_app();
+
+        // Manually inject a solved extension outcome while on Extension.
+        let out = parse_and_solve(
+            &metric_form(),
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .unwrap();
+        app.family = Family::Extension;
+        app.ext_outcome = Some(out);
+
+        // Switch to Compression — recompute() Extension arm must clear ext_outcome.
+        app.update(Message::SelectFamily(Family::Compression));
+
+        assert!(
+            app.ext_outcome.is_none(),
+            "ext_outcome must be None after switching to Compression"
+        );
+    }
+
+    /// R1 finding M1 (other direction): after switching from Compression to
+    /// Extension, `outcome` (the compression result) must be cleared.
+    #[test]
+    fn switch_to_extension_clears_compression_outcome() {
+        use crate::app::Message;
+        use springcore::Family;
+
+        let mut app = fresh_app();
+
+        // Produce a real compression outcome via the existing test-visible path.
+        app.form.scenario = crate::compression::form::ScenarioKind::RateBased;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.rate = "2.0".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.recompute();
+        assert!(app.outcome.is_some(), "pre-condition: compression must be solved");
+
+        // Switch to Extension — recompute() Compression arm must clear outcome.
+        app.update(Message::SelectFamily(Family::Extension));
+
+        assert!(
+            app.outcome.is_none(),
+            "compression outcome must be None after switching to Extension"
+        );
+    }
 }
