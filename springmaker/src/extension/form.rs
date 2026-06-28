@@ -161,6 +161,8 @@ pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: U
     match hooks {
         HookSpecSpec::Default => {
             form.hook_mode = HookMode::Default;
+            form.hook_r1 = String::new();
+            form.hook_r2 = String::new();
         }
         HookSpecSpec::Custom { r1_mm, r2_mm } => {
             form.hook_mode = HookMode::Custom;
@@ -454,5 +456,38 @@ mod tests {
         populate_from_spec(&mut form4, inner3, us);
         let spec4 = build_spec(&form4, us).unwrap();
         assert_eq!(spec3, spec4, "custom hooks: round-trip must be lossless");
+    }
+
+    /// Loading a Default-hook spec onto a form that previously held Custom radii
+    /// must clear `hook_r1` / `hook_r2` so stale values cannot leak to the user
+    /// if they later toggle back to Custom mode.
+    #[test]
+    fn default_hook_load_clears_stale_radii() {
+        let us = UnitSystem::Metric;
+
+        // Start from a Custom-hook form with non-empty radii.
+        let mut form = ExtFormState {
+            hook_mode: HookMode::Custom,
+            hook_r1: "8".to_string(),
+            hook_r2: "4".to_string(),
+            ..metric_form()
+        };
+
+        // Build a Default-hook spec and populate it over the stale Custom form.
+        let default_spec_inner = match &build_spec(&metric_form(), us).unwrap() {
+            springcore::DesignSpec::Extension(s) => s.clone(),
+            _ => panic!("expected Extension"),
+        };
+        populate_from_spec(&mut form, &default_spec_inner, us);
+
+        assert_eq!(form.hook_mode, HookMode::Default, "mode must switch to Default");
+        assert!(
+            form.hook_r1.is_empty(),
+            "hook_r1 must be cleared when loading a Default-hook spec"
+        );
+        assert!(
+            form.hook_r2.is_empty(),
+            "hook_r2 must be cleared when loading a Default-hook spec"
+        );
     }
 }
