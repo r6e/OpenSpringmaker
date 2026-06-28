@@ -73,12 +73,43 @@ pub enum ScenarioSpec {
     },
 }
 
-/// A persisted design: material, display units, and scenario inputs.
+/// A design's family-tagged scenario inputs. `family` is the discriminant tag.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "family")]
+pub enum DesignSpec {
+    Compression(ScenarioSpec),
+    Extension(ExtScenarioSpec),
+}
+
+/// Extension scenario inputs (SI millimetres / newtons, as stored). 1c adds the other modes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ExtScenarioSpec {
+    PowerUser {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        active: f64,
+        free_length_mm: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        loads_n: Vec<f64>,
+    },
+}
+
+/// Persisted hook geometry mode (mirrors engine `HookSpec`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode")]
+pub enum HookSpecSpec {
+    Default,
+    Custom { r1_mm: f64, r2_mm: f64 },
+}
+
+/// A persisted design: material, display units, and family-tagged design inputs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedDesign {
     pub material: String,
     pub unit_system: UnitSystem,
-    pub scenario: ScenarioSpec,
+    pub design: DesignSpec,
 }
 
 fn parse_end_type(s: &str) -> Result<EndType> {
@@ -245,6 +276,10 @@ impl SavedDesign {
     /// material reference. Callers that hold a `MaterialStore` (or any other lookup source)
     /// can call `.get(name)?` themselves and pass the result here.
     ///
+    /// **Compression-only.** Extension designs are solved via their scenario in the GUI,
+    /// not through `SavedDesign`. Passing an extension `DesignSpec` returns
+    /// `SpringError::InconsistentInputs`.
+    ///
     /// `material` must be the one named by `self.material`; otherwise the computed design
     /// and the design's recorded material name would silently disagree. The mismatch is
     /// rejected at runtime (not merely `debug_assert!`) since this is a public API.
@@ -259,89 +294,96 @@ impl SavedDesign {
                 material.name, self.material
             )));
         }
-        match &self.scenario {
-            ScenarioSpec::PowerUser {
-                end_type,
-                fixity,
-                wire_dia_mm,
-                mean_dia_mm,
-                active,
-                free_length_mm,
-                loads_n,
-            } => PowerUser {
-                end_type: parse_end_type(end_type)?,
-                fixity: parse_fixity(fixity)?,
-                wire_dia: Length::from_millimeters(*wire_dia_mm),
-                mean_dia: Length::from_millimeters(*mean_dia_mm),
-                active: *active,
-                free_length: Length::from_millimeters(*free_length_mm),
-                loads: forces(loads_n),
-            }
-            .solve(material, correction),
-            ScenarioSpec::TwoLoad {
-                end_type,
-                fixity,
-                wire_dia_mm,
-                mean_dia_mm,
-                force1_n,
-                length1_mm,
-                force2_n,
-                length2_mm,
-            } => TwoLoad {
-                end_type: parse_end_type(end_type)?,
-                fixity: parse_fixity(fixity)?,
-                wire_dia: Length::from_millimeters(*wire_dia_mm),
-                mean_dia: Length::from_millimeters(*mean_dia_mm),
-                point1: (
-                    Force::from_newtons(*force1_n),
-                    Length::from_millimeters(*length1_mm),
-                ),
-                point2: (
-                    Force::from_newtons(*force2_n),
-                    Length::from_millimeters(*length2_mm),
-                ),
-            }
-            .solve(material, correction),
-            ScenarioSpec::RateBased {
-                end_type,
-                fixity,
-                wire_dia_mm,
-                mean_dia_mm,
-                rate_n_per_m,
-                free_length_mm,
-                loads_n,
-            } => RateBased {
-                end_type: parse_end_type(end_type)?,
-                fixity: parse_fixity(fixity)?,
-                wire_dia: Length::from_millimeters(*wire_dia_mm),
-                mean_dia: Length::from_millimeters(*mean_dia_mm),
-                rate: SpringRate::from_newtons_per_meter(*rate_n_per_m),
-                free_length: Length::from_millimeters(*free_length_mm),
-                loads: forces(loads_n),
-            }
-            .solve(material, correction),
-            ScenarioSpec::Dimensional {
-                end_type,
-                fixity,
-                wire_dia_mm,
-                outer_dia_mm,
-                active,
-                free_length_mm,
-                loads_n,
-            } => Dimensional {
-                end_type: parse_end_type(end_type)?,
-                fixity: parse_fixity(fixity)?,
-                wire_dia: Length::from_millimeters(*wire_dia_mm),
-                outer_dia: Length::from_millimeters(*outer_dia_mm),
-                active: *active,
-                free_length: Length::from_millimeters(*free_length_mm),
-                loads: forces(loads_n),
-            }
-            .solve(material, correction),
-            ScenarioSpec::MinWeight { .. } => {
-                let req = min_weight_request_from_spec(&self.scenario)?;
-                solve_min_weight(material, &req, correction).map(|s| s.design)
-            }
+        match &self.design {
+            DesignSpec::Compression(scenario) => match scenario {
+                ScenarioSpec::PowerUser {
+                    end_type,
+                    fixity,
+                    wire_dia_mm,
+                    mean_dia_mm,
+                    active,
+                    free_length_mm,
+                    loads_n,
+                } => PowerUser {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    wire_dia: Length::from_millimeters(*wire_dia_mm),
+                    mean_dia: Length::from_millimeters(*mean_dia_mm),
+                    active: *active,
+                    free_length: Length::from_millimeters(*free_length_mm),
+                    loads: forces(loads_n),
+                }
+                .solve(material, correction),
+                ScenarioSpec::TwoLoad {
+                    end_type,
+                    fixity,
+                    wire_dia_mm,
+                    mean_dia_mm,
+                    force1_n,
+                    length1_mm,
+                    force2_n,
+                    length2_mm,
+                } => TwoLoad {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    wire_dia: Length::from_millimeters(*wire_dia_mm),
+                    mean_dia: Length::from_millimeters(*mean_dia_mm),
+                    point1: (
+                        Force::from_newtons(*force1_n),
+                        Length::from_millimeters(*length1_mm),
+                    ),
+                    point2: (
+                        Force::from_newtons(*force2_n),
+                        Length::from_millimeters(*length2_mm),
+                    ),
+                }
+                .solve(material, correction),
+                ScenarioSpec::RateBased {
+                    end_type,
+                    fixity,
+                    wire_dia_mm,
+                    mean_dia_mm,
+                    rate_n_per_m,
+                    free_length_mm,
+                    loads_n,
+                } => RateBased {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    wire_dia: Length::from_millimeters(*wire_dia_mm),
+                    mean_dia: Length::from_millimeters(*mean_dia_mm),
+                    rate: SpringRate::from_newtons_per_meter(*rate_n_per_m),
+                    free_length: Length::from_millimeters(*free_length_mm),
+                    loads: forces(loads_n),
+                }
+                .solve(material, correction),
+                ScenarioSpec::Dimensional {
+                    end_type,
+                    fixity,
+                    wire_dia_mm,
+                    outer_dia_mm,
+                    active,
+                    free_length_mm,
+                    loads_n,
+                } => Dimensional {
+                    end_type: parse_end_type(end_type)?,
+                    fixity: parse_fixity(fixity)?,
+                    wire_dia: Length::from_millimeters(*wire_dia_mm),
+                    outer_dia: Length::from_millimeters(*outer_dia_mm),
+                    active: *active,
+                    free_length: Length::from_millimeters(*free_length_mm),
+                    loads: forces(loads_n),
+                }
+                .solve(material, correction),
+                ScenarioSpec::MinWeight { .. } => {
+                    let req = min_weight_request_from_spec(scenario)?;
+                    solve_min_weight(material, &req, correction).map(|s| s.design)
+                }
+            },
+            DesignSpec::Extension(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; extension designs are solved \
+                 via the extension scenario"
+                    .into(),
+            )),
         }
     }
 
@@ -518,7 +560,7 @@ mod tests {
         let s = SavedDesign {
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
-            scenario: ScenarioSpec::MinWeight {
+            design: DesignSpec::Compression(ScenarioSpec::MinWeight {
                 end_type: "squared_ground".into(),
                 fixity: "fixed_fixed".into(),
                 required_rate_n_per_m: 2000.0,
@@ -528,7 +570,7 @@ mod tests {
                 max_outer_dia_mm: None,
                 candidate_diameters_mm: vec![1.5, 2.0, 2.5, 3.0],
                 clash_allowance: 0.15,
-            },
+            }),
         };
         let parsed = SavedDesign::from_toml(&s.to_toml().unwrap()).unwrap();
         assert_eq!(s, parsed);
@@ -545,7 +587,7 @@ mod tests {
         SavedDesign {
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
-            scenario: ScenarioSpec::RateBased {
+            design: DesignSpec::Compression(ScenarioSpec::RateBased {
                 end_type: "squared_ground".into(),
                 fixity: "fixed_fixed".into(),
                 wire_dia_mm: 2.0,
@@ -553,7 +595,7 @@ mod tests {
                 rate_n_per_m: 2000.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0],
-            },
+            }),
         }
     }
 
@@ -593,7 +635,7 @@ mod tests {
     #[test]
     fn unknown_end_type_is_rejected() {
         let mut s = sample();
-        if let ScenarioSpec::RateBased { end_type, .. } = &mut s.scenario {
+        if let DesignSpec::Compression(ScenarioSpec::RateBased { end_type, .. }) = &mut s.design {
             *end_type = "banana".into();
         }
         assert!(s
@@ -612,6 +654,84 @@ mod tests {
         let loaded = SavedDesign::load(&path).unwrap();
         assert_eq!(sample(), loaded);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 8: family-tagged DesignSpec round-trips
+    // -----------------------------------------------------------------------
+
+    fn ext_power_user_saved() -> SavedDesign {
+        SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::PowerUser {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                initial_tension_n: 10.0,
+                hooks: HookSpecSpec::Default,
+                loads_n: vec![10.0, 30.0],
+            }),
+        }
+    }
+
+    #[test]
+    fn extension_power_user_round_trips_through_toml_text() {
+        let v = ext_power_user_saved();
+        let text = v.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&text).unwrap();
+        assert_eq!(v, back);
+        assert_eq!(text, back.to_toml().unwrap()); // stable serialization, no tag collision
+    }
+
+    #[test]
+    fn hook_spec_custom_round_trips() {
+        let mut v = ext_power_user_saved();
+        if let DesignSpec::Extension(ExtScenarioSpec::PowerUser { hooks, .. }) = &mut v.design {
+            *hooks = HookSpecSpec::Custom {
+                r1_mm: 10.0,
+                r2_mm: 5.0,
+            };
+        }
+        let back = SavedDesign::from_toml(&v.to_toml().unwrap()).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn compression_design_still_round_trips_under_design_tag() {
+        let v = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Compression(min_weight_spec(2000.0, 4.0)),
+        };
+        let back = SavedDesign::from_toml(&v.to_toml().unwrap()).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn pre_1b_scenario_shape_fails_with_data_file_error() {
+        let pre_1b = "material = \"Music Wire\"\nunit_system = \"Metric\"\n[scenario]\ntype = \"PowerUser\"\nend_type = \"squared_ground\"\nfixity = \"fixed_fixed\"\nwire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\nfree_length_mm = 60.0\nloads_n = [10.0, 30.0]\n";
+        assert!(matches!(
+            SavedDesign::from_toml(pre_1b),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn solve_with_material_rejects_extension_design() {
+        let set = MaterialSet::load_default();
+        let m = set.get("Music Wire").unwrap();
+        let err = ext_power_user_saved()
+            .solve_with_material(m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+        // Pin the error content to kill mutation survivors on the Extension arm.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("extension"),
+            "error must mention 'extension', got: {msg}"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -399,7 +399,7 @@ pub fn parse_and_solve(
     let saved = SavedDesign {
         material: material_name.to_string(),
         unit_system: us,
-        scenario: spec,
+        design: springcore::DesignSpec::Compression(spec),
     };
     let design = saved.solve_with_material(material, correction)?;
     let status = evaluate_status(&design, material);

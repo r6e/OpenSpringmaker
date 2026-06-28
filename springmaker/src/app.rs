@@ -683,17 +683,30 @@ impl App {
     /// intact. The leading clear makes a successful save dismiss a prior failure.
     fn save_to(&mut self, path: &std::path::Path) {
         self.action_error = None;
-        let spec = match crate::compression::form::build_spec(&self.form, self.unit_system) {
-            Ok(s) => s,
-            Err(e) => {
-                self.action_error = Some(e.to_string());
-                return;
+        let design = match self.family {
+            Family::Compression => {
+                match crate::compression::form::build_spec(&self.form, self.unit_system) {
+                    Ok(s) => springcore::DesignSpec::Compression(s),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
+            }
+            Family::Extension => {
+                match crate::extension::form::build_spec(&self.extension, self.unit_system) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
             }
         };
         let saved = SavedDesign {
             material: self.material.clone(),
             unit_system: self.unit_system,
-            scenario: spec,
+            design,
         };
         if let Err(e) = saved.save(path) {
             self.action_error = Some(e.to_string());
@@ -731,11 +744,24 @@ impl App {
     fn apply_saved(&mut self, saved: SavedDesign) {
         self.material = saved.material;
         self.unit_system = saved.unit_system;
-        crate::compression::form::populate_from_spec(
-            &mut self.form,
-            &saved.scenario,
-            self.unit_system,
-        );
+        match saved.design {
+            springcore::DesignSpec::Compression(spec) => {
+                self.family = Family::Compression;
+                crate::compression::form::populate_from_spec(
+                    &mut self.form,
+                    &spec,
+                    self.unit_system,
+                );
+            }
+            springcore::DesignSpec::Extension(spec) => {
+                self.family = Family::Extension;
+                crate::extension::form::populate_from_spec(
+                    &mut self.extension,
+                    &spec,
+                    self.unit_system,
+                );
+            }
+        }
     }
 }
 

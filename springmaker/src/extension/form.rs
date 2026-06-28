@@ -1,8 +1,13 @@
 //! Pure extension form-to-design logic. No iced dependency.
-use crate::form_helpers::{length_mm, loads_n, non_negative_force_n, positive_num};
+use crate::form_helpers::{
+    fmt_force, fmt_len, fmt_loads, length_mm, loads_n, non_negative_force_n, positive_num,
+};
 use springcore::extension::{ExtensionDesign, HookEnds, PowerUser, Scenario};
 use springcore::units::{Force, Length};
-use springcore::{CurvatureCorrection, Material, MaterialStore, Result, UnitSystem};
+use springcore::{
+    CurvatureCorrection, DesignSpec, ExtScenarioSpec, HookSpecSpec, Material, MaterialStore,
+    Result, UnitSystem,
+};
 
 /// Which extension text field a `Message::ExtField` targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +116,58 @@ pub fn parse_and_solve(
     };
     let design = scenario.solve(material, correction)?;
     Ok(ExtFormOutcome { design })
+}
+
+/// Parse `form` into a persisted `DesignSpec::Extension` (SI mm/N). Round-trips with
+/// `populate_from_spec`.
+pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<DesignSpec> {
+    let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
+    let hooks = match form.hook_mode {
+        HookMode::Default => HookSpecSpec::Default,
+        HookMode::Custom => HookSpecSpec::Custom {
+            r1_mm: length_mm("hook radius r1", &form.hook_r1, us)?,
+            r2_mm: length_mm("hook radius r2", &form.hook_r2, us)?,
+        },
+    };
+    Ok(DesignSpec::Extension(ExtScenarioSpec::PowerUser {
+        wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+        mean_dia_mm,
+        active: positive_num("active coils", &form.active)?,
+        free_length_mm: length_mm("free length", &form.free_length, us)?,
+        initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
+        hooks,
+        loads_n: loads_n(&form.loads, us)?,
+    }))
+}
+
+/// Write a persisted `ExtScenarioSpec` back into `form`, converting SI mm/N to display
+/// units. After this call, `build_spec(form, us)` reproduces the spec.
+pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: UnitSystem) {
+    let ExtScenarioSpec::PowerUser {
+        wire_dia_mm,
+        mean_dia_mm,
+        active,
+        free_length_mm,
+        initial_tension_n,
+        hooks,
+        loads_n,
+    } = spec;
+    form.wire_dia = fmt_len(*wire_dia_mm, us);
+    form.mean_dia = fmt_len(*mean_dia_mm, us);
+    form.active = format!("{active}");
+    form.free_length = fmt_len(*free_length_mm, us);
+    form.initial_tension = fmt_force(*initial_tension_n, us);
+    form.loads = fmt_loads(loads_n, us);
+    match hooks {
+        HookSpecSpec::Default => {
+            form.hook_mode = HookMode::Default;
+        }
+        HookSpecSpec::Custom { r1_mm, r2_mm } => {
+            form.hook_mode = HookMode::Custom;
+            form.hook_r1 = fmt_len(*r1_mm, us);
+            form.hook_r2 = fmt_len(*r2_mm, us);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -361,5 +418,41 @@ mod tests {
             CurvatureCorrection::default()
         )
         .is_err());
+    }
+
+    /// `build_spec` → extract `ExtScenarioSpec` → `populate_from_spec` → `build_spec` again
+    /// must produce identical specs. Verified for both Default and Custom hook modes.
+    #[test]
+    fn build_spec_populate_round_trip() {
+        let us = UnitSystem::Metric;
+
+        // Default hooks
+        let form = metric_form();
+        let spec1 = build_spec(&form, us).unwrap();
+        let inner = match &spec1 {
+            springcore::DesignSpec::Extension(s) => s,
+            _ => panic!("expected Extension"),
+        };
+        let mut form2 = ExtFormState::default();
+        populate_from_spec(&mut form2, inner, us);
+        let spec2 = build_spec(&form2, us).unwrap();
+        assert_eq!(spec1, spec2, "default hooks: round-trip must be lossless");
+
+        // Custom hooks
+        let form_custom = ExtFormState {
+            hook_mode: HookMode::Custom,
+            hook_r1: "8".to_string(),
+            hook_r2: "4".to_string(),
+            ..metric_form()
+        };
+        let spec3 = build_spec(&form_custom, us).unwrap();
+        let inner3 = match &spec3 {
+            springcore::DesignSpec::Extension(s) => s,
+            _ => panic!("expected Extension"),
+        };
+        let mut form4 = ExtFormState::default();
+        populate_from_spec(&mut form4, inner3, us);
+        let spec4 = build_spec(&form4, us).unwrap();
+        assert_eq!(spec3, spec4, "custom hooks: round-trip must be lossless");
     }
 }
