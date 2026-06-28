@@ -14,14 +14,9 @@ use crate::compression::view_model::{
 use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
-    rows_section, section_divider, section_heading, styled_pick_list, SZ_BODY, SZ_LABEL,
+    results_empty, results_error, rows_section, section_divider, section_heading,
+    styled_pick_list, SZ_CAPTION, SZ_LABEL,
 };
-
-// --------------------------------------------------------------------------
-// Font-size constants
-// --------------------------------------------------------------------------
-
-const SZ_CAPTION: u32 = 11;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -354,20 +349,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
-        ResultsView::Error(msg) => column![
-            section_heading("Results"),
-            text(msg).size(SZ_LABEL).color(C::DANGER),
-        ]
-        .spacing(12)
-        .into(),
-        ResultsView::Empty => column![
-            section_heading("Results"),
-            text("Enter design parameters to see results.")
-                .size(SZ_BODY)
-                .color(C::MUTED),
-        ]
-        .spacing(12)
-        .into(),
+        ResultsView::Error(msg) => results_error(&msg),
+        ResultsView::Empty => results_empty(),
         ResultsView::Populated(p) => {
             // The chart is pure rendering of the design (no decision); build it
             // from the outcome the Populated variant guarantees is present.

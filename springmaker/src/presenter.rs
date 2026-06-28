@@ -4,7 +4,7 @@
 //! functions and result aggregates live in each family's `view_model`.
 
 use crate::form_helpers::MM_PER_M;
-use springcore::{Force, Length, Severity, SpringRate, Stress, UnitSystem};
+use springcore::{Force, Length, Severity, SpringRate, StatusMessage, Stress, UnitSystem};
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
@@ -215,6 +215,29 @@ pub(crate) fn common_status_lines(app: &crate::app::App) -> Vec<StatusLine> {
 pub(crate) struct GoverningRate {
     pub value: String,
     pub unit: String,
+}
+
+impl GoverningRate {
+    /// Build from a `SpringRate`, formatting to 4 decimal places in the active unit system.
+    pub(crate) fn from_rate(rate: SpringRate, us: UnitSystem) -> Self {
+        Self {
+            value: format!("{:.4}", display_rate(rate, us)),
+            unit: unit_rate_label(us).to_string(),
+        }
+    }
+}
+
+/// Append design-message status lines, mapping severity to [`StatusKind`].
+///
+/// Called at the end of every family's status-view function to add
+/// engine-level messages after the shared action-error / load-warning prefix.
+pub(crate) fn append_status_messages(lines: &mut Vec<StatusLine>, messages: &[StatusMessage]) {
+    for msg in messages {
+        lines.push(StatusLine {
+            kind: status_kind(msg.severity),
+            text: msg.message.clone(),
+        });
+    }
 }
 
 #[cfg(test)]

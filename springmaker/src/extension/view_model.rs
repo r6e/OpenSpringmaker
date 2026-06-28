@@ -5,9 +5,9 @@
 use crate::app::App;
 use crate::extension::form::Field;
 use crate::presenter::{
-    display_force, display_len, display_rate, display_stress, status_kind, unit_force_label,
-    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate,
-    ResultRow, StatusLine,
+    append_status_messages, display_force, display_len, display_rate, display_stress,
+    unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor,
+    GoverningRate, ResultRow, StatusLine,
 };
 use springcore::extension::ExtensionDesign;
 
@@ -113,13 +113,8 @@ pub fn ext_results_view(app: &App) -> ExtResultsView {
     match &app.ext_outcome {
         Some(out) => {
             let us = app.unit_system;
-            let rate = display_rate(out.design.rate, us);
-            let governing_rate = GoverningRate {
-                value: format!("{rate:.4}"),
-                unit: unit_rate_label(us).to_string(),
-            };
             ExtResultsView::Populated(Box::new(ExtPopulatedResults {
-                governing_rate,
+                governing_rate: GoverningRate::from_rate(out.design.rate, us),
                 geometry: geometry_rows(&out.design, us),
                 load_table: ext_load_table(&out.design, us),
             }))
@@ -169,12 +164,7 @@ pub(crate) fn geometry_rows(d: &ExtensionDesign, us: springcore::UnitSystem) -> 
 pub fn ext_status_view(app: &App) -> Vec<StatusLine> {
     let mut lines = crate::presenter::common_status_lines(app);
     if let Some(out) = &app.ext_outcome {
-        for msg in &out.design.status.messages {
-            lines.push(StatusLine {
-                kind: status_kind(msg.severity),
-                text: msg.message.clone(),
-            });
-        }
+        append_status_messages(&mut lines, &out.design.status.messages);
     }
     lines
 }

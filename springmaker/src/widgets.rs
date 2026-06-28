@@ -238,8 +238,33 @@ pub(crate) fn nav_button_style(
 
 // ── Results panel helpers ────────────────────────────────────────────────────
 
+/// Caption / fine-print font size for table headers and small annotations.
+pub(crate) const SZ_CAPTION: u32 = 11;
+
 /// Hero font size for the governing-rate readout.
 pub(crate) const SZ_HERO: u32 = 22;
+
+/// Results panel for the empty (no input) state.
+pub(crate) fn results_empty() -> Element<'static, Message> {
+    column![
+        section_heading("Results"),
+        text("Enter design parameters to see results.")
+            .size(SZ_BODY)
+            .color(C::MUTED),
+    ]
+    .spacing(12)
+    .into()
+}
+
+/// Results panel for the error (solve failed) state.
+pub(crate) fn results_error(msg: &str) -> Element<'static, Message> {
+    column![
+        section_heading("Results"),
+        text(msg.to_owned()).size(SZ_LABEL).color(C::DANGER),
+    ]
+    .spacing(12)
+    .into()
+}
 
 /// A muted label + mono value row with an explicit value color.
 pub(crate) fn result_row_colored<'a>(

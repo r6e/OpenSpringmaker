@@ -14,11 +14,9 @@ use crate::extension::view_model::{
 };
 use crate::presenter::unit_length_label;
 use crate::widgets::{
-    labeled_input, panel_container, render_governing_rate, rows_section, section_divider,
-    section_heading, styled_pick_list, SZ_BODY, SZ_LABEL,
+    labeled_input, panel_container, render_governing_rate, results_empty, results_error,
+    rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
 };
-
-const SZ_CAPTION: u32 = 11;
 
 // --------------------------------------------------------------------------
 // Design (left) panel
@@ -273,20 +271,8 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let content: Element<'_, Message> = match ext_results_view(app) {
-        ExtResultsView::Error(msg) => column![
-            section_heading("Results"),
-            text(msg).size(SZ_LABEL).color(C::DANGER),
-        ]
-        .spacing(12)
-        .into(),
-        ExtResultsView::Empty => column![
-            section_heading("Results"),
-            text("Enter design parameters to see results.")
-                .size(SZ_BODY)
-                .color(C::MUTED),
-        ]
-        .spacing(12)
-        .into(),
+        ExtResultsView::Error(msg) => results_error(&msg),
+        ExtResultsView::Empty => results_empty(),
         ExtResultsView::Populated(p) => column![
             section_heading("Results"),
             section_divider(),

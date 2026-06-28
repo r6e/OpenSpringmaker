@@ -10,7 +10,7 @@
 use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
-    display_force, display_len, display_rate, display_stress, status_kind, unit_force_label,
+    append_status_messages, display_force, display_len, display_stress, unit_force_label,
     unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
     LoadTable, ResultRow, StatusLine,
 };
@@ -79,10 +79,7 @@ pub fn results_view(app: &App) -> ResultsView {
 fn populated_results(out: &FormOutcome, us: UnitSystem) -> PopulatedResults {
     let d = &out.design;
     PopulatedResults {
-        governing_rate: GoverningRate {
-            value: format!("{:.4}", display_rate(d.rate, us)),
-            unit: unit_rate_label(us).to_string(),
-        },
+        governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: geometry_rows(d, us),
         load_table: load_table(d, us),
         fatigue: fatigue_view(out, us),
@@ -221,12 +218,7 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 pub fn status_view(app: &App) -> Vec<StatusLine> {
     let mut lines = crate::presenter::common_status_lines(app);
     if let Some(out) = &app.outcome {
-        for msg in &out.status.messages {
-            lines.push(StatusLine {
-                kind: status_kind(msg.severity),
-                text: msg.message.clone(),
-            });
-        }
+        append_status_messages(&mut lines, &out.status.messages);
     }
     lines
 }
@@ -337,7 +329,7 @@ pub fn inputs_view(app: &App) -> InputsView {
 mod tests {
     use super::*;
     use crate::compression::form::FormState;
-    use crate::presenter::{Emphasis, StatusKind};
+    use crate::presenter::{Emphasis, StatusKind, status_kind};
     use springcore::{LoadWarning, MaterialSet, MaterialStore, Severity, UnitSystem};
 
     fn store() -> MaterialStore {
