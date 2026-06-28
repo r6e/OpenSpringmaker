@@ -638,8 +638,15 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap();
-        assert!(!d.status.has_warnings(), "clean design must have no warnings: {:?}", d.status.messages);
-        assert!(d.status.messages.is_empty(), "clean in-band design has an empty status");
+        assert!(
+            !d.status.has_warnings(),
+            "clean design must have no warnings: {:?}",
+            d.status.messages
+        );
+        assert!(
+            d.status.messages.is_empty(),
+            "clean in-band design has an empty status"
+        );
     }
 
     // ── status: index caution (Severity::Caution) ────────────────────────────
@@ -660,9 +667,13 @@ mod tests {
         )
         .unwrap();
         assert!(
-            d.status.messages.iter().any(|msg|
-                msg.severity == crate::Severity::Caution && msg.message.contains("spring index")),
-            "index 20 must raise a Caution, got: {:?}", d.status.messages
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Caution
+                    && msg.message.contains("spring index")),
+            "index 20 must raise a Caution, got: {:?}",
+            d.status.messages
         );
     }
 
@@ -689,39 +700,57 @@ mod tests {
     #[test]
     fn body_overstress_raises_indexed_warning() {
         let d = overstressed();
-        assert!(d.load_points[0].pct_body_allow > 1.0, "fixture must overstress body shear");
         assert!(
-            d.status.messages.iter().any(|msg|
-                msg.severity == crate::Severity::Warning
-                && msg.message.contains("load point 1")
-                && msg.message.contains("body shear")),
-            "expected indexed body-shear warning, got: {:?}", d.status.messages
+            d.load_points[0].pct_body_allow > 1.0,
+            "fixture must overstress body shear"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("body shear")),
+            "expected indexed body-shear warning, got: {:?}",
+            d.status.messages
         );
     }
 
     #[test]
     fn hook_bending_overstress_raises_indexed_warning() {
         let d = overstressed();
-        assert!(d.load_points[0].pct_hook_bending_allow > 1.0, "fixture must overstress hook bending");
         assert!(
-            d.status.messages.iter().any(|msg|
-                msg.severity == crate::Severity::Warning
-                && msg.message.contains("load point 1")
-                && msg.message.contains("hook bending")),
-            "expected indexed hook-bending warning, got: {:?}", d.status.messages
+            d.load_points[0].pct_hook_bending_allow > 1.0,
+            "fixture must overstress hook bending"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("hook bending")),
+            "expected indexed hook-bending warning, got: {:?}",
+            d.status.messages
         );
     }
 
     #[test]
     fn hook_torsion_overstress_raises_indexed_warning() {
         let d = overstressed();
-        assert!(d.load_points[0].pct_hook_torsion_allow > 1.0, "fixture must overstress hook torsion");
         assert!(
-            d.status.messages.iter().any(|msg|
-                msg.severity == crate::Severity::Warning
-                && msg.message.contains("load point 1")
-                && msg.message.contains("hook torsion")),
-            "expected indexed hook-torsion warning, got: {:?}", d.status.messages
+            d.load_points[0].pct_hook_torsion_allow > 1.0,
+            "fixture must overstress hook torsion"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("hook torsion")),
+            "expected indexed hook-torsion warning, got: {:?}",
+            d.status.messages
         );
     }
 
@@ -743,7 +772,11 @@ mod tests {
         };
         // index 10 is in-band → no caution either, so a clean status is expected.
         let status = evaluate_status(10.0, std::slice::from_ref(&lp));
-        assert!(!status.has_warnings(), "pct == 1.0 must not warn: {:?}", status.messages);
+        assert!(
+            !status.has_warnings(),
+            "pct == 1.0 must not warn: {:?}",
+            status.messages
+        );
     }
 
     /// Default hooks give r2 = D/4; with d = D/2 → C2 = 2·(D/4)/(D/2) = 1 —
