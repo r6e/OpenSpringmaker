@@ -10,7 +10,7 @@
 
 use crate::app::{App, Message, Screen};
 use crate::compression::form::Field;
-use crate::extension::form::{build_spec, HookMode};
+use crate::extension::form::{build_spec, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use iced_test::core::Settings;
 use iced_test::Simulator;
@@ -235,16 +235,15 @@ fn save_entry_commits_a_clone_and_closes_the_editor() {
 
 // ── Extension family Simulator tests ─────────────────────────────────────────
 
-/// Focus an extension-spring calculator field's text input by its stable widget
-/// id string and type `text` into it, then apply every resulting message.
-/// Mirrors `type_into` but accepts the id as a `&'static str` directly, because
-/// extension field ids (`ext-wire-dia` etc.) are a deliberately stable crate-
-/// internal contract and `ext_field_id` is private to the view module.
-fn type_into_ext(app: &mut App, widget_id: &'static str, text: &str) {
-    let id = iced_test::core::widget::Id::from(widget_id);
+/// Focus an extension-spring calculator field's text input and type `text` into
+/// it, then apply every resulting message. Mirrors `type_into`, resolving the
+/// widget id through the view's `ext_field_id` so the test and the view share a
+/// single source of truth for the id strings.
+fn type_into_ext(app: &mut App, field: ExtField, text: &str) {
+    let id = iced_test::core::widget::Id::from(crate::extension::view::ext_field_id(field));
     let mut sim = ui(app);
     sim.click(id)
-        .unwrap_or_else(|e| panic!("could not focus ext input {widget_id:?}: {e}"));
+        .unwrap_or_else(|e| panic!("could not focus ext input for {field:?}: {e}"));
     sim.typewrite(text);
     for message in sim.into_messages() {
         app.update(message);
@@ -266,12 +265,12 @@ fn ext_solve_flow_renders_results() {
     assert!(shows(&app, "Enter design parameters to see results."));
 
     // Enter a valid PowerUser design field-by-field via stable widget IDs.
-    type_into_ext(&mut app, "ext-wire-dia", "2.0");
-    type_into_ext(&mut app, "ext-mean-dia", "20.0");
-    type_into_ext(&mut app, "ext-active", "10");
-    type_into_ext(&mut app, "ext-free-length", "60");
-    type_into_ext(&mut app, "ext-initial-tension", "10");
-    type_into_ext(&mut app, "ext-loads", "10, 30");
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "10");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
 
     // The form state reflects the typed values.
     assert_eq!(app.extension.wire_dia, "2.0");
@@ -307,12 +306,12 @@ fn ext_hook_toggle_shows_radii_and_resolves() {
     app.update(Message::SelectFamily(Family::Extension));
 
     // Enter valid geometry so the spring solves under any hook mode.
-    type_into_ext(&mut app, "ext-wire-dia", "2.0");
-    type_into_ext(&mut app, "ext-mean-dia", "20.0");
-    type_into_ext(&mut app, "ext-active", "10");
-    type_into_ext(&mut app, "ext-free-length", "60");
-    type_into_ext(&mut app, "ext-initial-tension", "5");
-    type_into_ext(&mut app, "ext-loads", "50");
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "5");
+    type_into_ext(&mut app, ExtField::Loads, "50");
 
     // Default mode: solved and hook radius inputs are not rendered.
     assert_eq!(app.extension.hook_mode, HookMode::Default);
@@ -339,8 +338,8 @@ fn ext_hook_toggle_shows_radii_and_resolves() {
     );
 
     // Enter valid custom radii; solve must succeed.
-    type_into_ext(&mut app, "ext-hook-r1", "10.0");
-    type_into_ext(&mut app, "ext-hook-r2", "5.0");
+    type_into_ext(&mut app, ExtField::HookR1, "10.0");
+    type_into_ext(&mut app, ExtField::HookR2, "5.0");
     assert!(
         app.ext_outcome.is_some(),
         "custom hook mode with valid radii must solve"

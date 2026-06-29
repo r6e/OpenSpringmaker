@@ -120,11 +120,16 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
     }
 }
 
-/// Stable widget ID for a calculator extension field's text input.
-///
-/// IDs are a deliberate stable contract: single source of truth shared by the
-/// view and tests; each `Field` renders at most one input per frame.
-fn ext_field_id(field: Field) -> &'static str {
+/// Stable widget ID for a calculator extension field's text input. The inputs
+/// are empty by default, so headless Simulator tests can't target them by text
+/// content and select by this id instead. An explicit, exhaustive match (rather
+/// than a `Debug`-derived string) keeps the ids a deliberate stable contract,
+/// avoids a per-render allocation, and forces a choice when a `Field` is added.
+/// Single source of truth shared by the view and the tests, which resolve their
+/// target inputs through this function (see `type_into_ext`) rather than
+/// hardcoding the strings, so the two cannot drift. Each `Field` renders at most
+/// one input per frame.
+pub(crate) fn ext_field_id(field: Field) -> &'static str {
     match field {
         Field::WireDia => "ext-wire-dia",
         Field::MeanDia => "ext-mean-dia",
