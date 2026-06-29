@@ -207,9 +207,14 @@ mod tests {
     #[test]
     fn rate_npm_metric_overflow_to_inf_is_rejected() {
         let result = rate_npm("spring rate", "1e306", UnitSystem::Metric);
+        let Err(SpringError::InconsistentInputs(msg)) = result else {
+            panic!("metric rate overflow to +Inf must be rejected; got {result:?}");
+        };
+        // The ×1000 N/mm→N/m conversion overflows a finite input; the message must name
+        // the conversion overflow, not claim the rate the user typed was non-finite.
         assert!(
-            matches!(result, Err(SpringError::InconsistentInputs(_))),
-            "metric rate overflow to +Inf must be rejected; got {result:?}"
+            msg.contains("overflow") && msg.contains("spring rate"),
+            "overflow error should name the field and the overflow; got: {msg}"
         );
     }
 

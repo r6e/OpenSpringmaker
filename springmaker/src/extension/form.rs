@@ -237,12 +237,15 @@ fn resolve_hooks(form: &ExtFormState, mean_dia_mm: f64, us: UnitSystem) -> Resul
 /// Mean coil diameter for the Dimensional scenario (`outer − wire`), rejecting a
 /// non-positive result with a field-named error. Dimensional is the only scenario
 /// whose mean diameter is *derived* by subtraction rather than entered directly, so an
-/// outer diameter at or below the wire diameter yields `mean ≤ 0` — which feeds negative
-/// default hook radii (`HookEnds::default_for`) into the solve and would persist as an
-/// unbuildable spec. The engine independently rejects `mean ≤ wire` at solve time
-/// ("spring index must exceed 1"), but validating here surfaces the failure at the form
-/// boundary against the field the user actually typed, and stops `build_spec` writing a
-/// spec that can never be loaded.
+/// outer diameter at or below the wire diameter yields `mean ≤ 0` — which feeds
+/// non-positive default hook radii (`HookEnds::default_for`) into the solve (negative for
+/// `outer < wire`, zero at `outer == wire`). The engine independently
+/// rejects the broader `mean ≤ wire` (spring index ≤ 1) at solve time ("spring index must
+/// exceed 1"), so `parse_and_solve` was already backstopped; validating here surfaces the
+/// `mean ≤ 0` case at the form boundary against the field the user actually typed, and
+/// stops `build_spec` — which never solves — from persisting that non-positive-radii case.
+/// (The narrower `0 < mean ≤ wire` band still reaches the engine's index check, the same
+/// as every other scenario whose build_spec does not re-derive a spring index.)
 fn dimensional_mean_mm(wire_dia_mm: f64, outer_dia_mm: f64) -> Result<f64> {
     let mean_dia_mm = outer_dia_mm - wire_dia_mm;
     if mean_dia_mm <= 0.0 {
@@ -1101,6 +1104,32 @@ mod tests {
         };
         let msg = build_spec(&form, us)
             .expect_err("outer ≤ wire must be rejected at build time")
+            .to_string();
+        assert!(
+            msg.contains("outer diameter") && msg.contains("greater than wire diameter"),
+            "expected the outer>wire build error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn dimensional_build_spec_rejects_outer_eq_wire_us() {
+        // US units at the equality boundary (mean = 0): the guard subtracts AFTER the
+        // ×25.4 conversion, so equal inch operands give a bit-identical SI mean of 0 and
+        // must fire. Pins both the US conversion path and the mean == 0 boundary at the
+        // build_spec site (the Metric tests cover mean = 0 / mean < 0 in inches' absence).
+        let us = UnitSystem::Us;
+        let form = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            wire_dia: "0.2".into(),
+            outer_dia: "0.2".into(), // mean = 0 in (→ 0 mm); every other field valid
+            active: "10".into(),
+            free_length: "4".into(),
+            initial_tension: "1".into(),
+            loads: "2".into(),
+            ..ExtFormState::default()
+        };
+        let msg = build_spec(&form, us)
+            .expect_err("US outer == wire must be rejected at build time")
             .to_string();
         assert!(
             msg.contains("outer diameter") && msg.contains("greater than wire diameter"),
