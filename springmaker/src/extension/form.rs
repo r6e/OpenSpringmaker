@@ -1,12 +1,36 @@
 //! Pure extension form-to-design logic. No iced dependency.
 use crate::form_helpers::{
-    fmt_force, fmt_len, fmt_loads, length_mm, loads_n, non_negative_force_n, positive_num,
+    fmt_force, fmt_len, fmt_loads, fmt_rate, length_mm, loads_n, non_negative_force_n,
+    positive_num, rate_npm,
 };
-use springcore::extension::{ExtensionDesign, HookEnds, PowerUser, Scenario};
+use springcore::extension::{ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario};
 use springcore::units::{Force, Length};
 use springcore::{
     CurvatureCorrection, ExtScenarioSpec, HookSpecSpec, Material, MaterialStore, Result, UnitSystem,
 };
+
+/// Which extension input scenario is active. The extension family's own enum
+/// (not compression's `ScenarioKind`) — the module boundary forbids importing
+/// compression, and the per-mode field sets and solve paths differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExtScenarioKind {
+    #[default]
+    PowerUser,
+    RateBased,
+}
+
+/// All `ExtScenarioKind` variants in display order.
+pub const ALL_EXT_SCENARIOS: &[ExtScenarioKind] =
+    &[ExtScenarioKind::PowerUser, ExtScenarioKind::RateBased];
+
+impl std::fmt::Display for ExtScenarioKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExtScenarioKind::PowerUser => write!(f, "Power User"),
+            ExtScenarioKind::RateBased => write!(f, "Rate Based"),
+        }
+    }
+}
 
 /// Which extension text field a `Message::ExtField` targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +41,7 @@ pub enum Field {
     FreeLength,
     InitialTension,
     Loads,
+    Rate,
     HookR1,
     HookR2,
 }
@@ -39,15 +64,17 @@ impl std::fmt::Display for HookMode {
     }
 }
 
-/// Extension PowerUser inputs as raw strings (+ hook mode and custom radii).
+/// Extension form inputs as raw strings (+ scenario, hook mode and custom radii).
 #[derive(Debug, Clone)]
 pub struct ExtFormState {
+    pub scenario: ExtScenarioKind,
     pub wire_dia: String,
     pub mean_dia: String,
     pub active: String,
     pub free_length: String,
     pub initial_tension: String,
     pub loads: String,
+    pub rate: String,
     pub hook_mode: HookMode,
     pub hook_r1: String,
     pub hook_r2: String,
@@ -56,12 +83,14 @@ pub struct ExtFormState {
 impl Default for ExtFormState {
     fn default() -> Self {
         Self {
+            scenario: ExtScenarioKind::default(),
             wire_dia: String::new(),
             mean_dia: String::new(),
             active: String::new(),
             free_length: String::new(),
             initial_tension: String::new(),
             loads: String::new(),
+            rate: String::new(),
             hook_mode: HookMode::Default,
             hook_r1: String::new(),
             hook_r2: String::new(),
@@ -70,7 +99,7 @@ impl Default for ExtFormState {
 }
 
 impl ExtFormState {
-    /// Whether the user has entered none of the PowerUser scenario's primary input
+    /// Whether the user has entered none of the active scenario's primary input
     /// fields. Drives the "untouched form" suppression in `App::recompute`: the
     /// results panel stays in its initial Empty state until ANY of those fields is
     /// filled, after which parse feedback shows. The list is the fields whose presence
@@ -80,19 +109,28 @@ impl ExtFormState {
     /// in Custom mode they are user input and count toward blankness. Mirrors
     /// `compression::form::FormState::is_blank`.
     pub fn is_blank(&self) -> bool {
-        let core_blank = [
-            &self.wire_dia,
-            &self.mean_dia,
-            &self.active,
-            &self.free_length,
-            &self.initial_tension,
-            &self.loads,
-        ]
-        .iter()
-        .all(|f| f.trim().is_empty());
+        let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
         let hooks_blank = match self.hook_mode {
             HookMode::Default => true,
             HookMode::Custom => self.hook_r1.trim().is_empty() && self.hook_r2.trim().is_empty(),
+        };
+        let core_blank = match self.scenario {
+            ExtScenarioKind::PowerUser => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.active,
+                &self.free_length,
+                &self.initial_tension,
+                &self.loads,
+            ]),
+            ExtScenarioKind::RateBased => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.rate,
+                &self.free_length,
+                &self.initial_tension,
+                &self.loads,
+            ]),
         };
         core_blank && hooks_blank
     }
@@ -114,7 +152,7 @@ fn resolve_hooks(form: &ExtFormState, mean_dia_mm: f64, us: UnitSystem) -> Resul
     }
 }
 
-/// Parse the form, resolve hooks, build `PowerUser`, and solve. The engine's
+/// Parse the form, resolve hooks, build the active scenario, and solve. The engine's
 /// own input guards remain the defense-in-depth backstop.
 pub fn parse_and_solve(
     form: &ExtFormState,
@@ -124,26 +162,77 @@ pub fn parse_and_solve(
     correction: CurvatureCorrection,
 ) -> Result<ExtFormOutcome> {
     let material: &Material = materials.get(material_name)?;
-    let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
-    let hooks = resolve_hooks(form, mean_dia_mm, us)?;
-    let scenario = PowerUser {
-        wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
-        mean_dia: Length::from_millimeters(mean_dia_mm),
-        active: positive_num("active coils", &form.active)?,
-        free_length: Length::from_millimeters(length_mm("free length", &form.free_length, us)?),
-        initial_tension: Force::from_newtons(non_negative_force_n(
-            "initial tension",
-            &form.initial_tension,
-            us,
-        )?),
-        hooks,
-        loads: loads_n(&form.loads, us)?
-            .into_iter()
-            .map(Force::from_newtons)
-            .collect(),
-    };
-    let design = scenario.solve(material, correction)?;
-    Ok(ExtFormOutcome { design })
+    match form.scenario {
+        ExtScenarioKind::PowerUser => {
+            let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
+            let hooks = resolve_hooks(form, mean_dia_mm, us)?;
+            let scenario = PowerUser {
+                wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
+                mean_dia: Length::from_millimeters(mean_dia_mm),
+                active: positive_num("active coils", &form.active)?,
+                free_length: Length::from_millimeters(length_mm(
+                    "free length",
+                    &form.free_length,
+                    us,
+                )?),
+                initial_tension: Force::from_newtons(non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?),
+                hooks,
+                loads: loads_n(&form.loads, us)?
+                    .into_iter()
+                    .map(Force::from_newtons)
+                    .collect(),
+            };
+            Ok(ExtFormOutcome {
+                design: scenario.solve(material, correction)?,
+            })
+        }
+        ExtScenarioKind::RateBased => {
+            let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
+            let hooks = resolve_hooks(form, mean_dia_mm, us)?;
+            let scenario = RateBased {
+                wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
+                mean_dia: Length::from_millimeters(mean_dia_mm),
+                rate: springcore::units::SpringRate::from_newtons_per_meter(rate_npm(
+                    "spring rate",
+                    &form.rate,
+                    us,
+                )?),
+                free_length: Length::from_millimeters(length_mm(
+                    "free length",
+                    &form.free_length,
+                    us,
+                )?),
+                initial_tension: Force::from_newtons(non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?),
+                hooks,
+                loads: loads_n(&form.loads, us)?
+                    .into_iter()
+                    .map(Force::from_newtons)
+                    .collect(),
+            };
+            Ok(ExtFormOutcome {
+                design: scenario.solve(material, correction)?,
+            })
+        }
+    }
+}
+
+/// Build the persisted hook spec from the form's hook mode (shared by every scenario).
+fn build_hooks_spec(form: &ExtFormState, us: UnitSystem) -> Result<HookSpecSpec> {
+    Ok(match form.hook_mode {
+        HookMode::Default => HookSpecSpec::Default,
+        HookMode::Custom => HookSpecSpec::Custom {
+            r1_mm: length_mm("hook radius r1", &form.hook_r1, us)?,
+            r2_mm: length_mm("hook radius r2", &form.hook_r2, us)?,
+        },
+    })
 }
 
 /// Parse `form` into a persisted `ExtScenarioSpec` (SI mm/N). The caller wraps it
@@ -151,43 +240,37 @@ pub fn parse_and_solve(
 /// returns a `ScenarioSpec` the caller wraps in `DesignSpec::Compression`.
 /// Round-trips with `populate_from_spec`.
 pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec> {
-    let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
-    let hooks = match form.hook_mode {
-        HookMode::Default => HookSpecSpec::Default,
-        HookMode::Custom => HookSpecSpec::Custom {
-            r1_mm: length_mm("hook radius r1", &form.hook_r1, us)?,
-            r2_mm: length_mm("hook radius r2", &form.hook_r2, us)?,
-        },
-    };
-    Ok(ExtScenarioSpec::PowerUser {
-        wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
-        mean_dia_mm,
-        active: positive_num("active coils", &form.active)?,
-        free_length_mm: length_mm("free length", &form.free_length, us)?,
-        initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
-        hooks,
-        loads_n: loads_n(&form.loads, us)?,
-    })
+    match form.scenario {
+        ExtScenarioKind::PowerUser => {
+            let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
+            Ok(ExtScenarioSpec::PowerUser {
+                wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+                mean_dia_mm,
+                active: positive_num("active coils", &form.active)?,
+                free_length_mm: length_mm("free length", &form.free_length, us)?,
+                initial_tension_n: non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?,
+                hooks: build_hooks_spec(form, us)?,
+                loads_n: loads_n(&form.loads, us)?,
+            })
+        }
+        ExtScenarioKind::RateBased => Ok(ExtScenarioSpec::RateBased {
+            wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+            mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
+            rate_n_per_m: rate_npm("spring rate", &form.rate, us)?,
+            free_length_mm: length_mm("free length", &form.free_length, us)?,
+            initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
+            hooks: build_hooks_spec(form, us)?,
+            loads_n: loads_n(&form.loads, us)?,
+        }),
+    }
 }
 
-/// Write a persisted `ExtScenarioSpec` back into `form`, converting SI mm/N to display
-/// units. After this call, `build_spec(form, us)` reproduces the spec.
-pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: UnitSystem) {
-    let ExtScenarioSpec::PowerUser {
-        wire_dia_mm,
-        mean_dia_mm,
-        active,
-        free_length_mm,
-        initial_tension_n,
-        hooks,
-        loads_n,
-    } = spec;
-    form.wire_dia = fmt_len(*wire_dia_mm, us);
-    form.mean_dia = fmt_len(*mean_dia_mm, us);
-    form.active = format!("{active}");
-    form.free_length = fmt_len(*free_length_mm, us);
-    form.initial_tension = fmt_force(*initial_tension_n, us);
-    form.loads = fmt_loads(loads_n, us);
+/// Apply a persisted hook spec back onto the form (shared by every scenario).
+fn apply_hooks_spec(form: &mut ExtFormState, hooks: &HookSpecSpec, us: UnitSystem) {
     match hooks {
         HookSpecSpec::Default => {
             form.hook_mode = HookMode::Default;
@@ -198,6 +281,49 @@ pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: U
             form.hook_mode = HookMode::Custom;
             form.hook_r1 = fmt_len(*r1_mm, us);
             form.hook_r2 = fmt_len(*r2_mm, us);
+        }
+    }
+}
+
+/// Write a persisted `ExtScenarioSpec` back into `form`, converting SI mm/N to display
+/// units. After this call, `build_spec(form, us)` reproduces the spec.
+pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: UnitSystem) {
+    match spec {
+        ExtScenarioSpec::PowerUser {
+            wire_dia_mm,
+            mean_dia_mm,
+            active,
+            free_length_mm,
+            initial_tension_n,
+            hooks,
+            loads_n,
+        } => {
+            form.scenario = ExtScenarioKind::PowerUser;
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.active = format!("{active}");
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.initial_tension = fmt_force(*initial_tension_n, us);
+            form.loads = fmt_loads(loads_n, us);
+            apply_hooks_spec(form, hooks, us);
+        }
+        ExtScenarioSpec::RateBased {
+            wire_dia_mm,
+            mean_dia_mm,
+            rate_n_per_m,
+            free_length_mm,
+            initial_tension_n,
+            hooks,
+            loads_n,
+        } => {
+            form.scenario = ExtScenarioKind::RateBased;
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.rate = fmt_rate(*rate_n_per_m, us);
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.initial_tension = fmt_force(*initial_tension_n, us);
+            form.loads = fmt_loads(loads_n, us);
+            apply_hooks_spec(form, hooks, us);
         }
     }
 }
@@ -226,9 +352,7 @@ mod tests {
             free_length: "100".to_string(),
             initial_tension: "5".to_string(),
             loads: "50".to_string(),
-            hook_mode: HookMode::Default,
-            hook_r1: String::new(),
-            hook_r2: String::new(),
+            ..ExtFormState::default()
         }
     }
 
@@ -479,6 +603,56 @@ mod tests {
             CurvatureCorrection::default()
         )
         .is_err());
+    }
+
+    fn ratebased_metric_form() -> ExtFormState {
+        ExtFormState {
+            scenario: ExtScenarioKind::RateBased,
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            rate: "2".into(), // 2 N/mm
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "10, 30".into(),
+            ..ExtFormState::default()
+        }
+    }
+
+    #[test]
+    fn ratebased_solves_and_rate_matches_input() {
+        let materials = default_materials();
+        let out = parse_and_solve(
+            &ratebased_metric_form(),
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect("RateBased should solve");
+        // The solved rate must reproduce the 2 N/mm = 2000 N/m input.
+        assert_relative_eq!(out.design.rate.newtons_per_meter(), 2000.0, epsilon = 1.0);
+    }
+
+    #[test]
+    fn ratebased_build_spec_populate_round_trip() {
+        let us = UnitSystem::Metric;
+        let form = ratebased_metric_form();
+        let spec = build_spec(&form, us).unwrap();
+        let mut form2 = ExtFormState::default();
+        populate_from_spec(&mut form2, &spec, us);
+        assert_eq!(form2.scenario, ExtScenarioKind::RateBased);
+        assert_eq!(build_spec(&form2, us).unwrap(), spec);
+    }
+
+    #[test]
+    fn is_blank_ratebased_trips_on_rate() {
+        let mut f = ExtFormState {
+            scenario: ExtScenarioKind::RateBased,
+            ..ExtFormState::default()
+        };
+        assert!(f.is_blank(), "untouched RateBased form is blank");
+        f.rate = "2".into();
+        assert!(!f.is_blank(), "entering the rate clears blank");
     }
 
     /// `build_spec` → extract `ExtScenarioSpec` → `populate_from_spec` → `build_spec` again

@@ -8,14 +8,15 @@ use iced::widget::{column, container, radio, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
-use crate::extension::form::{ExtFormState, Field, HookMode};
+use crate::extension::form::{ExtFormState, Field, HookMode, ALL_EXT_SCENARIOS};
 use crate::extension::view_model::{
     ext_inputs_view, ext_results_view, ExtLoadTable, ExtResultsView,
 };
 use crate::presenter::unit_length_label;
 use crate::widgets::{
-    labeled_input, panel_container, render_governing_rate, results_empty, results_error,
-    rows_section, section_divider, section_heading, SZ_CAPTION, SZ_LABEL,
+    field_label, labeled_input, panel_container, render_governing_rate, results_empty,
+    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
+    SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -23,10 +24,19 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    // Setup group — material only (no end-type/fixity for extension springs).
+    // Setup group — material + scenario picker (no end-type/fixity for extension springs).
     let setup_group = column![
         section_heading("Setup"),
         crate::widgets::material_picker(app),
+        column![
+            field_label("Scenario"),
+            styled_pick_list(
+                ALL_EXT_SCENARIOS,
+                Some(app.extension.scenario),
+                Message::ExtScenario
+            ),
+        ]
+        .spacing(4),
     ]
     .spacing(10);
 
@@ -115,6 +125,7 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
         Field::FreeLength => &form.free_length,
         Field::InitialTension => &form.initial_tension,
         Field::Loads => &form.loads,
+        Field::Rate => &form.rate,
         Field::HookR1 => &form.hook_r1,
         Field::HookR2 => &form.hook_r2,
     }
@@ -137,6 +148,7 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
         Field::FreeLength => "ext-free-length",
         Field::InitialTension => "ext-initial-tension",
         Field::Loads => "ext-loads",
+        Field::Rate => "ext-rate",
         Field::HookR1 => "ext-hook-r1",
         Field::HookR2 => "ext-hook-r2",
     }

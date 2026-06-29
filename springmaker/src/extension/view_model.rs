@@ -3,7 +3,7 @@
 //! No iced dependency — every decision (which results mode, unit conversions,
 //! status severity mapping) is unit-testable without a renderer.
 use crate::app::App;
-use crate::extension::form::Field;
+use crate::extension::form::{ExtScenarioKind, Field};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
     unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor,
@@ -171,21 +171,38 @@ pub fn ext_status_view(app: &App) -> Vec<StatusLine> {
 
 // ── Inputs panel ─────────────────────────────────────────────────────────────
 
-/// The PowerUser input fields with unit-aware labels.
+/// The scenario-aware input fields with unit-aware labels.
 ///
 /// Hook fields are rendered separately in the view via the mode toggle.
 pub fn ext_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
     let force = unit_force_label(us);
-    vec![
-        FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-        FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-        FieldDescriptor::new("Active coils".to_string(), Field::Active),
-        FieldDescriptor::new(format!("Free length ({len})"), Field::FreeLength),
-        FieldDescriptor::new(format!("Initial tension ({force})"), Field::InitialTension),
-        FieldDescriptor::new(format!("Loads ({force}), comma-separated"), Field::Loads),
-    ]
+    let rate = crate::presenter::unit_rate_label(us);
+    let wire = FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia);
+    let mean = FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia);
+    let free_length = FieldDescriptor::new(format!("Free length ({len})"), Field::FreeLength);
+    let initial_tension =
+        FieldDescriptor::new(format!("Initial tension ({force})"), Field::InitialTension);
+    let loads = FieldDescriptor::new(format!("Loads ({force}), comma-separated"), Field::Loads);
+    match app.extension.scenario {
+        ExtScenarioKind::PowerUser => vec![
+            wire,
+            mean,
+            FieldDescriptor::new("Active coils".to_string(), Field::Active),
+            free_length,
+            initial_tension,
+            loads,
+        ],
+        ExtScenarioKind::RateBased => vec![
+            wire,
+            mean,
+            FieldDescriptor::new(format!("Spring rate ({rate})"), Field::Rate),
+            free_length,
+            initial_tension,
+            loads,
+        ],
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +314,22 @@ mod tests {
     }
 
     // ── inputs view ──
+
+    #[test]
+    fn inputs_view_ratebased_shows_rate_not_active() {
+        let mut app = fresh_app();
+        app.extension.scenario = crate::extension::form::ExtScenarioKind::RateBased;
+        let fields = ext_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert!(
+            kinds.contains(&Field::Rate),
+            "RateBased shows the rate field"
+        );
+        assert!(
+            !kinds.contains(&Field::Active),
+            "RateBased has no active-coils field"
+        );
+    }
 
     #[test]
     fn inputs_view_has_six_fields_metric() {

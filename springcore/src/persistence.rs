@@ -101,6 +101,15 @@ pub enum ExtScenarioSpec {
         hooks: HookSpecSpec,
         loads_n: Vec<f64>,
     },
+    RateBased {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        rate_n_per_m: f64,
+        free_length_mm: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        loads_n: Vec<f64>,
+    },
 }
 
 /// Persisted hook geometry mode (mirrors engine `HookSpec`).
@@ -837,6 +846,49 @@ mod tests {
             .join("design.toml");
         assert!(matches!(
             ext_power_user_saved().save(&path),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn ext_ratebased_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::RateBased {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                rate_n_per_m: 2000.0,
+                free_length_mm: 100.0,
+                initial_tension_n: 5.0,
+                hooks: HookSpecSpec::Default,
+                loads_n: vec![10.0, 30.0],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_ratebased_rate() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "RateBased"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+rate_n_per_m = inf
+free_length_mm = 100.0
+initial_tension_n = 5.0
+loads_n = [10.0, 30.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
             Err(SpringError::DataFile(_))
         ));
     }
