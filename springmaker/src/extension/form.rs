@@ -193,10 +193,11 @@ impl ExtFormState {
                 &self.length2,
             ]),
             // Every displayed MinWeight input EXCEPT the pre-filled index bounds
-            // (`index_min`/`index_max` default to "4"/"12", so they do not signal
-            // that the user has begun). `initial_tension` and `max_outer_dia` count
-            // even though each is optional/valid-empty — typing either signals intent,
-            // matching how `loads` is treated above.
+            // (`index_min`/`index_max` default to "4"/"12", so they do not signal that
+            // the user has begun). `rate`, `max_force`, `initial_tension`, and
+            // `candidate_diameters` are required; `max_outer_dia` is optional (valid-empty)
+            // but still counts, since typing it signals intent — the same reason `loads`
+            // counts in the forward modes.
             ExtScenarioKind::MinWeight => all_empty(&[
                 &self.rate,
                 &self.max_force,

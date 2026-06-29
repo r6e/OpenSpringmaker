@@ -1312,7 +1312,7 @@ Each forward arm parses `wire_dia` inline in its own struct literal (there is no
         }
 ```
 
-`is_blank` arm — every displayed input clears blank except the pre-filled `index_*` defaults, so `rate`, `max_force`, `initial_tension`, `max_outer_dia`, and `candidate_diameters` all count (the optional `initial_tension`/`max_outer_dia` included: typing either signals intent, matching how `loads` is treated in the forward modes):
+`is_blank` arm — every displayed input clears blank except the pre-filled `index_*` defaults, so `rate`, `max_force`, `initial_tension`, `max_outer_dia`, and `candidate_diameters` all count. Only `max_outer_dia` is optional (valid-empty); it still counts because typing it signals intent — the same reason `loads` counts in the forward modes:
 
 ```rust
             ExtScenarioKind::MinWeight => all_empty(&[

@@ -225,8 +225,9 @@ Mirror compression's coverage; strict TDD.
     the MinWeight optional `max_outer_dia`).
   - `build_spec` / `populate_from_spec` round-trip per scenario.
   - `is_blank` per scenario — every displayed input clears blank except the **pre-filled**
-    `index_min`/`index_max` defaults; the optional `max_outer_dia` and `initial_tension` still
-    count (typing either signals the user has begun), closing the same blank-form trap fixed in 1b.
+    `index_min`/`index_max` defaults. For MinWeight, this includes the required `initial_tension`
+    and the optional `max_outer_dia` (the latter counts because typing it signals intent),
+    closing the same blank-form trap fixed in 1b.
   - `parse_and_solve` per forward mode (asserting a reasonable rate) and MinWeight (asserting the
     binding constraint and a positive mass).
   - Headless `Simulator` E2E: switch the scenario pick-list across modes, enter inputs, solve,
