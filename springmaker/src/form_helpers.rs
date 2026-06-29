@@ -69,6 +69,20 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
     Ok(v)
 }
 
+/// Return `v_si` if finite, else a field-named error. Centralizes the post-conversion
+/// finiteness guard shared by the unit-converting helpers: a finite display value can
+/// overflow to ±Inf after the US/metric scale factor, so each helper re-checks its
+/// converted SI result here.
+fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
+    if v_si.is_finite() {
+        Ok(v_si)
+    } else {
+        Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )))
+    }
+}
+
 /// Parse a strictly-positive length, returning millimetres (SI internal):
 /// US inputs are converted from inches, metric inputs are already mm.
 pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
@@ -78,12 +92,7 @@ pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64>
         UnitSystem::Us => Length::from_inches(v).millimeters(),
         UnitSystem::Metric => v,
     };
-    if !v_si.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v_si)
+    finite_or_err(field, value, v_si)
 }
 
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
@@ -98,12 +107,7 @@ pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> 
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
     };
-    if !v_si.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v_si)
+    finite_or_err(field, value, v_si)
 }
 
 /// Like `non_negative_force_n` but requires the value to be strictly positive
@@ -114,12 +118,7 @@ pub(crate) fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Resu
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
     };
-    if !v_si.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v_si)
+    finite_or_err(field, value, v_si)
 }
 
 pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
@@ -130,12 +129,7 @@ pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> 
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
         UnitSystem::Metric => v * MM_PER_M,
     };
-    if !v_si.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v_si)
+    finite_or_err(field, value, v_si)
 }
 
 pub(crate) fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
