@@ -119,6 +119,16 @@ pub enum ExtScenarioSpec {
         hooks: HookSpecSpec,
         loads_n: Vec<f64>,
     },
+    TwoLoad {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        free_length_mm: f64,
+        hooks: HookSpecSpec,
+        force1_n: f64,
+        length1_mm: f64,
+        force2_n: f64,
+        length2_mm: f64,
+    },
 }
 
 /// Persisted hook geometry mode (mirrors engine `HookSpec`).
@@ -875,6 +885,26 @@ mod tests {
                     r2_mm: 4.0,
                 },
                 loads_n: vec![10.0, 30.0],
+            }),
+        };
+        let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+        assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn ext_twoload_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::TwoLoad {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                free_length_mm: 100.0,
+                hooks: HookSpecSpec::Default,
+                force1_n: 10.0,
+                length1_mm: 110.0,
+                force2_n: 30.0,
+                length2_mm: 130.0,
             }),
         };
         let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();

@@ -129,6 +129,10 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
         Field::Rate => &form.rate,
         Field::HookR1 => &form.hook_r1,
         Field::HookR2 => &form.hook_r2,
+        Field::Force1 => &form.force1,
+        Field::Length1 => &form.length1,
+        Field::Force2 => &form.force2,
+        Field::Length2 => &form.length2,
     }
 }
 
@@ -153,6 +157,10 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
         Field::Rate => "ext-rate",
         Field::HookR1 => "ext-hook-r1",
         Field::HookR2 => "ext-hook-r2",
+        Field::Force1 => "ext-force1",
+        Field::Length1 => "ext-length1",
+        Field::Force2 => "ext-force2",
+        Field::Length2 => "ext-length2",
     }
 }
 

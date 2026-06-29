@@ -4,7 +4,7 @@ use crate::form_helpers::{
     positive_num, rate_npm,
 };
 use springcore::extension::{
-    Dimensional, ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario,
+    Dimensional, ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario, TwoLoad,
 };
 use springcore::units::{Force, Length};
 use springcore::{
@@ -20,6 +20,7 @@ pub enum ExtScenarioKind {
     PowerUser,
     RateBased,
     Dimensional,
+    TwoLoad,
 }
 
 /// All `ExtScenarioKind` variants in display order.
@@ -27,6 +28,7 @@ pub const ALL_EXT_SCENARIOS: &[ExtScenarioKind] = &[
     ExtScenarioKind::PowerUser,
     ExtScenarioKind::RateBased,
     ExtScenarioKind::Dimensional,
+    ExtScenarioKind::TwoLoad,
 ];
 
 impl std::fmt::Display for ExtScenarioKind {
@@ -35,6 +37,7 @@ impl std::fmt::Display for ExtScenarioKind {
             ExtScenarioKind::PowerUser => write!(f, "Power User"),
             ExtScenarioKind::RateBased => write!(f, "Rate Based"),
             ExtScenarioKind::Dimensional => write!(f, "Dimensional"),
+            ExtScenarioKind::TwoLoad => write!(f, "Two Load"),
         }
     }
 }
@@ -52,6 +55,10 @@ pub enum Field {
     Rate,
     HookR1,
     HookR2,
+    Force1,
+    Length1,
+    Force2,
+    Length2,
 }
 
 /// Hook geometry mode: standard machine loops (r1 = D/2, r2 = D/4) or
@@ -87,6 +94,10 @@ pub struct ExtFormState {
     pub hook_mode: HookMode,
     pub hook_r1: String,
     pub hook_r2: String,
+    pub force1: String,
+    pub length1: String,
+    pub force2: String,
+    pub length2: String,
 }
 
 impl Default for ExtFormState {
@@ -104,6 +115,10 @@ impl Default for ExtFormState {
             hook_mode: HookMode::Default,
             hook_r1: String::new(),
             hook_r2: String::new(),
+            force1: String::new(),
+            length1: String::new(),
+            force2: String::new(),
+            length2: String::new(),
         }
     }
 }
@@ -148,6 +163,15 @@ impl ExtFormState {
                 &self.free_length,
                 &self.initial_tension,
                 &self.loads,
+            ]),
+            ExtScenarioKind::TwoLoad => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.free_length,
+                &self.force1,
+                &self.length1,
+                &self.force2,
+                &self.length2,
             ]),
         };
         core_blank && hooks_blank
@@ -267,6 +291,31 @@ pub fn parse_and_solve(
                 design: scenario.solve(material, correction)?,
             })
         }
+        ExtScenarioKind::TwoLoad => {
+            let mean_dia_mm = length_mm("mean diameter", &form.mean_dia, us)?;
+            let hooks = resolve_hooks(form, mean_dia_mm, us)?;
+            let scenario = TwoLoad {
+                wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
+                mean_dia: Length::from_millimeters(mean_dia_mm),
+                free_length: Length::from_millimeters(length_mm(
+                    "free length",
+                    &form.free_length,
+                    us,
+                )?),
+                hooks,
+                point1: (
+                    Force::from_newtons(non_negative_force_n("force 1", &form.force1, us)?),
+                    Length::from_millimeters(length_mm("length 1", &form.length1, us)?),
+                ),
+                point2: (
+                    Force::from_newtons(non_negative_force_n("force 2", &form.force2, us)?),
+                    Length::from_millimeters(length_mm("length 2", &form.length2, us)?),
+                ),
+            };
+            Ok(ExtFormOutcome {
+                design: scenario.solve(material, correction)?,
+            })
+        }
     }
 }
 
@@ -320,6 +369,16 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
             hooks: build_hooks_spec(form, us)?,
             loads_n: loads_n(&form.loads, us)?,
+        }),
+        ExtScenarioKind::TwoLoad => Ok(ExtScenarioSpec::TwoLoad {
+            wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+            mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
+            free_length_mm: length_mm("free length", &form.free_length, us)?,
+            hooks: build_hooks_spec(form, us)?,
+            force1_n: non_negative_force_n("force 1", &form.force1, us)?,
+            length1_mm: length_mm("length 1", &form.length1, us)?,
+            force2_n: non_negative_force_n("force 2", &form.force2, us)?,
+            length2_mm: length_mm("length 2", &form.length2, us)?,
         }),
     }
 }
@@ -396,6 +455,26 @@ pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: U
             form.free_length = fmt_len(*free_length_mm, us);
             form.initial_tension = fmt_force(*initial_tension_n, us);
             form.loads = fmt_loads(loads_n, us);
+            apply_hooks_spec(form, hooks, us);
+        }
+        ExtScenarioSpec::TwoLoad {
+            wire_dia_mm,
+            mean_dia_mm,
+            free_length_mm,
+            hooks,
+            force1_n,
+            length1_mm,
+            force2_n,
+            length2_mm,
+        } => {
+            form.scenario = ExtScenarioKind::TwoLoad;
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.force1 = fmt_force(*force1_n, us);
+            form.length1 = fmt_len(*length1_mm, us);
+            form.force2 = fmt_force(*force2_n, us);
+            form.length2 = fmt_len(*length2_mm, us);
             apply_hooks_spec(form, hooks, us);
         }
     }
@@ -779,6 +858,57 @@ mod tests {
         assert!(blank.is_blank());
         blank.outer_dia = "22".into();
         assert!(!blank.is_blank(), "Dimensional blank check uses outer_dia");
+    }
+
+    fn twoload_metric_form() -> ExtFormState {
+        // Two points 20 mm apart with a 20 N force delta → k = 1 N/mm = 1000 N/m.
+        ExtFormState {
+            scenario: ExtScenarioKind::TwoLoad,
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            free_length: "100".into(),
+            force1: "10".into(),
+            length1: "110".into(),
+            force2: "30".into(),
+            length2: "130".into(),
+            ..ExtFormState::default()
+        }
+    }
+
+    #[test]
+    fn twoload_derives_rate_from_two_points() {
+        let materials = default_materials();
+        let out = parse_and_solve(
+            &twoload_metric_form(),
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect("TwoLoad should solve");
+        // k = (30-10)/(130-110) mm = 1 N/mm = 1000 N/m.
+        assert_relative_eq!(out.design.rate.newtons_per_meter(), 1000.0, epsilon = 1.0);
+    }
+
+    #[test]
+    fn twoload_round_trip_and_blank_ignores_initial_tension() {
+        let us = UnitSystem::Metric;
+        let form = twoload_metric_form();
+        let spec = build_spec(&form, us).unwrap();
+        let mut form2 = ExtFormState::default();
+        populate_from_spec(&mut form2, &spec, us);
+        assert_eq!(form2.scenario, ExtScenarioKind::TwoLoad);
+        assert_eq!(build_spec(&form2, us).unwrap(), spec);
+
+        // initial_tension is NOT a TwoLoad input — filling it must not clear blank.
+        let mut blank = ExtFormState {
+            scenario: ExtScenarioKind::TwoLoad,
+            initial_tension: "5".into(),
+            ..ExtFormState::default()
+        };
+        assert!(blank.is_blank(), "initial tension is not a TwoLoad input");
+        blank.force1 = "10".into();
+        assert!(!blank.is_blank(), "a load point clears blank");
     }
 
     /// `build_spec` → extract `ExtScenarioSpec` → `populate_from_spec` → `build_spec` again

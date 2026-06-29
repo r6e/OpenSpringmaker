@@ -636,6 +636,10 @@ impl App {
             EF::Rate => f.rate = value,
             EF::HookR1 => f.hook_r1 = value,
             EF::HookR2 => f.hook_r2 = value,
+            EF::Force1 => f.force1 = value,
+            EF::Length1 => f.length1 = value,
+            EF::Force2 => f.force2 = value,
+            EF::Length2 => f.length2 = value,
         }
     }
 

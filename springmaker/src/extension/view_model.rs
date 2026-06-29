@@ -210,6 +210,15 @@ pub fn ext_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             initial_tension,
             loads,
         ],
+        ExtScenarioKind::TwoLoad => vec![
+            wire,
+            mean,
+            free_length,
+            FieldDescriptor::new(format!("Force 1 ({force})"), Field::Force1),
+            FieldDescriptor::new(format!("Length 1 ({len})"), Field::Length1),
+            FieldDescriptor::new(format!("Force 2 ({force})"), Field::Force2),
+            FieldDescriptor::new(format!("Length 2 ({len})"), Field::Length2),
+        ],
     }
 }
 
@@ -322,6 +331,24 @@ mod tests {
     }
 
     // ── inputs view ──
+
+    #[test]
+    fn inputs_view_twoload_has_no_initial_tension() {
+        let mut app = fresh_app();
+        app.extension.scenario = crate::extension::form::ExtScenarioKind::TwoLoad;
+        let kinds: Vec<Field> = ext_inputs_view(&app).iter().map(|fd| fd.field).collect();
+        assert!(
+            kinds.contains(&Field::Force1)
+                && kinds.contains(&Field::Length1)
+                && kinds.contains(&Field::Force2)
+                && kinds.contains(&Field::Length2),
+            "TwoLoad inputs view must contain all four load-point fields"
+        );
+        assert!(
+            !kinds.contains(&Field::InitialTension),
+            "TwoLoad derives initial tension; it is not an input"
+        );
+    }
 
     #[test]
     fn inputs_view_ratebased_shows_rate_not_active() {
