@@ -14,9 +14,9 @@ use crate::extension::view_model::{
 };
 use crate::presenter::unit_length_label;
 use crate::widgets::{
-    field_label, labeled_input, panel_container, render_governing_rate, results_empty,
-    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
-    SZ_LABEL,
+    divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
+    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
+    SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -133,6 +133,11 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
         Field::Length1 => &form.length1,
         Field::Force2 => &form.force2,
         Field::Length2 => &form.length2,
+        Field::MaxForce => &form.max_force,
+        Field::CandidateDiameters => &form.candidate_diameters,
+        Field::IndexMin => &form.index_min,
+        Field::IndexMax => &form.index_max,
+        Field::MaxOuterDia => &form.max_outer_dia,
     }
 }
 
@@ -161,6 +166,11 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
         Field::Length1 => "ext-length1",
         Field::Force2 => "ext-force2",
         Field::Length2 => "ext-length2",
+        Field::MaxForce => "ext-max-force",
+        Field::CandidateDiameters => "ext-candidate-diameters",
+        Field::IndexMin => "ext-index-min",
+        Field::IndexMax => "ext-index-max",
+        Field::MaxOuterDia => "ext-max-outer-dia",
     }
 }
 
@@ -285,17 +295,22 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
     let content: Element<'_, Message> = match ext_results_view(app) {
         ExtResultsView::Error(msg) => results_error(msg),
         ExtResultsView::Empty => results_empty(),
-        ExtResultsView::Populated(p) => column![
-            section_heading("Results"),
-            section_divider(),
-            render_governing_rate(&p.governing_rate),
-            section_divider(),
-            rows_section("Geometry", &p.geometry),
-            section_divider(),
-            render_ext_load_table(&p.load_table),
-        ]
-        .spacing(6)
-        .into(),
+        ExtResultsView::Populated(p) => {
+            let mut col = column![
+                section_heading("Results"),
+                section_divider(),
+                render_governing_rate(&p.governing_rate),
+                section_divider(),
+                rows_section("Geometry", &p.geometry),
+                section_divider(),
+                render_ext_load_table(&p.load_table),
+            ]
+            .spacing(6);
+            if let Some(rows) = &p.min_weight {
+                col = col.push(divided_result_section("Min-weight optimisation", rows));
+            }
+            col.into()
+        }
     };
 
     container(panel_container(content))

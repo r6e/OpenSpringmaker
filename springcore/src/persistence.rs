@@ -129,6 +129,16 @@ pub enum ExtScenarioSpec {
         force2_n: f64,
         length2_mm: f64,
     },
+    MinWeight {
+        required_rate_n_per_m: f64,
+        max_force_n: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        index_min: f64,
+        index_max: f64,
+        max_outer_dia_mm: Option<f64>,
+        candidate_diameters_mm: Vec<f64>,
+    },
 }
 
 /// Persisted hook geometry mode (mirrors engine `HookSpec`).
@@ -909,6 +919,28 @@ mod tests {
         };
         let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
         assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn ext_minweight_round_trips_both_max_outer_dia_states() {
+        for max_od in [None, Some(30.0)] {
+            let saved = SavedDesign {
+                material: "Music Wire".into(),
+                unit_system: UnitSystem::Metric,
+                design: DesignSpec::Extension(ExtScenarioSpec::MinWeight {
+                    required_rate_n_per_m: 2000.0,
+                    max_force_n: 50.0,
+                    initial_tension_n: 5.0,
+                    hooks: HookSpecSpec::Default,
+                    index_min: 4.0,
+                    index_max: 12.0,
+                    max_outer_dia_mm: max_od,
+                    candidate_diameters_mm: vec![1.5, 2.0, 2.5],
+                }),
+            };
+            let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+            assert_eq!(saved, back);
+        }
     }
 
     #[test]

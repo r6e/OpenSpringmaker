@@ -640,6 +640,11 @@ impl App {
             EF::Length1 => f.length1 = value,
             EF::Force2 => f.force2 = value,
             EF::Length2 => f.length2 = value,
+            EF::MaxForce => f.max_force = value,
+            EF::CandidateDiameters => f.candidate_diameters = value,
+            EF::IndexMin => f.index_min = value,
+            EF::IndexMax => f.index_max = value,
+            EF::MaxOuterDia => f.max_outer_dia = value,
         }
     }
 

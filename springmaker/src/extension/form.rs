@@ -4,9 +4,10 @@ use crate::form_helpers::{
     positive_num, rate_npm,
 };
 use springcore::extension::{
-    Dimensional, ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario, TwoLoad,
+    solve_min_weight, Dimensional, ExtBindingConstraint, ExtMinWeightRequest, ExtensionDesign,
+    HookEnds, HookSpec, PowerUser, RateBased, Scenario, TwoLoad,
 };
-use springcore::units::{Force, Length};
+use springcore::units::{Force, Length, SpringRate};
 use springcore::{
     CurvatureCorrection, ExtScenarioSpec, HookSpecSpec, Material, MaterialStore, Result, UnitSystem,
 };
@@ -21,6 +22,7 @@ pub enum ExtScenarioKind {
     RateBased,
     Dimensional,
     TwoLoad,
+    MinWeight,
 }
 
 /// All `ExtScenarioKind` variants in display order.
@@ -29,6 +31,7 @@ pub const ALL_EXT_SCENARIOS: &[ExtScenarioKind] = &[
     ExtScenarioKind::RateBased,
     ExtScenarioKind::Dimensional,
     ExtScenarioKind::TwoLoad,
+    ExtScenarioKind::MinWeight,
 ];
 
 impl std::fmt::Display for ExtScenarioKind {
@@ -38,6 +41,7 @@ impl std::fmt::Display for ExtScenarioKind {
             ExtScenarioKind::RateBased => write!(f, "Rate Based"),
             ExtScenarioKind::Dimensional => write!(f, "Dimensional"),
             ExtScenarioKind::TwoLoad => write!(f, "Two Load"),
+            ExtScenarioKind::MinWeight => write!(f, "Min Weight"),
         }
     }
 }
@@ -59,6 +63,11 @@ pub enum Field {
     Length1,
     Force2,
     Length2,
+    MaxForce,
+    CandidateDiameters,
+    IndexMin,
+    IndexMax,
+    MaxOuterDia,
 }
 
 /// Hook geometry mode: standard machine loops (r1 = D/2, r2 = D/4) or
@@ -98,6 +107,11 @@ pub struct ExtFormState {
     pub length1: String,
     pub force2: String,
     pub length2: String,
+    pub max_force: String,
+    pub candidate_diameters: String,
+    pub index_min: String,
+    pub index_max: String,
+    pub max_outer_dia: String,
 }
 
 impl Default for ExtFormState {
@@ -119,6 +133,11 @@ impl Default for ExtFormState {
             length1: String::new(),
             force2: String::new(),
             length2: String::new(),
+            max_force: String::new(),
+            candidate_diameters: String::new(),
+            index_min: "4".into(),
+            index_max: "12".into(),
+            max_outer_dia: String::new(),
         }
     }
 }
@@ -173,15 +192,27 @@ impl ExtFormState {
                 &self.force2,
                 &self.length2,
             ]),
+            ExtScenarioKind::MinWeight => {
+                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
+            }
         };
         core_blank && hooks_blank
     }
 }
 
-/// A solved extension form: the design (which carries engine-computed status).
+/// Extra outputs produced only by the extension Min-Weight optimisation path.
+#[derive(Debug, Clone)]
+pub struct ExtMinWeightExtra {
+    pub binding: ExtBindingConstraint,
+    pub mass_kg: f64,
+}
+
+/// A solved extension form: the design (which carries engine-computed status),
+/// plus optimisation extras when the Min-Weight path produced it.
 #[derive(Debug, Clone)]
 pub struct ExtFormOutcome {
     pub design: ExtensionDesign,
+    pub min_weight: Option<ExtMinWeightExtra>,
 }
 
 fn resolve_hooks(form: &ExtFormState, mean_dia_mm: f64, us: UnitSystem) -> Result<HookEnds> {
@@ -192,6 +223,18 @@ fn resolve_hooks(form: &ExtFormState, mean_dia_mm: f64, us: UnitSystem) -> Resul
             r2: Length::from_millimeters(length_mm("hook radius r2", &form.hook_r2, us)?),
         }),
     }
+}
+
+/// Resolve the form's hook mode into the optimiser's `HookSpec` (scaling Default,
+/// or fixed radii). No mean diameter is needed — the optimiser varies D per candidate.
+fn resolve_hooks_spec(form: &ExtFormState, us: UnitSystem) -> Result<HookSpec> {
+    Ok(match form.hook_mode {
+        HookMode::Default => HookSpec::Default,
+        HookMode::Custom => HookSpec::Fixed {
+            r1: Length::from_millimeters(length_mm("hook radius r1", &form.hook_r1, us)?),
+            r2: Length::from_millimeters(length_mm("hook radius r2", &form.hook_r2, us)?),
+        },
+    })
 }
 
 /// Parse the form, resolve hooks, build the active scenario, and solve. The engine's
@@ -230,6 +273,7 @@ pub fn parse_and_solve(
             };
             Ok(ExtFormOutcome {
                 design: scenario.solve(material, correction)?,
+                min_weight: None,
             })
         }
         ExtScenarioKind::RateBased => {
@@ -261,6 +305,7 @@ pub fn parse_and_solve(
             };
             Ok(ExtFormOutcome {
                 design: scenario.solve(material, correction)?,
+                min_weight: None,
             })
         }
         ExtScenarioKind::Dimensional => {
@@ -289,6 +334,7 @@ pub fn parse_and_solve(
             };
             Ok(ExtFormOutcome {
                 design: scenario.solve(material, correction)?,
+                min_weight: None,
             })
         }
         ExtScenarioKind::TwoLoad => {
@@ -314,6 +360,68 @@ pub fn parse_and_solve(
             };
             Ok(ExtFormOutcome {
                 design: scenario.solve(material, correction)?,
+                min_weight: None,
+            })
+        }
+        ExtScenarioKind::MinWeight => {
+            let candidate_diameters: Vec<Length> = form
+                .candidate_diameters
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    Ok(Length::from_millimeters(length_mm(
+                        "candidate diameter",
+                        s,
+                        us,
+                    )?))
+                })
+                .collect::<Result<_>>()?;
+            if candidate_diameters.is_empty() {
+                return Err(springcore::SpringError::InconsistentInputs(
+                    "provide at least one candidate wire diameter".into(),
+                ));
+            }
+            let max_outer_dia = if form.max_outer_dia.trim().is_empty() {
+                None
+            } else {
+                Some(Length::from_millimeters(length_mm(
+                    "max outer diameter",
+                    &form.max_outer_dia,
+                    us,
+                )?))
+            };
+            let req = ExtMinWeightRequest {
+                required_rate: SpringRate::from_newtons_per_meter(rate_npm(
+                    "required rate",
+                    &form.rate,
+                    us,
+                )?),
+                max_force: Force::from_newtons(non_negative_force_n(
+                    "max force",
+                    &form.max_force,
+                    us,
+                )?),
+                initial_tension: Force::from_newtons(non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?),
+                hooks: resolve_hooks_spec(form, us)?,
+                index_bounds: (
+                    positive_num("index min", &form.index_min)?,
+                    positive_num("index max", &form.index_max)?,
+                ),
+                max_outer_dia,
+                candidate_diameters,
+            };
+            let sol = solve_min_weight(material, &req, correction)?;
+            Ok(ExtFormOutcome {
+                design: sol.design,
+                min_weight: Some(ExtMinWeightExtra {
+                    binding: sol.binding,
+                    mass_kg: sol.mass_kg,
+                }),
             })
         }
     }
@@ -380,6 +488,39 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             force2_n: non_negative_force_n("force 2", &form.force2, us)?,
             length2_mm: length_mm("length 2", &form.length2, us)?,
         }),
+        ExtScenarioKind::MinWeight => {
+            let candidate_diameters_mm: Vec<f64> = form
+                .candidate_diameters
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| length_mm("candidate diameter", s, us))
+                .collect::<Result<_>>()?;
+            if candidate_diameters_mm.is_empty() {
+                return Err(springcore::SpringError::InconsistentInputs(
+                    "provide at least one candidate wire diameter".into(),
+                ));
+            }
+            let max_outer_dia_mm = if form.max_outer_dia.trim().is_empty() {
+                None
+            } else {
+                Some(length_mm("max outer diameter", &form.max_outer_dia, us)?)
+            };
+            Ok(ExtScenarioSpec::MinWeight {
+                required_rate_n_per_m: rate_npm("required rate", &form.rate, us)?,
+                max_force_n: non_negative_force_n("max force", &form.max_force, us)?,
+                initial_tension_n: non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?,
+                hooks: build_hooks_spec(form, us)?,
+                index_min: positive_num("index min", &form.index_min)?,
+                index_max: positive_num("index max", &form.index_max)?,
+                max_outer_dia_mm,
+                candidate_diameters_mm,
+            })
+        }
     }
 }
 
@@ -475,6 +616,33 @@ pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: U
             form.length1 = fmt_len(*length1_mm, us);
             form.force2 = fmt_force(*force2_n, us);
             form.length2 = fmt_len(*length2_mm, us);
+            apply_hooks_spec(form, hooks, us);
+        }
+        ExtScenarioSpec::MinWeight {
+            required_rate_n_per_m,
+            max_force_n,
+            initial_tension_n,
+            hooks,
+            index_min,
+            index_max,
+            max_outer_dia_mm,
+            candidate_diameters_mm,
+        } => {
+            form.scenario = ExtScenarioKind::MinWeight;
+            form.rate = fmt_rate(*required_rate_n_per_m, us);
+            form.max_force = fmt_force(*max_force_n, us);
+            form.initial_tension = fmt_force(*initial_tension_n, us);
+            form.index_min = format!("{index_min}");
+            form.index_max = format!("{index_max}");
+            form.max_outer_dia = match max_outer_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.candidate_diameters = candidate_diameters_mm
+                .iter()
+                .map(|&d| fmt_len(d, us))
+                .collect::<Vec<_>>()
+                .join(", ");
             apply_hooks_spec(form, hooks, us);
         }
     }
@@ -937,6 +1105,69 @@ mod tests {
         populate_from_spec(&mut form4, &spec3, us);
         let spec4 = build_spec(&form4, us).unwrap();
         assert_eq!(spec3, spec4, "custom hooks: round-trip must be lossless");
+    }
+
+    fn minweight_metric_form() -> ExtFormState {
+        ExtFormState {
+            scenario: ExtScenarioKind::MinWeight,
+            rate: "2".into(), // 2 N/mm required rate
+            max_force: "50".into(),
+            initial_tension: "5".into(),
+            candidate_diameters: "1.5, 2.0, 2.5".into(),
+            ..ExtFormState::default() // index_min="4", index_max="12" by default
+        }
+    }
+
+    #[test]
+    fn minweight_solves_with_binding_and_positive_mass() {
+        let materials = default_materials();
+        let out = parse_and_solve(
+            &minweight_metric_form(),
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect("MinWeight should solve");
+        let mw = out.min_weight.expect("MinWeight path sets min_weight");
+        assert!(mw.mass_kg > 0.0, "optimised wire mass is positive");
+    }
+
+    #[test]
+    fn minweight_empty_candidates_errors() {
+        let materials = default_materials();
+        let form = ExtFormState {
+            candidate_diameters: String::new(),
+            ..minweight_metric_form()
+        };
+        assert!(parse_and_solve(
+            &form,
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn minweight_round_trip_and_blank_ignores_prefilled_defaults() {
+        let us = UnitSystem::Metric;
+        let spec = build_spec(&minweight_metric_form(), us).unwrap();
+        let mut form2 = ExtFormState::default();
+        populate_from_spec(&mut form2, &spec, us);
+        assert_eq!(form2.scenario, ExtScenarioKind::MinWeight);
+        assert_eq!(build_spec(&form2, us).unwrap(), spec);
+
+        // A default MinWeight form (index_min/max pre-filled) is still blank.
+        let f = ExtFormState {
+            scenario: ExtScenarioKind::MinWeight,
+            ..ExtFormState::default()
+        };
+        assert!(
+            f.is_blank(),
+            "pre-filled index defaults do not count as input"
+        );
     }
 
     /// Loading a Default-hook spec onto a form that previously held Custom radii
