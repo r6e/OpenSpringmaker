@@ -7,7 +7,7 @@ use crate::extension::mechanics::{deflection, hook_bending_stress, hook_torsion_
 use crate::material::Material;
 use crate::mechanics::{corrected_shear_stress, spring_index, spring_rate};
 use crate::units::{Force, Length, SpringRate, Stress};
-use crate::{CurvatureCorrection, Result, SpringError};
+use crate::{CurvatureCorrection, DesignStatus, Result, Severity, SpringError, StatusMessage};
 
 /// State of an extension spring at one axial load.
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +41,9 @@ pub struct ExtensionDesign {
     pub min_tensile_strength: Stress,
     pub hooks: HookEnds,
     pub load_points: Vec<ExtLoadPoint>,
+    /// Engineering status (overstress warnings, index caution) computed by
+    /// `solve_forward`. Mirrors the torsion family's engine-computed status.
+    pub status: DesignStatus,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -86,6 +89,49 @@ fn ext_load_point(
         // Table 10-7: 40% for carbon/low-alloy steel, 30% for stainless/nonferrous).
         pct_hook_torsion_allow: hook_torsion.pascals() / allow_end_torsion,
     }
+}
+
+/// Engineering checks for an extension design: per-load-point overstress on each
+/// of the three stresses, plus the shared spring-index caution. Mirrors the
+/// torsion `evaluate_status` precedent.
+fn evaluate_status(index: f64, load_points: &[ExtLoadPoint]) -> DesignStatus {
+    let mut messages = Vec::new();
+    for (i, lp) in load_points.iter().enumerate() {
+        if lp.pct_body_allow > 1.0 {
+            messages.push(StatusMessage {
+                severity: Severity::Warning,
+                message: format!(
+                    "load point {}: body shear stress is {:.0}% of allowable",
+                    i + 1,
+                    lp.pct_body_allow * 100.0
+                ),
+            });
+        }
+        if lp.pct_hook_bending_allow > 1.0 {
+            messages.push(StatusMessage {
+                severity: Severity::Warning,
+                message: format!(
+                    "load point {}: hook bending stress is {:.0}% of allowable",
+                    i + 1,
+                    lp.pct_hook_bending_allow * 100.0
+                ),
+            });
+        }
+        if lp.pct_hook_torsion_allow > 1.0 {
+            messages.push(StatusMessage {
+                severity: Severity::Warning,
+                message: format!(
+                    "load point {}: hook torsion stress is {:.0}% of allowable",
+                    i + 1,
+                    lp.pct_hook_torsion_allow * 100.0
+                ),
+            });
+        }
+    }
+    if let Some(msg) = crate::design::index_caution(index) {
+        messages.push(msg);
+    }
+    DesignStatus { messages }
 }
 
 /// Compute a complete extension-spring design from determined geometry plus operating loads.
@@ -185,8 +231,24 @@ pub fn solve_forward(
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
+    // Finite-but-extreme geometry can drive the rate (k = G·d⁴/(8·D³·Na)) non-finite
+    // in BOTH directions, and either then flows into deflection (y = ΔF/k) and the
+    // stress formulas to silently produce a degenerate design:
+    //   * an enormous mean diameter overflows D³ → rate collapses to 0 (y → ∞), and
+    //   * a subnormal active count (or huge D) underflows the denominator to 0 →
+    //     rate = +Inf (y → 0, a spurious zero-deflection "valid" design).
+    // `<= 0.0` alone catches the first but NOT +Inf (+Inf is not ≤ 0). Require the
+    // rate to be finite AND strictly positive. (Mirrors the family's other
+    // finite-and-positive guards above and the torsion computed-quantity guard.)
+    if !(rate.newtons_per_meter().is_finite() && rate.newtons_per_meter() > 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "computed spring rate is not a positive finite number \
+             (check mean diameter and active coils)"
+                .into(),
+        ));
+    }
 
-    let load_points = loads
+    let load_points: Vec<ExtLoadPoint> = loads
         .iter()
         .map(|&f| {
             ext_load_point(
@@ -207,6 +269,7 @@ pub fn solve_forward(
         })
         .collect();
 
+    let status = evaluate_status(index, &load_points);
     Ok(ExtensionDesign {
         wire_dia,
         mean_dia,
@@ -220,6 +283,7 @@ pub fn solve_forward(
         min_tensile_strength: mts,
         hooks,
         load_points,
+        status,
     })
 }
 
@@ -227,7 +291,7 @@ pub fn solve_forward(
 mod tests {
     use super::*;
     use crate::extension::ends::HookEnds;
-    use crate::units::{Force, Length};
+    use crate::units::{Force, Length, Stress};
     use approx::assert_relative_eq;
 
     #[test]
@@ -443,6 +507,55 @@ mod tests {
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
+    /// A subnormal active-coil count (e.g. 1e-320) passes the `active > 0` guard yet
+    /// underflows the rate denominator (8·D³·Na) to exactly 0.0, so the computed rate
+    /// is +Inf. A bare `rate <= 0.0` check lets +Inf through (it is not ≤ 0), silently
+    /// yielding a zero-deflection "valid" design. The rate guard must reject any
+    /// non-finite rate. (Without the `is_finite()` conjunct this test goes red.)
+    #[test]
+    fn rejects_plus_inf_rate_from_subnormal_active() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            1e-320, // subnormal: passes `active > 0` yet underflows the rate denominator to 0
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
+            "subnormal active (+Inf rate) must be rejected by the rate guard, got {r:?}"
+        );
+    }
+
+    /// An enormous mean diameter overflows D³ in the rate denominator to +Inf,
+    /// collapsing the computed rate to 0. The only test that reaches the rate guard
+    /// with a finite zero rate; pins the `> 0.0` half of the guard. (Without the
+    /// `> 0.0` conjunct this test goes red.)
+    #[test]
+    fn rejects_zero_rate_from_extreme_mean_dia() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(1e308), // D³ overflows to +Inf → rate collapses to 0
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
+            "extreme mean diameter (zero rate) must be rejected by the rate guard, got {r:?}"
+        );
+    }
+
     /// An out-of-range wire diameter must surface as DiameterOutOfRange even when a
     /// hook radius is ALSO invalid (C1 ≤ 1). Pins the `min_tensile_strength` ordering:
     /// if it were moved back after the hook-radius checks, this would return the hook
@@ -573,6 +686,164 @@ mod tests {
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 
+    // ── status: clean baseline ───────────────────────────────────────────────
+    #[test]
+    fn clean_design_has_no_warnings() {
+        // d=2mm D=20mm index=10 (in 4..=12 band), moderate load → no overstress.
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert!(
+            !d.status.has_warnings(),
+            "clean design must have no warnings: {:?}",
+            d.status.messages
+        );
+        assert!(
+            d.status.messages.is_empty(),
+            "clean in-band design has an empty status"
+        );
+    }
+
+    // ── status: index caution (Severity::Caution) ────────────────────────────
+    #[test]
+    fn out_of_band_index_raises_caution() {
+        // d=2mm D=40mm → index 20 (> 12). Load kept small so only the index caution fires.
+        let m = crate::test_support::music_wire();
+        let d = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(40.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(1.0),
+            HookEnds::default_for(Length::from_millimeters(40.0)),
+            &[Force::from_newtons(2.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Caution
+                    && msg.message.contains("spring index")),
+            "index 20 must raise a Caution, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    // ── status: overstress per stress, load-point indexed (Severity::Warning) ──
+    /// Build a design whose single load point overstresses ALL THREE stresses, then
+    /// assert each stress produces a distinct indexed Warning naming that stress.
+    fn overstressed() -> ExtensionDesign {
+        // Music wire d=1mm D=8mm index=8; huge load → all three pct_* exceed 1.0.
+        let m = crate::test_support::music_wire();
+        solve_forward(
+            &m,
+            Length::from_millimeters(1.0),
+            Length::from_millimeters(8.0),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(0.0),
+            HookEnds::default_for(Length::from_millimeters(8.0)),
+            &[Force::from_newtons(500.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn body_overstress_raises_indexed_warning() {
+        let d = overstressed();
+        assert!(
+            d.load_points[0].pct_body_allow > 1.0,
+            "fixture must overstress body shear"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("body shear")),
+            "expected indexed body-shear warning, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    #[test]
+    fn hook_bending_overstress_raises_indexed_warning() {
+        let d = overstressed();
+        assert!(
+            d.load_points[0].pct_hook_bending_allow > 1.0,
+            "fixture must overstress hook bending"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("hook bending")),
+            "expected indexed hook-bending warning, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    #[test]
+    fn hook_torsion_overstress_raises_indexed_warning() {
+        let d = overstressed();
+        assert!(
+            d.load_points[0].pct_hook_torsion_allow > 1.0,
+            "fixture must overstress hook torsion"
+        );
+        assert!(
+            d.status
+                .messages
+                .iter()
+                .any(|msg| msg.severity == crate::Severity::Warning
+                    && msg.message.contains("load point 1")
+                    && msg.message.contains("hook torsion")),
+            "expected indexed hook-torsion warning, got: {:?}",
+            d.status.messages
+        );
+    }
+
+    /// Boundary: pct == 1.0 exactly (at the allowable, not over it) must NOT warn.
+    /// Kills the `> → >=` mutant on each of the three comparisons. Drives
+    /// `evaluate_status` directly with a hand-built load point at the boundary.
+    #[test]
+    fn exactly_at_allowable_raises_no_overstress_warning() {
+        let lp = ExtLoadPoint {
+            force: Force::from_newtons(1.0),
+            deflection: Length::from_meters(0.0),
+            length: Length::from_meters(0.06),
+            body_shear: Stress::from_pascals(1.0),
+            hook_bending: Stress::from_pascals(1.0),
+            hook_torsion: Stress::from_pascals(1.0),
+            pct_body_allow: 1.0,
+            pct_hook_bending_allow: 1.0,
+            pct_hook_torsion_allow: 1.0,
+        };
+        // index 10 is in-band → no caution either, so a clean status is expected.
+        let status = evaluate_status(10.0, std::slice::from_ref(&lp));
+        assert!(
+            !status.has_warnings(),
+            "pct == 1.0 must not warn: {:?}",
+            status.messages
+        );
+    }
+
     /// Default hooks give r2 = D/4; with d = D/2 → C2 = 2·(D/4)/(D/2) = 1 —
     /// torsion factor denominator hits zero. Uses an in-range wire diameter so the
     /// C2 guard fires (not the diameter-range check, which now precedes it).
@@ -592,6 +863,33 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// A finite-but-enormous mean diameter overflows D³ in the rate denominator,
+    /// collapsing the computed rate to zero, which would silently flow into
+    /// deflection/stresses as Inf/NaN. Custom hooks (r1=10mm, r2=5mm) keep the
+    /// c1/c2 curvature guards from firing first, so this isolates the rate guard.
+    #[test]
+    fn rejects_non_positive_computed_rate() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_meters(1e308),
+            10.0,
+            Length::from_millimeters(60.0),
+            Force::from_newtons(10.0),
+            HookEnds {
+                r1: Length::from_millimeters(10.0),
+                r2: Length::from_millimeters(5.0),
+            },
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(_))),
+            "extreme mean_dia must be rejected via the computed-rate guard, got {r:?}"
+        );
     }
 
     /// The selected correction factor governs extension body shear (only the

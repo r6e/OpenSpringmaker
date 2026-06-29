@@ -36,9 +36,11 @@ pub fn hook_bending_stress(force: Force, mean_dia: Length, wire_dia: Length, r1:
 /// (no deflection) until the force exceeds the built-in initial tension (Shigley).
 ///
 /// Precondition: `force`, `initial_tension`, and `rate` are finite (and rate > 0).
-/// `solve_forward` enforces this at the family boundary, so `net` is always finite
-/// here and the `max(0.0)` clamp only ever rounds a valid negative net up to zero —
-/// it never masks a NaN to zero. Do not call with non-finite arguments.
+/// `solve_forward` enforces this at the family boundary. The precondition — not the
+/// clamp — is what guarantees correctness: were `net` ever NaN, `net.max(0.0)` would
+/// silently yield 0.0 (Rust's `f64::max` returns the non-NaN operand), masking it.
+/// Because `net` is always finite here, the `max(0.0)` only ever rounds a valid
+/// negative net up to zero. Do not call with non-finite arguments.
 pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Length {
     let net = force.newtons() - initial_tension.newtons();
     Length::from_meters(net.max(0.0) / rate.newtons_per_meter())

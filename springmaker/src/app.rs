@@ -1,13 +1,13 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
-use crate::compression::form::{
-    format_error, parse_and_solve, FormOutcome, FormState, ScenarioKind,
-};
+use crate::compression::form::{parse_and_solve, Field, FormOutcome, FormState, ScenarioKind};
+use crate::extension::form::{ExtFormOutcome, ExtFormState};
+use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
 use iced::theme::Palette;
 use iced::{Color, Theme};
 use springcore::{
-    CurvatureCorrection, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
+    CurvatureCorrection, Family, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
     UnitSystem,
 };
 
@@ -136,40 +136,11 @@ pub enum MatField {
     MaxTemp,
 }
 
-// --------------------------------------------------------------------------
-// Calculator field enum
-// --------------------------------------------------------------------------
-
-/// Which text field a [`Message::Field`] targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Field {
-    WireDia,
-    MeanDia,
-    OuterDia,
-    Active,
-    FreeLength,
-    Rate,
-    Loads,
-    Force1,
-    Length1,
-    Force2,
-    Length2,
-    FatigueMin,
-    FatigueMax,
-    // Min Weight fields
-    MaxForce,
-    IndexMin,
-    IndexMax,
-    MaxOuterDia,
-    CandidateDiameters,
-    ClashAllowance,
-}
-
 /// All UI events.
 #[derive(Debug, Clone)]
 pub enum Message {
-    // Calculator screen
-    Field(Field, String),
+    // Calculator screen — compression
+    CompField(Field, String),
     Material(String),
     Scenario(ScenarioKind),
     Units(UnitSystem),
@@ -177,6 +148,11 @@ pub enum Message {
     Fixity(String),
     Save,
     Load,
+    // Calculator screen — family selector
+    SelectFamily(Family),
+    // Calculator screen — extension
+    ExtField(crate::extension::form::Field, String),
+    ExtHookMode(crate::extension::form::HookMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -198,13 +174,24 @@ pub enum Message {
 
 /// Top-level application state.
 pub struct App {
+    /// Active spring family (Compression | Extension).
+    pub family: Family,
     pub form: FormState,
+    /// Extension PowerUser form inputs.
+    pub extension: ExtFormState,
+    /// Solved extension outcome; `None` until a valid extension form is solved.
+    pub ext_outcome: Option<ExtFormOutcome>,
+    /// Selected material name (shared across families). Lifted out of `FormState`.
+    pub material: String,
+    /// Active unit system (shared across families). Lifted out of `FormState`.
+    pub unit_system: UnitSystem,
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
-    /// Solve error: set/cleared by [`App::recompute`] as an exclusive pair with
-    /// `outcome` (a present `outcome` means the solve succeeded). Surfaced in the
-    /// results panel only when `outcome` is `None`.
+    /// Solve error: set/cleared by [`App::recompute`]. Exclusive pair with
+    /// `outcome` (Compression) or `ext_outcome` (Extension) depending on the active
+    /// family — a present outcome means the solve succeeded. Surfaced in the results
+    /// panel only when the corresponding outcome is `None`.
     pub error: Option<String>,
     /// Save/load action error. Independent of `outcome`/`error` so a failed save
     /// or load is surfaced (in the status panel) without wiping the design the
@@ -240,7 +227,12 @@ impl App {
         correction: CurvatureCorrection,
     ) -> Self {
         Self {
+            family: Family::default(),
             form: FormState::default(),
+            extension: ExtFormState::default(),
+            ext_outcome: None,
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
             materials,
             load_warnings,
             outcome: None,
@@ -271,14 +263,66 @@ impl App {
         // A form edit (or successful load / return to the calculator) dismisses a
         // stale save/load error.
         self.action_error = None;
-        match parse_and_solve(&self.form, &self.materials, self.correction) {
-            Ok(out) => {
-                self.outcome = Some(out);
-                self.error = None;
+        match self.family {
+            Family::Compression => {
+                // Stale extension outcome from a prior solve is no longer active.
+                self.ext_outcome = None;
+                // If the user has entered none of the active scenario's required
+                // inputs (e.g. switched families on an untouched form), treat this
+                // as the initial state rather than surfacing a parse error. Once any
+                // required field is filled the form is no longer blank and parse
+                // feedback shows — see `FormState::is_blank`.
+                if self.form.is_blank() {
+                    self.error = None;
+                    self.outcome = None;
+                    return;
+                }
+                match parse_and_solve(
+                    &self.form,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
             }
-            Err(e) => {
+            Family::Extension => {
+                // Stale compression outcome from a prior solve is no longer active.
                 self.outcome = None;
-                self.error = Some(format_error(&e, self.form.unit_system));
+                // If the user has entered none of the PowerUser required inputs
+                // (e.g. switched families on an untouched form), treat this as the
+                // initial state rather than surfacing a parse error. Once any
+                // required field is filled, parse feedback shows — see
+                // `ExtFormState::is_blank`.
+                if self.extension.is_blank() {
+                    self.error = None;
+                    self.ext_outcome = None;
+                    return;
+                }
+                match crate::extension::form::parse_and_solve(
+                    &self.extension,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.ext_outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.ext_outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
             }
         }
     }
@@ -301,12 +345,24 @@ impl App {
     /// Process a UI event, updating state and re-solving the design where needed.
     pub fn update(&mut self, message: Message) {
         let should_recompute = match message {
-            Message::Field(field, value) => {
+            Message::CompField(field, value) => {
                 self.set_field(field, value);
                 true
             }
+            Message::SelectFamily(fam) => {
+                self.family = fam;
+                true
+            }
+            Message::ExtField(f, v) => {
+                self.set_ext_field(f, v);
+                true
+            }
+            Message::ExtHookMode(m) => {
+                self.extension.hook_mode = m;
+                true
+            }
             Message::Material(m) => {
-                self.form.material = m;
+                self.material = m;
                 true
             }
             Message::Scenario(s) => {
@@ -314,7 +370,7 @@ impl App {
                 true
             }
             Message::Units(u) => {
-                self.form.unit_system = u;
+                self.unit_system = u;
                 true
             }
             Message::EndType(e) => {
@@ -457,8 +513,8 @@ impl App {
                                 // If editing renamed the material the calculator had
                                 // selected, follow the rename so the selection stays valid.
                                 if let Some(EditTarget::Existing(orig)) = &target {
-                                    if self.form.material == *orig && new_name != *orig {
-                                        self.form.material = new_name;
+                                    if self.material == *orig && new_name != *orig {
+                                        self.material = new_name;
                                     }
                                 }
                                 self.editing = None;
@@ -487,11 +543,11 @@ impl App {
                         }
                         // If the calculator had it selected, fall back to a valid
                         // remaining material so navigating back doesn't error.
-                        if self.form.material == name {
+                        if self.material == name {
                             if let Some(first) =
                                 self.materials.names().first().map(|s| s.to_string())
                             {
-                                self.form.material = first;
+                                self.material = first;
                             }
                         }
                     }
@@ -515,7 +571,7 @@ impl App {
     /// Render the current application state as an iced element.
     pub fn view(&self) -> iced::Element<'_, Message> {
         match self.screen {
-            Screen::Calculator => crate::compression::view::view(self),
+            Screen::Calculator => crate::calculator::view(self),
             Screen::Materials => crate::materials_view::view(self),
             Screen::Settings => crate::settings_view::view(self),
         }
@@ -561,6 +617,21 @@ impl App {
         }
     }
 
+    fn set_ext_field(&mut self, field: crate::extension::form::Field, value: String) {
+        use crate::extension::form::Field as EF;
+        let f = &mut self.extension;
+        match field {
+            EF::WireDia => f.wire_dia = value,
+            EF::MeanDia => f.mean_dia = value,
+            EF::Active => f.active = value,
+            EF::FreeLength => f.free_length = value,
+            EF::InitialTension => f.initial_tension = value,
+            EF::Loads => f.loads = value,
+            EF::HookR1 => f.hook_r1 = value,
+            EF::HookR2 => f.hook_r2 = value,
+        }
+    }
+
     fn set_mat_field(&mut self, field: MatField, value: String) {
         let f = &mut self.mat_form;
         match field {
@@ -595,19 +666,32 @@ impl App {
     /// Build and write the current design to `path`, recording any failure in
     /// `action_error` (not `error`) so a failed save leaves the displayed design
     /// intact. The leading clear makes a successful save dismiss a prior failure.
-    fn save_to(&mut self, path: &std::path::Path) {
+    pub(crate) fn save_to(&mut self, path: &std::path::Path) {
         self.action_error = None;
-        let spec = match crate::compression::form::build_spec(&self.form) {
-            Ok(s) => s,
-            Err(e) => {
-                self.action_error = Some(e.to_string());
-                return;
+        let design = match self.family {
+            Family::Compression => {
+                match crate::compression::form::build_spec(&self.form, self.unit_system) {
+                    Ok(s) => springcore::DesignSpec::Compression(s),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
+            }
+            Family::Extension => {
+                match crate::extension::form::build_spec(&self.extension, self.unit_system) {
+                    Ok(e) => springcore::DesignSpec::Extension(e),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
             }
         };
         let saved = SavedDesign {
-            material: self.form.material.clone(),
-            unit_system: self.form.unit_system,
-            scenario: spec,
+            material: self.material.clone(),
+            unit_system: self.unit_system,
+            design,
         };
         if let Err(e) = saved.save(path) {
             self.action_error = Some(e.to_string());
@@ -628,7 +712,7 @@ impl App {
     /// Load a design from `path` into the form. On failure, records it in
     /// `action_error` and returns `false`, leaving the current form untouched.
     /// Returns `true` (form mutated) on success.
-    fn load_from(&mut self, path: &std::path::Path) -> bool {
+    pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
             Ok(saved) => {
@@ -643,9 +727,26 @@ impl App {
     }
 
     fn apply_saved(&mut self, saved: SavedDesign) {
-        self.form.material = saved.material;
-        self.form.unit_system = saved.unit_system;
-        crate::compression::form::populate_from_spec(&mut self.form, &saved.scenario);
+        self.material = saved.material;
+        self.unit_system = saved.unit_system;
+        match saved.design {
+            springcore::DesignSpec::Compression(spec) => {
+                self.family = Family::Compression;
+                crate::compression::form::populate_from_spec(
+                    &mut self.form,
+                    &spec,
+                    self.unit_system,
+                );
+            }
+            springcore::DesignSpec::Extension(spec) => {
+                self.family = Family::Extension;
+                crate::extension::form::populate_from_spec(
+                    &mut self.extension,
+                    &spec,
+                    self.unit_system,
+                );
+            }
+        }
     }
 }
 
@@ -758,7 +859,7 @@ mod tests {
     fn default_app_has_no_outcome_until_filled() {
         let app = App::default();
         assert!(app.outcome.is_none());
-        assert_eq!(app.form.material, "Music Wire");
+        assert_eq!(app.material, "Music Wire");
     }
 
     #[test]
@@ -831,7 +932,7 @@ mod tests {
     #[test]
     fn load_failure_surfaces_action_error_and_preserves_form() {
         let mut app = solved_app();
-        let before_material = app.form.material.clone();
+        let before_material = app.material.clone();
         let mutated = app.load_from(&unwritable_path());
         assert!(!mutated, "a failed load reports no form mutation");
         assert!(app.action_error.is_some(), "load failure must be surfaced");
@@ -840,7 +941,7 @@ mod tests {
             "a failed load must not clear results"
         );
         assert_eq!(
-            app.form.material, before_material,
+            app.material, before_material,
             "the form is untouched on a failed load"
         );
     }
@@ -986,14 +1087,14 @@ mod tests {
         let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
         let copy_name = editing_name(&a); // editor is open on the clone
-        a.form.material = copy_name.clone(); // calculator selects it too
+        a.material = copy_name.clone(); // calculator selects it too
         a.update(Message::MatDelete(copy_name.clone()));
         assert!(a.mat_error.is_none());
         assert!(!a.materials.names().contains(&copy_name.as_str()));
         // Editor closed and calculator selection moved to a valid material.
         assert!(a.editing.is_none());
-        assert_ne!(a.form.material, copy_name);
-        assert!(a.materials.names().contains(&a.form.material.as_str()));
+        assert_ne!(a.material, copy_name);
+        assert!(a.materials.names().contains(&a.material.as_str()));
     }
 
     #[test]
@@ -1012,15 +1113,15 @@ mod tests {
         let mut a = test_app();
         a.update(Message::MatClone("Music Wire".into()));
         let orig = editing_name(&a); // the editor is open on the clone
-        a.form.material = orig.clone(); // calculator selects it
-                                        // Rename it via the editor and commit.
+        a.material = orig.clone(); // calculator selects it
+                                   // Rename it via the editor and commit.
         a.update(Message::MatField(MatField::Name, "Renamed Wire".into()));
         a.update(Message::MatCommit);
         assert!(a.mat_error.is_none());
         assert!(a.materials.names().contains(&"Renamed Wire"));
         assert!(!a.materials.names().contains(&orig.as_str()));
         // The calculator selection followed the rename (no stale MaterialNotFound).
-        assert_eq!(a.form.material, "Renamed Wire");
+        assert_eq!(a.material, "Renamed Wire");
     }
 
     // ── Cross-state invariants ──────────────────────────────────────────────
@@ -1038,9 +1139,9 @@ mod tests {
     /// prioritizes error, so a lingering error would mask a success).
     fn assert_editor_invariants(a: &App) {
         assert!(
-            a.materials.names().contains(&a.form.material.as_str()),
-            "INV1 violated: form.material '{}' is not in the store",
-            a.form.material
+            a.materials.names().contains(&a.material.as_str()),
+            "INV1 violated: material '{}' is not in the store",
+            a.material
         );
         assert!(
             !(a.mat_error.is_some() && a.mat_status.is_some()),
@@ -1077,5 +1178,68 @@ mod tests {
         step!(Message::MatCommit); // invalid -> error set, status must be clear
         step!(Message::MatCancel);
         step!(Message::NavigateTo(Screen::Calculator));
+    }
+
+    /// R1/R2 regression: Compression arm must also have a blank-form guard.
+    ///
+    /// Before this fix, `SelectFamily(Compression)` on a blank form called
+    /// `parse_and_solve` immediately, producing "wire diameter required" on a
+    /// form the user never touched.
+    #[test]
+    fn select_compression_on_blank_form_shows_no_error() {
+        use springcore::Family;
+
+        let mut app = test_app();
+        // Switch to Extension first (triggering recompute with blank guard).
+        app.update(Message::SelectFamily(Family::Extension));
+        // Switch back to Compression — Compression arm must apply the same guard.
+        app.update(Message::SelectFamily(Family::Compression));
+
+        assert!(
+            app.error.is_none(),
+            "blank compression form must not produce a parse error after SelectFamily"
+        );
+        assert!(
+            app.outcome.is_none(),
+            "blank compression form must not produce an outcome"
+        );
+    }
+
+    /// A partially-filled Dimensional form (outer diameter entered, wire diameter
+    /// still blank) must NOT be suppressed as "blank" — Dimensional reads `outer_dia`,
+    /// not `mean_dia`, so the form carries real input and the missing wire diameter
+    /// must surface as a parse error. Regression: the old guard checked `mean_dia`
+    /// (which Dimensional never fills), so any Dimensional form with a blank wire was
+    /// wrongly treated as blank and left in the Empty state.
+    #[test]
+    fn partially_filled_dimensional_form_surfaces_parse_error() {
+        use crate::compression::form::ScenarioKind;
+        let mut app = test_app();
+        app.form.scenario = ScenarioKind::Dimensional;
+        app.form.outer_dia = "30".into();
+        app.recompute();
+        assert!(
+            app.error.is_some(),
+            "a Dimensional form with input but a missing wire diameter must show a parse error, not stay Empty"
+        );
+        assert!(app.outcome.is_none());
+    }
+
+    /// A partially-filled extension form (free length entered, geometry blank) must
+    /// surface a parse error rather than staying Empty. Regression: the old guard
+    /// only checked wire/mean/active, so entering free length or initial tension
+    /// first was wrongly suppressed.
+    #[test]
+    fn partially_filled_extension_form_surfaces_parse_error() {
+        use springcore::Family;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Extension));
+        app.extension.free_length = "60".into();
+        app.recompute();
+        assert!(
+            app.error.is_some(),
+            "an extension form with input but missing geometry must show a parse error, not stay Empty"
+        );
+        assert!(app.ext_outcome.is_none());
     }
 }

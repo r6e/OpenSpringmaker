@@ -1,9 +1,10 @@
 //! Pure form-to-design logic. No iced dependency, so it is unit-testable.
 
-/// Conversion factor: N/mm displayed ↔ N/m stored internally.
-const MM_PER_M: f64 = 1000.0;
-
-use springcore::units::{Force, Length, SpringRate};
+use crate::form_helpers::{
+    fmt_force, fmt_len, fmt_loads, fmt_rate, length_mm, loads_n, non_negative_force_n, num,
+    positive_force_n, positive_num, rate_npm,
+};
+use springcore::units::Force;
 use springcore::UnitSystem;
 use springcore::{
     analyze_fatigue, evaluate_status, DesignStatus, FatigueResult, MaterialStore, Result,
@@ -21,37 +22,29 @@ pub enum FatigueStatus {
     Computed(FatigueResult),
 }
 
-/// Render a [`SpringError`] with length values expressed in `units`.
-///
-/// `DiameterOutOfRange` bakes SI metres into its `Display` impl. This
-/// function converts those lengths to the active unit system before
-/// formatting so US-customary users see inches rather than metres.
-///
-/// All other variants have unit-neutral messages, so we fall through to
-/// `err.to_string()`.
-pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
-    match err {
-        SpringError::DiameterOutOfRange {
-            diameter_m,
-            min_m,
-            max_m,
-        } => match units {
-            UnitSystem::Metric => {
-                let d = Length::from_meters(*diameter_m).millimeters();
-                let lo = Length::from_meters(*min_m).millimeters();
-                let hi = Length::from_meters(*max_m).millimeters();
-                format!("wire diameter {d:.3} mm is outside the valid range [{lo:.3}, {hi:.3}] mm")
-            }
-            UnitSystem::Us => {
-                let d = Length::from_meters(*diameter_m).inches();
-                let lo = Length::from_meters(*min_m).inches();
-                let hi = Length::from_meters(*max_m).inches();
-                format!("wire diameter {d:.3} in is outside the valid range [{lo:.3}, {hi:.3}] in")
-            }
-        },
-        // All other variants carry unit-neutral messages.
-        other => other.to_string(),
-    }
+/// Which text field a [`crate::app::Message::CompField`] targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    WireDia,
+    MeanDia,
+    OuterDia,
+    Active,
+    FreeLength,
+    Rate,
+    Loads,
+    Force1,
+    Length1,
+    Force2,
+    Length2,
+    FatigueMin,
+    FatigueMax,
+    // Min Weight fields
+    MaxForce,
+    IndexMin,
+    IndexMax,
+    MaxOuterDia,
+    CandidateDiameters,
+    ClashAllowance,
 }
 
 /// Which scenario the form is editing.
@@ -89,8 +82,6 @@ pub const ALL_SCENARIOS: &[ScenarioKind] = &[
 /// All editable form fields (as raw strings, mirroring the UI).
 #[derive(Debug, Clone)]
 pub struct FormState {
-    pub material: String,
-    pub unit_system: UnitSystem,
     pub scenario: ScenarioKind,
     pub end_type: String,
     pub fixity: String,
@@ -119,8 +110,6 @@ pub struct FormState {
 impl Default for FormState {
     fn default() -> Self {
         Self {
-            material: "Music Wire".into(),
-            unit_system: UnitSystem::Metric,
             scenario: ScenarioKind::default(),
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -147,6 +136,59 @@ impl Default for FormState {
     }
 }
 
+impl FormState {
+    /// Whether the user has entered none of the active scenario's primary input
+    /// fields.
+    ///
+    /// Drives the "untouched form" suppression in `App::recompute`: an entirely
+    /// empty form (e.g. just after a family/scenario switch) stays in the initial
+    /// Empty state instead of surfacing a parse error, but once ANY of those fields
+    /// is filled the form is no longer blank and parse feedback shows. Each scenario
+    /// lists the input fields it actually reads — Dimensional uses `outer_dia` (not
+    /// `mean_dia`), MinWeight optimises over `candidate_diameters` — so a
+    /// partially-filled form is never mistaken for blank. `loads` is included even
+    /// though an empty loads list is itself valid (entering it still signals intent);
+    /// pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) and the
+    /// optional `max_outer_dia` are not user-entered design intent and are excluded.
+    pub fn is_blank(&self) -> bool {
+        let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
+        match self.scenario {
+            ScenarioKind::PowerUser => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.active,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::TwoLoad => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.force1,
+                &self.length1,
+                &self.force2,
+                &self.length2,
+            ]),
+            ScenarioKind::RateBased => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.rate,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::Dimensional => all_empty(&[
+                &self.wire_dia,
+                &self.outer_dia,
+                &self.active,
+                &self.free_length,
+                &self.loads,
+            ]),
+            ScenarioKind::MinWeight => {
+                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
+            }
+        }
+    }
+}
+
 /// Extra outputs produced only by the Min Weight optimisation path.
 #[derive(Debug, Clone)]
 pub struct MinWeightExtra {
@@ -163,83 +205,7 @@ pub struct FormOutcome {
     pub min_weight: Option<MinWeightExtra>,
 }
 
-fn num(field: &str, value: &str) -> Result<f64> {
-    let v = value.trim().parse::<f64>().map_err(|_| {
-        SpringError::InconsistentInputs(format!("{field} is not a number: '{value}'"))
-    })?;
-    if !v.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v)
-}
-
-/// Like `num`, but additionally requires the value to be strictly greater than zero.
-fn positive_num(field: &str, value: &str) -> Result<f64> {
-    let v = num(field, value)?;
-    if v <= 0.0 {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be greater than zero"
-        )));
-    }
-    Ok(v)
-}
-
-fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    // Lengths must be strictly positive — a zero-length dimension is unphysical.
-    let v = positive_num(field, value)?;
-    Ok(match us {
-        UnitSystem::Us => Length::from_inches(v).millimeters(),
-        UnitSystem::Metric => v,
-    })
-}
-
-/// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
-fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = num(field, value)?;
-    if v < 0.0 {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be zero or greater"
-        )));
-    }
-    Ok(match us {
-        UnitSystem::Us => Force::from_pounds_force(v).newtons(),
-        UnitSystem::Metric => v,
-    })
-}
-
-/// Like `non_negative_force_n` but requires the value to be strictly positive
-/// (e.g. max force, which must be greater than zero).
-fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = positive_num(field, value)?;
-    Ok(match us {
-        UnitSystem::Us => Force::from_pounds_force(v).newtons(),
-        UnitSystem::Metric => v,
-    })
-}
-
-fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    // A spring rate must be strictly positive.
-    // Metric input is in N/mm (display unit); convert to N/m for internal storage.
-    let v = positive_num(field, value)?;
-    Ok(match us {
-        UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
-        UnitSystem::Metric => v * MM_PER_M,
-    })
-}
-
-fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| non_negative_force_n("load", s, us))
-        .collect()
-}
-
-pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
-    let us = form.unit_system;
+pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
     Ok(match form.scenario {
         ScenarioKind::PowerUser => ScenarioSpec::PowerUser {
             end_type: form.end_type.clone(),
@@ -311,51 +277,12 @@ pub fn build_spec(form: &FormState) -> Result<ScenarioSpec> {
     })
 }
 
-/// Convert mm (SI internal) → display string.
-fn fmt_len(mm: f64, us: UnitSystem) -> String {
-    match us {
-        UnitSystem::Metric => format!("{mm}"),
-        UnitSystem::Us => format!("{}", Length::from_millimeters(mm).inches()),
-    }
-}
-
-/// Convert N → display string.
-fn fmt_force(n: f64, us: UnitSystem) -> String {
-    match us {
-        UnitSystem::Metric => format!("{n}"),
-        UnitSystem::Us => format!("{}", Force::from_newtons(n).pounds_force()),
-    }
-}
-
-/// Convert N/m (internal storage) → display string.
-/// Metric: N/m internal → N/mm display (÷ MM_PER_M); US: N/m → lbf/in.
-fn fmt_rate(npm: f64, us: UnitSystem) -> String {
-    match us {
-        UnitSystem::Metric => format!("{}", npm / MM_PER_M),
-        UnitSystem::Us => format!(
-            "{}",
-            SpringRate::from_newtons_per_meter(npm).pounds_per_inch()
-        ),
-    }
-}
-
-/// Join a slice of newtons values → comma-separated display string.
-fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
-    loads
-        .iter()
-        .map(|&n| fmt_force(n, us))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Write a `ScenarioSpec`'s fields back into `form`, converting SI-stored
-/// mm/N values to display units per `form.unit_system`.
+/// mm/N values to display units per `us`.
 ///
-/// After calling this, `build_spec(form)` should reproduce a spec
+/// After calling this, `build_spec(form, us)` should reproduce a spec
 /// equal to `spec` (round-trip invariant).
-pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec) {
-    let us = form.unit_system;
-
+pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSystem) {
     match spec {
         ScenarioSpec::PowerUser {
             end_type,
@@ -467,20 +394,13 @@ fn compute_fatigue(
     material: &springcore::Material,
     design: &SpringDesign,
     correction: springcore::CurvatureCorrection,
+    us: UnitSystem,
 ) -> Result<FatigueStatus> {
     if form.fatigue_min.trim().is_empty() || form.fatigue_max.trim().is_empty() {
         return Ok(FatigueStatus::Skipped);
     }
-    let fmin = Force::from_newtons(non_negative_force_n(
-        "fatigue min",
-        &form.fatigue_min,
-        form.unit_system,
-    )?);
-    let fmax = Force::from_newtons(non_negative_force_n(
-        "fatigue max",
-        &form.fatigue_max,
-        form.unit_system,
-    )?);
+    let fmin = Force::from_newtons(non_negative_force_n("fatigue min", &form.fatigue_min, us)?);
+    let fmax = Force::from_newtons(non_negative_force_n("fatigue max", &form.fatigue_max, us)?);
     match analyze_fatigue(
         material,
         design.wire_dia,
@@ -501,16 +421,18 @@ fn compute_fatigue(
 /// [`FatigueStatus::NoData`].
 pub fn parse_and_solve(
     form: &FormState,
+    material_name: &str,
+    us: UnitSystem,
     materials: &MaterialStore,
     correction: springcore::CurvatureCorrection,
 ) -> Result<FormOutcome> {
     if form.scenario == ScenarioKind::MinWeight {
-        let material = materials.get(&form.material)?;
-        let spec = build_spec(form)?;
+        let material = materials.get(material_name)?;
+        let spec = build_spec(form, us)?;
         let req = springcore::min_weight_request_from_spec(&spec)?;
         let sol = springcore::solve_min_weight(material, &req, correction)?;
         let status = evaluate_status(&sol.design, material);
-        let fatigue = compute_fatigue(form, material, &sol.design, correction)?;
+        let fatigue = compute_fatigue(form, material, &sol.design, correction, us)?;
         return Ok(FormOutcome {
             design: sol.design,
             status,
@@ -525,16 +447,16 @@ pub fn parse_and_solve(
     // Preserve the original error precedence for the calculator paths: parse the
     // form first, then resolve the material (both unreachable failures in the GUI,
     // since the picker only offers valid names, but keeps behavior identical).
-    let spec = build_spec(form)?;
-    let material = materials.get(&form.material)?;
+    let spec = build_spec(form, us)?;
+    let material = materials.get(material_name)?;
     let saved = SavedDesign {
-        material: form.material.clone(),
-        unit_system: form.unit_system,
-        scenario: spec,
+        material: material_name.to_string(),
+        unit_system: us,
+        design: springcore::DesignSpec::Compression(spec),
     };
     let design = saved.solve_with_material(material, correction)?;
     let status = evaluate_status(&design, material);
-    let fatigue = compute_fatigue(form, material, &design, correction)?;
+    let fatigue = compute_fatigue(form, material, &design, correction, us)?;
 
     Ok(FormOutcome {
         design,
@@ -547,6 +469,7 @@ pub fn parse_and_solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::form_helpers::format_error;
     use approx::assert_relative_eq;
     use springcore::{MaterialSet, MaterialStore};
 
@@ -556,8 +479,6 @@ mod tests {
 
     fn rate_based_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: springcore::UnitSystem::Metric,
             scenario: ScenarioKind::RateBased,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -573,10 +494,74 @@ mod tests {
     }
 
     #[test]
+    fn is_blank_true_for_untouched_form_false_once_filled() {
+        let mut f = FormState::default();
+        assert!(f.is_blank(), "a default PowerUser form is blank");
+        f.wire_dia = "2".into();
+        assert!(!f.is_blank(), "filling a required field clears blank");
+    }
+
+    #[test]
+    fn is_blank_dimensional_uses_outer_dia_not_mean_dia() {
+        let mut f = FormState {
+            scenario: ScenarioKind::Dimensional,
+            ..FormState::default()
+        };
+        assert!(f.is_blank(), "an untouched Dimensional form is blank");
+        // mean_dia is not a Dimensional input — filling it must not clear blank.
+        f.mean_dia = "20".into();
+        assert!(
+            f.is_blank(),
+            "mean_dia is not a Dimensional input; the form stays blank"
+        );
+        // outer_dia IS a Dimensional input.
+        f.outer_dia = "30".into();
+        assert!(
+            !f.is_blank(),
+            "outer_dia is a Dimensional input; the form is no longer blank"
+        );
+    }
+
+    #[test]
+    fn is_blank_minweight_ignores_prefilled_defaults_but_not_required_rate() {
+        let mut f = FormState {
+            scenario: ScenarioKind::MinWeight,
+            ..FormState::default()
+        };
+        // index_min/index_max/clash_allowance default non-empty but are not user
+        // input, so a default MinWeight form is still blank.
+        assert!(f.is_blank(), "a default MinWeight form is blank");
+        // ...but the required rate IS user input — and it is the first field shown,
+        // so filling only it must clear blank.
+        f.rate = "2".into();
+        assert!(
+            !f.is_blank(),
+            "filling the required MinWeight rate clears blank"
+        );
+    }
+
+    #[test]
+    fn is_blank_minweight_optional_max_outer_dia_does_not_count() {
+        let mut f = FormState {
+            scenario: ScenarioKind::MinWeight,
+            ..FormState::default()
+        };
+        // max_outer_dia is an optional cap, not a required input — filling only it
+        // must NOT clear blank (else an optional field would trigger a parse error).
+        f.max_outer_dia = "30".into();
+        assert!(
+            f.is_blank(),
+            "the optional max_outer_dia is not required input; the form stays blank"
+        );
+    }
+
+    #[test]
     fn solves_rate_based_metric() {
         let set = default_store();
         let out = parse_and_solve(
             &rate_based_metric(),
+            "Music Wire",
+            springcore::UnitSystem::Metric,
             &set,
             springcore::CurvatureCorrection::Bergstrasser,
         )
@@ -594,7 +579,6 @@ mod tests {
     fn us_units_are_converted() {
         let set = default_store();
         let mut form = rate_based_metric();
-        form.unit_system = springcore::UnitSystem::Us;
         form.wire_dia = "0.08".into(); // inches
         form.mean_dia = "0.8".into();
         form.rate = "10".into(); // lbf/in
@@ -602,8 +586,14 @@ mod tests {
         form.loads = "2".into();
         form.fatigue_min = "1".into();
         form.fatigue_max = "2".into();
-        let out =
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
+        let out = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Us,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert_relative_eq!(out.design.wire_dia.inches(), 0.08, max_relative = 1e-9);
     }
 
@@ -617,6 +607,8 @@ mod tests {
         let metric_form = rate_based_metric(); // rate = "2.0" N/mm
         let out = parse_and_solve(
             &metric_form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
             &set,
             springcore::CurvatureCorrection::Bergstrasser,
         )
@@ -629,7 +621,6 @@ mod tests {
 
         // US: lbf/in parse is unchanged — SpringRate conversion handles it
         let mut us_form = rate_based_metric();
-        us_form.unit_system = springcore::UnitSystem::Us;
         us_form.wire_dia = "0.08".into();
         us_form.mean_dia = "0.8".into();
         us_form.rate = "10".into(); // 10 lbf/in
@@ -639,6 +630,8 @@ mod tests {
         us_form.fatigue_max = "2".into();
         let us_out = parse_and_solve(
             &us_form,
+            "Music Wire",
+            springcore::UnitSystem::Us,
             &set,
             springcore::CurvatureCorrection::Bergstrasser,
         )
@@ -656,9 +649,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "abc".into();
-        assert!(
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).is_err()
-        );
+        assert!(parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser
+        )
+        .is_err());
     }
 
     #[test]
@@ -666,8 +664,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -676,8 +680,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "-1.0".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -689,7 +699,13 @@ mod tests {
         form.loads = "0".into();
         // Should not error on the zero load itself (may still fail for other reasons,
         // but the error must not be about the zero load value).
-        let result = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser);
+        let result = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        );
         if let Err(SpringError::InconsistentInputs(msg)) = &result {
             assert!(
                 !msg.contains("load must be zero or greater"),
@@ -704,8 +720,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.loads = "-5".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         match &err {
             SpringError::InconsistentInputs(msg) => {
                 assert!(
@@ -724,8 +746,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "0".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         match &err {
             SpringError::InconsistentInputs(msg) => {
                 assert!(
@@ -743,8 +771,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "nan".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -754,8 +788,14 @@ mod tests {
         let set = default_store();
         let mut form = rate_based_metric();
         form.wire_dia = "inf".into();
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
     }
 
@@ -764,11 +804,16 @@ mod tests {
         // Stainless 302 has no cited endurance data; when cycle forces are
         // supplied the result must be NoData, not Skipped.
         let set = default_store();
-        let mut form = rate_based_metric();
-        form.material = "Stainless 302".into();
+        let form = rate_based_metric();
         // rate_based_metric already sets fatigue_min/max, so forces are present.
-        let out =
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
+        let out = parse_and_solve(
+            &form,
+            "Stainless 302",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert!(
             matches!(out.fatigue, FatigueStatus::NoData),
             "expected NoData for Stainless 302, got: {:?}",
@@ -783,8 +828,14 @@ mod tests {
         let mut form = rate_based_metric();
         form.fatigue_min = String::new();
         form.fatigue_max = String::new();
-        let out =
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
+        let out = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert!(
             matches!(out.fatigue, FatigueStatus::Skipped),
             "expected Skipped when cycle forces are blank, got: {:?}",
@@ -796,8 +847,6 @@ mod tests {
     fn solves_min_weight_with_extras() {
         let set = default_store();
         let form = FormState {
-            material: "Music Wire".into(),
-            unit_system: springcore::UnitSystem::Metric,
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -809,8 +858,14 @@ mod tests {
             clash_allowance: "0.15".into(),
             ..Default::default()
         };
-        let out =
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).unwrap();
+        let out = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
         assert!(out.min_weight.is_some());
         assert!(out.min_weight.unwrap().mass_kg > 0.0);
         assert!(out.design.buckling_stable);
@@ -820,23 +875,19 @@ mod tests {
     fn build_spec_populate_round_trip_metric() {
         // A metric form produces spec1; populate_from_spec writes it back into
         // another form; building that second form gives spec2 == spec1.
+        let us = springcore::UnitSystem::Metric;
         let form = rate_based_metric();
-        let spec1 = build_spec(&form).unwrap();
+        let spec1 = build_spec(&form, us).unwrap();
 
-        let mut form2 = FormState {
-            unit_system: springcore::UnitSystem::Metric,
-            ..FormState::default()
-        };
-        populate_from_spec(&mut form2, &spec1);
+        let mut form2 = FormState::default();
+        populate_from_spec(&mut form2, &spec1, us);
 
-        let spec2 = build_spec(&form2).unwrap();
+        let spec2 = build_spec(&form2, us).unwrap();
         assert_eq!(spec1, spec2);
     }
 
     fn min_weight_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: springcore::UnitSystem::Metric,
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -854,16 +905,14 @@ mod tests {
     #[test]
     fn build_spec_populate_round_trip_min_weight_metric() {
         // MinWeight round-trip: spec1 → populate_from_spec → spec2 must equal spec1.
+        let us = springcore::UnitSystem::Metric;
         let form = min_weight_metric();
-        let spec1 = build_spec(&form).unwrap();
+        let spec1 = build_spec(&form, us).unwrap();
 
-        let mut form2 = FormState {
-            unit_system: springcore::UnitSystem::Metric,
-            ..FormState::default()
-        };
-        populate_from_spec(&mut form2, &spec1);
+        let mut form2 = FormState::default();
+        populate_from_spec(&mut form2, &spec1, us);
 
-        let spec2 = build_spec(&form2).unwrap();
+        let spec2 = build_spec(&form2, us).unwrap();
         assert_eq!(spec1, spec2);
     }
 
@@ -872,9 +921,14 @@ mod tests {
         let set = default_store();
         let mut form = min_weight_metric();
         form.candidate_diameters = String::new();
-        assert!(
-            parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser).is_err()
-        );
+        assert!(parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser
+        )
+        .is_err());
     }
 
     #[test]
@@ -883,6 +937,8 @@ mod tests {
         let set = default_store();
         let out = parse_and_solve(
             &min_weight_metric(),
+            "Music Wire",
+            springcore::UnitSystem::Metric,
             &set,
             springcore::CurvatureCorrection::Bergstrasser,
         )
@@ -905,8 +961,6 @@ mod tests {
         // Music Wire valid range: 0.10 mm – 6.5 mm (≈ 0.00394 – 0.256 in).
         // 0.001 in ≈ 0.0254 mm — well below 0.10 mm minimum.
         let form = FormState {
-            material: "Music Wire".into(),
-            unit_system: springcore::UnitSystem::Us,
             scenario: ScenarioKind::RateBased,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -917,8 +971,14 @@ mod tests {
             loads: "2".into(),
             ..Default::default()
         };
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Us,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(
             matches!(err, SpringError::DiameterOutOfRange { .. }),
             "expected DiameterOutOfRange, got: {err}"
@@ -956,9 +1016,14 @@ mod tests {
     fn parse_and_solve_accepts_material_store() {
         let store = springcore::MaterialStore::new(MaterialSet::load_default());
         let form = rate_based_metric();
-        assert!(
-            parse_and_solve(&form, &store, springcore::CurvatureCorrection::Bergstrasser).is_ok()
-        );
+        assert!(parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &store,
+            springcore::CurvatureCorrection::Bergstrasser
+        )
+        .is_ok());
     }
 
     #[test]
@@ -966,8 +1031,6 @@ mod tests {
         let set = default_store();
         // Music Wire valid max: 6.5 mm. Use 100 mm — far out of range.
         let form = FormState {
-            material: "Music Wire".into(),
-            unit_system: springcore::UnitSystem::Metric,
             scenario: ScenarioKind::RateBased,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -978,8 +1041,14 @@ mod tests {
             loads: "10".into(),
             ..Default::default()
         };
-        let err = parse_and_solve(&form, &set, springcore::CurvatureCorrection::Bergstrasser)
-            .unwrap_err();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
         assert!(
             matches!(err, SpringError::DiameterOutOfRange { .. }),
             "expected DiameterOutOfRange, got: {err}"

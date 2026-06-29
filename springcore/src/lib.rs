@@ -14,6 +14,7 @@ pub(crate) mod design;
 pub(crate) mod end_type;
 pub mod error;
 pub mod extension;
+pub mod family;
 pub(crate) mod fatigue;
 pub(crate) mod material;
 pub(crate) mod material_persist;
@@ -34,6 +35,7 @@ pub use design::{
 };
 pub use end_type::EndType;
 pub use error::{Result, SpringError};
+pub use family::{Family, ALL_FAMILIES};
 pub use fatigue::{analyze_fatigue, FatigueResult};
 pub use material::{
     Endurance, EnduranceDraft, Material, MaterialDraft, MaterialSet, MtsForm, StrengthUnits,
@@ -42,7 +44,10 @@ pub use material_persist::{user_overlay_path, LoadWarning};
 pub use material_store::MaterialStore;
 pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
-pub use persistence::{min_weight_request_from_spec, SavedDesign, ScenarioSpec, UnitSystem};
+pub use persistence::{
+    min_weight_request_from_spec, DesignSpec, ExtScenarioSpec, HookSpecSpec, SavedDesign,
+    ScenarioSpec, UnitSystem,
+};
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{
     Angle, AngularRate, Force, Frequency, Length, MassDensity, Moment, SpringRate, Stress,

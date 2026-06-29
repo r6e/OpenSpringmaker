@@ -4,6 +4,7 @@
 //! by the user) and [`MaterialDraft`] (validated, typed DTO).  No iced
 //! imports — this module is pure logic.
 
+use crate::form_helpers::num;
 use springcore::{
     EnduranceDraft, Material, MaterialDraft, MtsForm, Result, SpringError, StrengthUnits,
 };
@@ -90,21 +91,6 @@ impl Default for MaterialsFormState {
 }
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────
-
-/// Parse a single numeric field; return `InconsistentInputs` on failure.
-///
-/// Rejects empty strings, non-numeric text, and non-finite values (±∞, NaN).
-fn num(field: &str, value: &str) -> Result<f64> {
-    let v = value.trim().parse::<f64>().map_err(|_| {
-        SpringError::InconsistentInputs(format!("{field} is not a number: '{value}'"))
-    })?;
-    if !v.is_finite() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
-        )));
-    }
-    Ok(v)
-}
 
 /// Parse a comma-separated list of coefficients.
 ///

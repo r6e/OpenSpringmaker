@@ -8,10 +8,13 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
-use crate::app::{App, Field, Message, Screen};
+use crate::app::{App, Message, Screen};
+use crate::compression::form::Field;
+use crate::extension::form::{build_spec, Field as ExtField, HookMode};
+use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use iced_test::core::Settings;
 use iced_test::Simulator;
-use springcore::{MaterialSet, MaterialStore};
+use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
 
 /// A viewport large enough that no widget is clipped: as wide as the app's
 /// 1200px design width and tall enough for the full materials edit-form
@@ -228,4 +231,302 @@ fn save_entry_commits_a_clone_and_closes_the_editor() {
         1,
         "the saved clone remains in the store"
     );
+}
+
+// ── Extension family Simulator tests ─────────────────────────────────────────
+
+/// Focus an extension-spring calculator field's text input and type `text` into
+/// it, then apply every resulting message. Mirrors `type_into`, resolving the
+/// widget id through the view's `ext_field_id` so the test and the view share a
+/// single source of truth for the id strings.
+fn type_into_ext(app: &mut App, field: ExtField, text: &str) {
+    let id = iced_test::core::widget::Id::from(crate::extension::view::ext_field_id(field));
+    let mut sim = ui(app);
+    sim.click(id)
+        .unwrap_or_else(|e| panic!("could not focus ext input for {field:?}: {e}"));
+    sim.typewrite(text);
+    for message in sim.into_messages() {
+        app.update(message);
+    }
+}
+
+/// Selecting the Extension family, entering a complete PowerUser design, and
+/// driving the update loop must produce a solved `ext_outcome` and render the
+/// three-stress results panel (Geometry + load-point table).
+#[test]
+fn ext_solve_flow_renders_results() {
+    let mut app = test_app();
+
+    // Default family is Compression; switch to Extension via the family selector.
+    app.update(Message::SelectFamily(Family::Extension));
+    assert_eq!(app.family, Family::Extension);
+
+    // Empty form starts in the "no results" state.
+    assert!(shows(&app, "Enter design parameters to see results."));
+
+    // Enter a valid PowerUser design field-by-field via stable widget IDs.
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "10");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+
+    // The form state reflects the typed values.
+    assert_eq!(app.extension.wire_dia, "2.0");
+    assert_eq!(app.extension.mean_dia, "20.0");
+    assert_eq!(app.extension.loads, "10, 30");
+
+    // The full input → solve → render cycle produces a solved extension design.
+    assert!(
+        app.ext_outcome.is_some(),
+        "a valid extension design must produce an ext_outcome"
+    );
+    assert!(
+        matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
+        "ext_results_view must be Populated after a successful solve"
+    );
+    // Geometry section and load-point table are present in the rendered output.
+    assert!(
+        shows(&app, "Geometry"),
+        "results must include the Geometry section"
+    );
+    assert!(
+        !shows(&app, "Enter design parameters to see results."),
+        "the empty-state prompt must not appear after a successful solve"
+    );
+}
+
+/// Switching hook mode from Default to Custom must show the radius inputs and
+/// require valid radii for the solve to succeed; switching back to Default must
+/// hide the radius inputs and re-solve with machine-loop geometry.
+#[test]
+fn ext_hook_toggle_shows_radii_and_resolves() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+
+    // Enter valid geometry so the spring solves under any hook mode.
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "5");
+    type_into_ext(&mut app, ExtField::Loads, "50");
+
+    // Default mode: solved and hook radius inputs are not rendered.
+    assert_eq!(app.extension.hook_mode, HookMode::Default);
+    assert!(
+        app.ext_outcome.is_some(),
+        "default hook mode must solve with valid geometry"
+    );
+    assert!(
+        !shows(&app, "Hook radius r1 (mm)"),
+        "hook radius inputs must not appear in Default mode"
+    );
+
+    // Switch to Custom hook mode; blank radii produce a parse error.
+    app.update(Message::ExtHookMode(HookMode::Custom));
+    assert_eq!(app.extension.hook_mode, HookMode::Custom);
+    assert!(
+        app.ext_outcome.is_none(),
+        "blank custom radii must prevent a solve"
+    );
+    // The hook radius inputs now render in the widget tree.
+    assert!(
+        shows(&app, "Hook radius r1 (mm)"),
+        "hook radius r1 input must appear in Custom mode"
+    );
+
+    // Enter valid custom radii; solve must succeed.
+    type_into_ext(&mut app, ExtField::HookR1, "10.0");
+    type_into_ext(&mut app, ExtField::HookR2, "5.0");
+    assert!(
+        app.ext_outcome.is_some(),
+        "custom hook mode with valid radii must solve"
+    );
+
+    // Toggle back to Default; radius inputs must hide and solve must succeed.
+    app.update(Message::ExtHookMode(HookMode::Default));
+    assert_eq!(app.extension.hook_mode, HookMode::Default);
+    assert!(
+        !shows(&app, "Hook radius r1 (mm)"),
+        "hook radius inputs must not appear after returning to Default mode"
+    );
+    assert!(
+        app.ext_outcome.is_some(),
+        "switching back to Default hook mode must re-solve successfully"
+    );
+}
+
+/// Solving an extension design, saving it to a temp file, loading it into a
+/// fresh App, and recomputing must reproduce the same family and a solved
+/// ext_outcome (covers the persistence round-trip through `app.rs`).
+///
+/// Also verifies (item 1) that the Extension footer renders real Save/Load
+/// buttons by asserting they are visible in the widget tree, and (item 8)
+/// that the round-trip preserves field values exactly via spec equality.
+///
+/// Note: `Message::Save`/`Message::Load` dispatch native `rfd` dialogs that
+/// cannot run headlessly. Save/load is tested directly via `app.save_to` /
+/// `app.load_from`; the `shows()` check below confirms the buttons that wire
+/// up those messages are present in the rendered tree.
+#[test]
+fn ext_save_load_round_trip() {
+    let path = std::env::temp_dir().join(format!("osm_ext_{}.toml", std::process::id()));
+
+    // Build and solve a valid extension design.
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+
+    // Item 1/2: Extension footer must render real Save/Load buttons.
+    assert!(
+        shows(&app, "Save design"),
+        "Extension footer must show the Save button"
+    );
+    assert!(
+        shows(&app, "Load design"),
+        "Extension footer must show the Load button"
+    );
+
+    app.update(Message::ExtField(
+        crate::extension::form::Field::WireDia,
+        "2.0".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::MeanDia,
+        "20.0".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::Active,
+        "10".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::FreeLength,
+        "60".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::InitialTension,
+        "10".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::Loads,
+        "10, 30".into(),
+    ));
+    assert!(app.ext_outcome.is_some(), "design must solve before save");
+
+    // Item 8: capture the spec before saving for round-trip value equality.
+    let spec_before = build_spec(&app.extension, UnitSystem::Metric)
+        .expect("solved form must produce a valid spec");
+
+    // Save to a process-unique temp path.
+    app.save_to(&path);
+    assert!(
+        app.action_error.is_none(),
+        "save must succeed without error"
+    );
+    assert!(path.exists(), "design file must be written to disk");
+
+    // Load into a fresh app; verify the family and key form fields are populated.
+    let mut app2 = test_app();
+    let loaded = app2.load_from(&path);
+    assert!(loaded, "load_from must return true on success");
+    assert_eq!(
+        app2.family,
+        Family::Extension,
+        "loaded family must be Extension"
+    );
+    assert!(
+        !app2.extension.wire_dia.is_empty(),
+        "wire_dia must be populated after load"
+    );
+    assert!(
+        !app2.extension.mean_dia.is_empty(),
+        "mean_dia must be populated after load"
+    );
+
+    // Recompute on the loaded form must yield a solved extension outcome.
+    app2.recompute();
+    assert!(
+        app2.ext_outcome.is_some(),
+        "recompute on the loaded extension form must produce an ext_outcome"
+    );
+
+    // Item 8: spec equality — the round-trip must preserve all field values exactly.
+    let spec_after = build_spec(&app2.extension, UnitSystem::Metric)
+        .expect("loaded form must produce a valid spec");
+    assert_eq!(
+        spec_before, spec_after,
+        "save/load round-trip must preserve the full extension spec"
+    );
+
+    // Clean up — no temp files must remain in the repo or working directory.
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Custom-hook save/load round-trip through the full `App::save_to` →
+/// `App::load_from` chain: the hook mode and both radii must survive, not just
+/// the Default-hook path covered above.
+#[test]
+fn ext_save_load_round_trip_custom_hooks() {
+    let path = std::env::temp_dir().join(format!("osm_ext_custom_{}.toml", std::process::id()));
+
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    for (field, value) in [
+        (crate::extension::form::Field::WireDia, "2.0"),
+        (crate::extension::form::Field::MeanDia, "20.0"),
+        (crate::extension::form::Field::Active, "10"),
+        (crate::extension::form::Field::FreeLength, "60"),
+        (crate::extension::form::Field::InitialTension, "10"),
+        (crate::extension::form::Field::Loads, "10, 30"),
+    ] {
+        app.update(Message::ExtField(field, value.into()));
+    }
+
+    // Switch to Custom hooks and enter explicit radii.
+    app.update(Message::ExtHookMode(HookMode::Custom));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::HookR1,
+        "8".into(),
+    ));
+    app.update(Message::ExtField(
+        crate::extension::form::Field::HookR2,
+        "4".into(),
+    ));
+    assert!(
+        app.ext_outcome.is_some(),
+        "custom-hook design must solve before save"
+    );
+
+    let spec_before = build_spec(&app.extension, UnitSystem::Metric)
+        .expect("solved custom-hook form must produce a valid spec");
+
+    app.save_to(&path);
+    assert!(
+        app.action_error.is_none(),
+        "save must succeed without error"
+    );
+
+    let mut app2 = test_app();
+    assert!(
+        app2.load_from(&path),
+        "load_from must return true on success"
+    );
+    assert_eq!(app2.family, Family::Extension);
+    assert_eq!(
+        app2.extension.hook_mode,
+        HookMode::Custom,
+        "hook mode must be restored to Custom after load"
+    );
+    assert_eq!(app2.extension.hook_r1, "8", "hook r1 must be restored");
+    assert_eq!(app2.extension.hook_r2, "4", "hook r2 must be restored");
+
+    let spec_after = build_spec(&app2.extension, UnitSystem::Metric)
+        .expect("loaded custom-hook form must produce a valid spec");
+    assert_eq!(
+        spec_before, spec_after,
+        "custom-hook save/load round-trip must preserve the full spec"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }

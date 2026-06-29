@@ -89,7 +89,7 @@ pub fn parse_user_overlay(s: &str) -> (Vec<Material>, Vec<LoadWarning>) {
     (materials, warnings)
 }
 
-fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
     let dir = path.parent().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

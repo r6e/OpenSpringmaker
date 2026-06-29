@@ -3,29 +3,20 @@
 //! All business logic lives in `form` and `springcore`. This module only
 //! assembles iced widgets from the current [`App`] state.
 
-use iced::widget::{button, column, container, radio, row, scrollable, space, text, text_input};
-use iced::{Background, Color, Element, Font, Length};
+use iced::widget::{column, container, row, text};
+use iced::{Element, Font, Length};
 
-use crate::app::{App, Field, Message, C};
-use crate::compression::form::ALL_SCENARIOS;
+use crate::app::{App, Message, C};
+use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
-    inputs_view, results_view, status_view, FatigueView, GoverningRate, MinWeightView,
-    PopulatedResults, ResultsView,
+    inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
 };
-use crate::presenter::{Emphasis, FieldDescriptor, LoadTable, ResultRow, StatusKind, StatusLine};
+use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
-    accent_button_style, field_label, ghost_button_style, mono_value, nav_button_style,
-    panel_container, section_divider, section_heading, styled_pick_list, text_input_style, SZ_BODY,
-    SZ_LABEL, SZ_TITLE,
+    divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
+    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
+    SZ_CAPTION, SZ_LABEL,
 };
-use springcore::UnitSystem;
-
-// --------------------------------------------------------------------------
-// Font-size constants
-// --------------------------------------------------------------------------
-
-const SZ_CAPTION: u32 = 11;
-const SZ_HERO: u32 = 22;
 
 // --------------------------------------------------------------------------
 // KeyLabel newtype for pick-list items
@@ -97,16 +88,6 @@ fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
 // Style helpers
 // --------------------------------------------------------------------------
 
-fn styled_text_input<'a>(placeholder: &str, value: &str, field: Field) -> Element<'a, Message> {
-    text_input(placeholder, value)
-        .id(calc_field_id(field))
-        .on_input(move |s| Message::Field(field, s))
-        .size(SZ_BODY)
-        .font(Font::MONOSPACE)
-        .style(text_input_style)
-        .into()
-}
-
 /// Stable widget id for a calculator field's text input. The inputs are empty by
 /// default, so headless Simulator tests can't target them by text content and
 /// select by this id instead. An explicit, exhaustive match (rather than a
@@ -138,167 +119,17 @@ pub(crate) fn calc_field_id(field: Field) -> &'static str {
     }
 }
 
-/// A labeled input: muted label above a styled text_input.
-fn labeled_input<'a>(label: &str, value: &str, field: Field) -> Element<'a, Message> {
-    column![
-        field_label(label.to_owned()),
-        styled_text_input("", value, field),
-    ]
-    .spacing(4)
-    .into()
-}
-
-/// A muted label + mono value row with an explicit value color.
-fn result_row_colored<'a>(
-    label: impl Into<String>,
-    value: impl Into<String>,
-    unit: impl Into<String>,
-    value_color: Color,
-) -> Element<'a, Message> {
-    let value = value.into();
-    let unit = unit.into();
-    let display = if unit.is_empty() {
-        value
-    } else {
-        format!("{value} {unit}")
-    };
-    row![
-        text(label.into())
-            .size(SZ_LABEL)
-            .color(C::MUTED)
-            .width(Length::FillPortion(2)),
-        text(display)
-            .font(Font::MONOSPACE)
-            .size(SZ_BODY)
-            .color(value_color)
-            .width(Length::FillPortion(3)),
-    ]
-    .spacing(8)
-    .into()
-}
-
-/// A muted label + mono value row in standard text color, used in results readouts.
-fn result_row<'a>(
-    label: impl Into<String>,
-    value: impl Into<String>,
-    unit: impl Into<String>,
-) -> Element<'a, Message> {
-    result_row_colored(label, value, unit, C::TEXT)
-}
-
-// --------------------------------------------------------------------------
-// Top-level view
-// --------------------------------------------------------------------------
-
-/// Build the complete application UI.
-pub fn view(app: &App) -> Element<'_, Message> {
-    let header = build_header(app);
-    let left = build_design_panel(app);
-    let right = build_results_panel(app);
-    let status = build_status_panel(app);
-    let footer = build_footer();
-
-    let header_divider = section_divider();
-
-    let content = column![
-        header,
-        header_divider,
-        row![left, right].spacing(16),
-        status,
-        footer,
-    ]
-    .spacing(16)
-    .max_width(1200);
-
-    let root = container(scrollable(
-        container(content).padding(24).width(Length::Fill),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(Background::Color(C::INK)),
-        ..Default::default()
-    });
-
-    root.into()
-}
-
-// --------------------------------------------------------------------------
-// Header
-// --------------------------------------------------------------------------
-
-fn build_header(app: &App) -> Element<'_, Message> {
-    let app_name = text("OpenSpringmaker")
-        .size(SZ_TITLE)
-        .color(C::ACCENT)
-        .font(Font {
-            weight: iced::font::Weight::Semibold,
-            ..Font::DEFAULT
-        });
-
-    let unit_metric = radio(
-        "Metric (mm, N)",
-        UnitSystem::Metric,
-        Some(app.form.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let unit_us = radio(
-        "US (in, lbf)",
-        UnitSystem::Us,
-        Some(app.form.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
-        .on_press(Message::NavigateTo(crate::app::Screen::Materials))
-        .style(nav_button_style);
-
-    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(C::ACCENT))
-        .on_press(Message::NavigateTo(crate::app::Screen::Settings))
-        .style(nav_button_style);
-
-    row![
-        app_name,
-        space().width(Length::Fill),
-        materials_btn,
-        settings_btn,
-        unit_metric,
-        unit_us,
-    ]
-    .spacing(16)
-    .align_y(iced::Alignment::Center)
-    .into()
-}
-
 // --------------------------------------------------------------------------
 // Design (left) panel
 // --------------------------------------------------------------------------
 
-fn build_design_panel(app: &App) -> Element<'_, Message> {
-    let material_names: Vec<String> = app
-        .materials
-        .names()
-        .into_iter()
-        .map(String::from)
-        .collect();
-
+pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let selected_end = find_by_key(END_TYPES, &app.form.end_type).copied();
     let selected_fix = find_by_key(FIXITIES, &app.form.fixity).copied();
 
     // Setup group — two columns: material+scenario left, end_type+fixity right.
     let setup_col_a = column![
-        column![
-            field_label("Material"),
-            styled_pick_list(
-                material_names,
-                Some(app.form.material.clone()),
-                Message::Material,
-            ),
-        ]
-        .spacing(4),
+        crate::widgets::material_picker(app),
         column![
             field_label("Scenario"),
             styled_pick_list(ALL_SCENARIOS, Some(app.form.scenario), Message::Scenario),
@@ -364,8 +195,14 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
 }
 
 /// Render one descriptor as a labeled input, binding the live value from `app.form`.
-fn render_input<'a>(app: &'a App, fd: &FieldDescriptor) -> Element<'a, Message> {
-    labeled_input(&fd.label, field_value(&app.form, fd.field), fd.field)
+fn render_input<'a>(app: &'a App, fd: &FieldDescriptor<Field>) -> Element<'a, Message> {
+    let field = fd.field;
+    labeled_input(
+        &fd.label,
+        field_value(&app.form, field),
+        calc_field_id(field),
+        move |s| Message::CompField(field, s),
+    )
 }
 
 /// Map a [`Field`] to its current string value in the form state.
@@ -396,42 +233,6 @@ fn field_value(form: &crate::compression::form::FormState, field: Field) -> &str
 // --------------------------------------------------------------------------
 // Results (right) panel — renderers (data from view_model::results_view)
 // --------------------------------------------------------------------------
-
-/// Render one result row, mapping the presenter's emphasis to a color.
-fn render_result_row(r: &ResultRow) -> Element<'static, Message> {
-    match r.emphasis {
-        Emphasis::Normal => result_row(r.label.clone(), r.value.clone(), r.unit.clone()),
-        Emphasis::Danger => {
-            result_row_colored(r.label.clone(), r.value.clone(), r.unit.clone(), C::DANGER)
-        }
-    }
-}
-
-/// A heading followed by result rows (spacing 6), as used by every readout section.
-fn rows_section(heading: &str, rows: &[ResultRow]) -> iced::widget::Column<'static, Message> {
-    let mut col = column![section_heading(heading)].spacing(6);
-    for r in rows {
-        col = col.push(render_result_row(r));
-    }
-    col
-}
-
-/// A divider, a heading, then result rows (spacing 6) — the fatigue/min-weight
-/// section shape. Built flat (not by wrapping `rows_section`) so the
-/// divider→heading gap stays at the section's own spacing of 6.
-fn divided_result_section(heading: &str, rows: &[ResultRow]) -> Element<'static, Message> {
-    let mut col = column![section_divider(), section_heading(heading)].spacing(6);
-    for r in rows {
-        col = col.push(render_result_row(r));
-    }
-    col.into()
-}
-
-fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Message> {
-    let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
-    let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), C::ACCENT, SZ_HERO);
-    column![rate_label, rate_value].spacing(6).into()
-}
 
 fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
     let mut load_col = column![section_heading("Load points")].spacing(4);
@@ -529,24 +330,12 @@ fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
 // Results (right) panel
 // --------------------------------------------------------------------------
 
-fn build_results_panel(app: &App) -> Element<'_, Message> {
-    let us = app.form.unit_system;
+pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
-        ResultsView::Error(msg) => column![
-            section_heading("Results"),
-            text(msg).size(SZ_LABEL).color(C::DANGER),
-        ]
-        .spacing(12)
-        .into(),
-        ResultsView::Empty => column![
-            section_heading("Results"),
-            text("Enter design parameters to see results.")
-                .size(SZ_BODY)
-                .color(C::MUTED),
-        ]
-        .spacing(12)
-        .into(),
+        ResultsView::Error(msg) => results_error(msg),
+        ResultsView::Empty => results_empty(),
         ResultsView::Populated(p) => {
             // The chart is pure rendering of the design (no decision); build it
             // from the outcome the Populated variant guarantees is present.
@@ -582,61 +371,4 @@ fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> El
     ]
     .spacing(6)
     .into()
-}
-
-// --------------------------------------------------------------------------
-// Status panel
-// --------------------------------------------------------------------------
-
-fn build_status_panel(app: &App) -> Element<'_, Message> {
-    // The presenter decides suppression, ordering (load warnings first), and
-    // each line's severity class; the view maps that class to prefix and color.
-    let lines = status_view(app);
-    if lines.is_empty() {
-        return column![].into();
-    }
-
-    // Neutral heading: this panel carries both startup material-load warnings
-    // (which can appear before any design is computed) and design-status messages.
-    let mut col = column![section_heading("Status")].spacing(6);
-    for line in &lines {
-        col = col.push(render_status_line(line));
-    }
-
-    panel_container(col)
-}
-
-fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
-    let (prefix, color) = match line.kind {
-        StatusKind::ActionError => ("Error:", C::DANGER),
-        StatusKind::LoadWarning => ("Warning:", C::WARN),
-        StatusKind::Info => ("Info:", C::MUTED),
-        StatusKind::Caution => ("Caution:", C::WARN),
-        StatusKind::DesignWarning => ("Warning:", C::DANGER),
-    };
-    row![
-        text(prefix)
-            .size(SZ_LABEL)
-            .color(color)
-            .width(Length::Fixed(72.0)),
-        text(line.text.clone()).size(SZ_LABEL).color(color),
-    ]
-    .spacing(8)
-    .into()
-}
-
-// --------------------------------------------------------------------------
-// Footer
-// --------------------------------------------------------------------------
-
-fn build_footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
-        .on_press(Message::Save)
-        .style(accent_button_style);
-
-    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
-        .on_press(Message::Load)
-        .style(ghost_button_style);
-
-    row![save_btn, load_btn].spacing(12).into()
 }

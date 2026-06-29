@@ -7,91 +7,16 @@
 //! conversion is unit-testable without a renderer; `view` renders this data
 //! verbatim.
 
-use crate::app::{App, Field};
-use crate::compression::form::{FatigueStatus, FormOutcome, ScenarioKind};
-use crate::presenter::{FieldDescriptor, LoadRow, LoadTable, ResultRow, StatusKind, StatusLine};
-use springcore::{BindingConstraint, Severity, SpringDesign, UnitSystem};
-
-// ── Unit labels and conversions ─────────────────────────────────────────────
-
-/// Length unit label for the active unit system.
-fn unit_length_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "mm",
-        UnitSystem::Us => "in",
-    }
-}
-
-/// Force unit label for the active unit system.
-fn unit_force_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N",
-        UnitSystem::Us => "lbf",
-    }
-}
-
-/// Spring-rate unit label for the active unit system.
-fn unit_rate_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "N/mm",
-        UnitSystem::Us => "lbf/in",
-    }
-}
-
-/// Stress unit label for the active unit system.
-fn unit_stress_label(us: UnitSystem) -> &'static str {
-    match us {
-        UnitSystem::Metric => "MPa",
-        UnitSystem::Us => "ksi",
-    }
-}
-
-/// Length in the active unit system: mm (metric) or inches (US).
-fn display_len(l: springcore::Length, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => l.millimeters(),
-        UnitSystem::Us => l.inches(),
-    }
-}
-
-/// Force in the active unit system: N (metric) or lbf (US).
-fn display_force(f: springcore::Force, us: UnitSystem) -> f64 {
-    match us {
-        UnitSystem::Metric => f.newtons(),
-        UnitSystem::Us => f.pounds_force(),
-    }
-}
-
-/// Conversion factor: N/mm displayed ↔ N/m stored internally.
-const MM_PER_M: f64 = 1000.0;
-
-/// Spring rate in the active unit system: N/mm (metric) or lbf/in (US).
-fn display_rate(r: springcore::SpringRate, us: UnitSystem) -> f64 {
-    match us {
-        // Display in N/mm (= N/m ÷ MM_PER_M) so rate is consistent with mm lengths and
-        // the chart axes (deflection in mm, force in N → slope in N/mm).
-        UnitSystem::Metric => r.newtons_per_meter() / MM_PER_M,
-        UnitSystem::Us => r.pounds_per_inch(),
-    }
-}
-
-/// Stress `(value, label)` in the active unit system: MPa (metric) or ksi (US).
-fn display_stress(s: springcore::Stress, us: UnitSystem) -> (f64, &'static str) {
-    let value = match us {
-        UnitSystem::Metric => s.megapascals(),
-        UnitSystem::Us => s.psi() / 1000.0,
-    };
-    (value, unit_stress_label(us))
-}
+use crate::app::App;
+use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
+use crate::presenter::{
+    append_status_messages, display_force, display_len, display_stress, unit_force_label,
+    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
+    LoadTable, ResultRow, StatusLine,
+};
+use springcore::{BindingConstraint, SpringDesign, UnitSystem};
 
 // ── Results panel ───────────────────────────────────────────────────────────
-
-/// The hero spring-rate readout (label is constant in the view).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GoverningRate {
-    pub value: String,
-    pub unit: String,
-}
 
 /// Fatigue section state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,7 +68,7 @@ pub enum ResultsView {
 /// matching the prior inline order (outcome checked first).
 pub fn results_view(app: &App) -> ResultsView {
     match &app.outcome {
-        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app.form.unit_system))),
+        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app.unit_system))),
         None => match &app.error {
             Some(err) => ResultsView::Error(err.clone()),
             None => ResultsView::Empty,
@@ -154,10 +79,7 @@ pub fn results_view(app: &App) -> ResultsView {
 fn populated_results(out: &FormOutcome, us: UnitSystem) -> PopulatedResults {
     let d = &out.design;
     PopulatedResults {
-        governing_rate: GoverningRate {
-            value: format!("{:.4}", display_rate(d.rate, us)),
-            unit: unit_rate_label(us).to_string(),
-        },
+        governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: geometry_rows(d, us),
         load_table: load_table(d, us),
         fatigue: fatigue_view(out, us),
@@ -290,39 +212,13 @@ fn min_weight_view(out: &FormOutcome) -> MinWeightView {
 
 // ── Status panel ────────────────────────────────────────────────────────────
 
-/// Status class for a design message's severity.
-fn status_kind(severity: Severity) -> StatusKind {
-    match severity {
-        Severity::Info => StatusKind::Info,
-        Severity::Caution => StatusKind::Caution,
-        Severity::Warning => StatusKind::DesignWarning,
-    }
-}
-
 /// Status lines to show: a save/load action error first (most recent), then
 /// load warnings, then design messages. An empty vector means the status panel
 /// is suppressed entirely.
 pub fn status_view(app: &App) -> Vec<StatusLine> {
-    let mut lines = Vec::new();
-    if let Some(text) = &app.action_error {
-        lines.push(StatusLine {
-            kind: StatusKind::ActionError,
-            text: text.clone(),
-        });
-    }
-    for warn in &app.load_warnings {
-        lines.push(StatusLine {
-            kind: StatusKind::LoadWarning,
-            text: warn.message.clone(),
-        });
-    }
+    let mut lines = crate::presenter::common_status_lines(app);
     if let Some(out) = &app.outcome {
-        for msg in &out.status.messages {
-            lines.push(StatusLine {
-                kind: status_kind(msg.severity),
-                text: msg.message.clone(),
-            });
-        }
+        append_status_messages(&mut lines, &out.status.messages);
     }
     lines
 }
@@ -333,16 +229,17 @@ pub fn status_view(app: &App) -> Vec<StatusLine> {
 /// cycle set (empty for the min-weight scenario, which has no fatigue section).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputsView {
-    pub primary: Vec<FieldDescriptor>,
-    pub fatigue: Vec<FieldDescriptor>,
+    pub primary: Vec<FieldDescriptor<Field>>,
+    pub fatigue: Vec<FieldDescriptor<Field>>,
 }
 
 /// Which input fields to show for the current scenario, with unit-aware labels.
 pub fn inputs_view(app: &App) -> InputsView {
     let f = &app.form;
-    let len = unit_length_label(f.unit_system);
-    let force = unit_force_label(f.unit_system);
-    let rate = unit_rate_label(f.unit_system);
+    let us = app.unit_system;
+    let len = unit_length_label(us);
+    let force = unit_force_label(us);
+    let rate = unit_rate_label(us);
 
     if f.scenario == ScenarioKind::MinWeight {
         return InputsView {
@@ -432,11 +329,8 @@ pub fn inputs_view(app: &App) -> InputsView {
 mod tests {
     use super::*;
     use crate::compression::form::FormState;
-    use crate::presenter::Emphasis;
-    use approx::assert_relative_eq;
-    use springcore::{
-        Force, Length, LoadWarning, MaterialSet, MaterialStore, SpringRate, Stress, UnitSystem,
-    };
+    use crate::presenter::{status_kind, Emphasis, StatusKind};
+    use springcore::{LoadWarning, MaterialSet, MaterialStore, Severity, UnitSystem};
 
     fn store() -> MaterialStore {
         MaterialStore::new(MaterialSet::load_default())
@@ -456,8 +350,6 @@ mod tests {
 
     fn rate_based_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: UnitSystem::Metric,
             scenario: ScenarioKind::RateBased,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -474,8 +366,6 @@ mod tests {
 
     fn min_weight_metric() -> FormState {
         FormState {
-            material: "Music Wire".into(),
-            unit_system: UnitSystem::Metric,
             scenario: ScenarioKind::MinWeight,
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
@@ -490,69 +380,12 @@ mod tests {
         }
     }
 
-    fn fields(d: &[FieldDescriptor]) -> Vec<Field> {
+    fn fields(d: &[FieldDescriptor<Field>]) -> Vec<Field> {
         d.iter().map(|fd| fd.field).collect()
     }
 
-    fn labels(d: &[FieldDescriptor]) -> Vec<&str> {
+    fn labels(d: &[FieldDescriptor<Field>]) -> Vec<&str> {
         d.iter().map(|fd| fd.label.as_str()).collect()
-    }
-
-    // ── Unit conversions (the surface of the prior 1000× magnitude bug) ──
-
-    #[test]
-    fn length_conversion_matches_unit_system() {
-        let one_mm = Length::from_millimeters(1.0);
-        assert_relative_eq!(display_len(one_mm, UnitSystem::Metric), 1.0);
-        assert_relative_eq!(
-            display_len(one_mm, UnitSystem::Us),
-            1.0 / 25.4,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn force_conversion_matches_unit_system() {
-        // Each side built from its own native constructor, so a metric↔US
-        // accessor swap is caught (not just a tautology against the impl).
-        assert_relative_eq!(
-            display_force(Force::from_newtons(10.0), UnitSystem::Metric),
-            10.0
-        );
-        assert_relative_eq!(
-            display_force(Force::from_pounds_force(7.0), UnitSystem::Us),
-            7.0,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn rate_is_displayed_in_per_mm_not_per_meter() {
-        // 2000 N/m stored must read as 2 N/mm — the magnitude that bit us before.
-        assert_relative_eq!(
-            display_rate(
-                SpringRate::from_newtons_per_meter(2000.0),
-                UnitSystem::Metric
-            ),
-            2.0
-        );
-        assert_relative_eq!(
-            display_rate(SpringRate::from_pounds_per_inch(5.0), UnitSystem::Us),
-            5.0,
-            epsilon = 1e-9
-        );
-    }
-
-    #[test]
-    fn stress_conversion_carries_the_right_label() {
-        let (v_metric, l_metric) =
-            display_stress(Stress::from_megapascals(500.0), UnitSystem::Metric);
-        assert_relative_eq!(v_metric, 500.0);
-        assert_eq!(l_metric, "MPa");
-        // 2000 psi = 2 ksi (independent magnitude, not a restatement of psi()/1000).
-        let (v_us, l_us) = display_stress(Stress::from_psi(2000.0), UnitSystem::Us);
-        assert_relative_eq!(v_us, 2.0, epsilon = 1e-9);
-        assert_eq!(l_us, "ksi");
     }
 
     // ── results_view: the three mutually-exclusive modes ──
@@ -646,9 +479,10 @@ mod tests {
 
     #[test]
     fn fatigue_no_data_for_material_without_endurance() {
-        let mut form = rate_based_metric();
-        form.material = "Stainless 302".into(); // no cited endurance data
-        let p = populated(&app_with(form));
+        let mut app = app_with(rate_based_metric());
+        app.material = "Stainless 302".into(); // no cited endurance data
+        app.recompute();
+        let p = populated(&app);
         assert_eq!(p.fatigue, FatigueView::Note(FATIGUE_NO_DATA));
     }
 
@@ -818,12 +652,12 @@ mod tests {
 
     #[test]
     fn input_labels_track_the_unit_system() {
-        let mut metric = min_weight_metric();
-        metric.unit_system = UnitSystem::Metric;
-        assert!(labels(&inputs_view(&app_with(metric)).primary).contains(&"Required rate (N/mm)"));
+        // App::from_store defaults to UnitSystem::Metric, so no override needed.
+        let metric = app_with(min_weight_metric());
+        assert!(labels(&inputs_view(&metric).primary).contains(&"Required rate (N/mm)"));
 
-        let mut us = min_weight_metric();
+        let mut us = app_with(min_weight_metric());
         us.unit_system = UnitSystem::Us;
-        assert!(labels(&inputs_view(&app_with(us)).primary).contains(&"Required rate (lbf/in)"));
+        assert!(labels(&inputs_view(&us).primary).contains(&"Required rate (lbf/in)"));
     }
 }

@@ -4,7 +4,8 @@
 use approx::assert_relative_eq;
 use springcore::units::{Force, Length, MassDensity};
 use springcore::{
-    analyze_fatigue, evaluate_status, MaterialSet, SavedDesign, Scenario, ScenarioSpec, UnitSystem,
+    analyze_fatigue, evaluate_status, DesignSpec, MaterialSet, SavedDesign, Scenario, ScenarioSpec,
+    UnitSystem,
 };
 
 #[test]
@@ -14,7 +15,7 @@ fn pipeline_rate_based_music_wire() {
     let saved = SavedDesign {
         material: "Music Wire".into(),
         unit_system: UnitSystem::Metric,
-        scenario: ScenarioSpec::RateBased {
+        design: DesignSpec::Compression(ScenarioSpec::RateBased {
             end_type: "squared_ground".into(),
             fixity: "fixed_fixed".into(),
             wire_dia_mm: 2.0,
@@ -22,7 +23,7 @@ fn pipeline_rate_based_music_wire() {
             rate_n_per_m: 2000.0,
             free_length_mm: 60.0,
             loads_n: vec![10.0, 30.0],
-        },
+        }),
     };
     let set = MaterialSet::load_default();
     let design = saved
