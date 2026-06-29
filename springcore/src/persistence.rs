@@ -987,6 +987,76 @@ mode = "Default"
     }
 
     #[test]
+    fn from_toml_rejects_non_finite_dimensional_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "Dimensional"
+wire_dia_mm = 2.0
+outer_dia_mm = inf
+active = 10.0
+free_length_mm = 100.0
+initial_tension_n = 5.0
+loads_n = [10.0, 30.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_twoload_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "TwoLoad"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+free_length_mm = 100.0
+force1_n = nan
+length1_mm = 110.0
+force2_n = 30.0
+length2_mm = 130.0
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_minweight_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "MinWeight"
+required_rate_n_per_m = 2000.0
+max_force_n = -inf
+initial_tension_n = 5.0
+index_min = 4.0
+index_max = 12.0
+candidate_diameters_mm = [1.5, 2.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
     fn solve_with_material_rejects_extension_design() {
         let set = MaterialSet::load_default();
         let m = set.get("Music Wire").unwrap();

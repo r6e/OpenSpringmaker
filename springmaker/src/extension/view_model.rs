@@ -102,6 +102,9 @@ pub struct ExtPopulatedResults {
     pub governing_rate: GoverningRate,
     pub geometry: Vec<ResultRow>,
     pub load_table: ExtLoadTable,
+    /// Min-weight optimisation rows when the active outcome is a MinWeight solve. A plain Option
+    /// (vs compression's MinWeightView enum) suffices because extension has no fatigue section
+    /// for the enum to also gate.
     pub min_weight: Option<Vec<ResultRow>>,
 }
 
@@ -199,7 +202,7 @@ pub fn ext_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
     let force = unit_force_label(us);
-    let rate = crate::presenter::unit_rate_label(us);
+    let rate = unit_rate_label(us);
     if app.extension.scenario == ExtScenarioKind::MinWeight {
         return vec![
             FieldDescriptor::new(format!("Required rate ({rate})"), Field::Rate),

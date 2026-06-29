@@ -74,10 +74,16 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
 pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // Lengths must be strictly positive — a zero-length dimension is unphysical.
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Length::from_inches(v).millimeters(),
         UnitSystem::Metric => v,
-    })
+    };
+    if !v_si.is_finite() {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )));
+    }
+    Ok(v_si)
 }
 
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
@@ -88,30 +94,48 @@ pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> 
             "{field} must be zero or greater"
         )));
     }
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
-    })
+    };
+    if !v_si.is_finite() {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )));
+    }
+    Ok(v_si)
 }
 
 /// Like `non_negative_force_n` but requires the value to be strictly positive
 /// (e.g. max force, which must be greater than zero).
 pub(crate) fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
-    })
+    };
+    if !v_si.is_finite() {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )));
+    }
+    Ok(v_si)
 }
 
 pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // A spring rate must be strictly positive.
     // Metric input is in N/mm (display unit); convert to N/m for internal storage.
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
         UnitSystem::Metric => v * MM_PER_M,
-    })
+    };
+    if !v_si.is_finite() {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be a finite number: '{value}'"
+        )));
+    }
+    Ok(v_si)
 }
 
 pub(crate) fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
@@ -158,4 +182,45 @@ pub(crate) fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
         .map(|&n| fmt_force(n, us))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use springcore::SpringError;
+
+    /// A US-unit length of "1e308" (inches) overflows to +Inf after ×25.4 conversion.
+    /// The post-conversion `is_finite()` guard must catch this and return `Err`, not `Ok(+Inf)`.
+    #[test]
+    fn length_mm_us_overflow_to_inf_is_rejected() {
+        let result = length_mm("test field", "1e308", UnitSystem::Us);
+        assert!(
+            matches!(result, Err(SpringError::InconsistentInputs(_))),
+            "US length overflow to +Inf must be rejected; got {result:?}"
+        );
+    }
+
+    /// Same guard applies to the metric `rate_npm` branch (×1000): a finite metric
+    /// rate that overflows after unit conversion must also be rejected.
+    #[test]
+    fn rate_npm_metric_overflow_to_inf_is_rejected() {
+        let result = rate_npm("spring rate", "1e306", UnitSystem::Metric);
+        assert!(
+            matches!(result, Err(SpringError::InconsistentInputs(_))),
+            "metric rate overflow to +Inf must be rejected; got {result:?}"
+        );
+    }
+
+    /// Normal finite US and metric inputs must still pass through cleanly.
+    #[test]
+    fn length_mm_normal_inputs_are_accepted() {
+        assert!(length_mm("test", "1.0", UnitSystem::Us).is_ok());
+        assert!(length_mm("test", "1.0", UnitSystem::Metric).is_ok());
+    }
+
+    #[test]
+    fn rate_npm_normal_inputs_are_accepted() {
+        assert!(rate_npm("rate", "2.0", UnitSystem::Us).is_ok());
+        assert!(rate_npm("rate", "2.0", UnitSystem::Metric).is_ok());
+    }
 }

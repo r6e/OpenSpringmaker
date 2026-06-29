@@ -202,7 +202,7 @@ impl ExtFormState {
 
 /// Extra outputs produced only by the extension Min-Weight optimisation path.
 #[derive(Debug, Clone)]
-pub struct ExtMinWeightExtra {
+pub(crate) struct ExtMinWeightExtra {
     pub binding: ExtBindingConstraint,
     pub mass_kg: f64,
 }
@@ -235,6 +235,24 @@ fn resolve_hooks_spec(form: &ExtFormState, us: UnitSystem) -> Result<HookSpec> {
             r2: Length::from_millimeters(length_mm("hook radius r2", &form.hook_r2, us)?),
         },
     })
+}
+
+/// Parse the comma-separated candidate-diameter list into SI millimetres, rejecting an empty list.
+/// Shared by the MinWeight `parse_and_solve` and `build_spec` arms.
+fn parse_candidate_diameters_mm(form: &ExtFormState, us: UnitSystem) -> Result<Vec<f64>> {
+    let diameters: Vec<f64> = form
+        .candidate_diameters
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| length_mm("candidate diameter", s, us))
+        .collect::<Result<_>>()?;
+    if diameters.is_empty() {
+        return Err(springcore::SpringError::InconsistentInputs(
+            "provide at least one candidate wire diameter".into(),
+        ));
+    }
+    Ok(diameters)
 }
 
 /// Parse the form, resolve hooks, build the active scenario, and solve. The engine's
@@ -282,11 +300,7 @@ pub fn parse_and_solve(
             let scenario = RateBased {
                 wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
                 mean_dia: Length::from_millimeters(mean_dia_mm),
-                rate: springcore::units::SpringRate::from_newtons_per_meter(rate_npm(
-                    "spring rate",
-                    &form.rate,
-                    us,
-                )?),
+                rate: SpringRate::from_newtons_per_meter(rate_npm("spring rate", &form.rate, us)?),
                 free_length: Length::from_millimeters(length_mm(
                     "free length",
                     &form.free_length,
@@ -364,24 +378,10 @@ pub fn parse_and_solve(
             })
         }
         ExtScenarioKind::MinWeight => {
-            let candidate_diameters: Vec<Length> = form
-                .candidate_diameters
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| {
-                    Ok(Length::from_millimeters(length_mm(
-                        "candidate diameter",
-                        s,
-                        us,
-                    )?))
-                })
-                .collect::<Result<_>>()?;
-            if candidate_diameters.is_empty() {
-                return Err(springcore::SpringError::InconsistentInputs(
-                    "provide at least one candidate wire diameter".into(),
-                ));
-            }
+            let candidate_diameters: Vec<Length> = parse_candidate_diameters_mm(form, us)?
+                .into_iter()
+                .map(Length::from_millimeters)
+                .collect();
             let max_outer_dia = if form.max_outer_dia.trim().is_empty() {
                 None
             } else {
@@ -489,18 +489,7 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             length2_mm: length_mm("length 2", &form.length2, us)?,
         }),
         ExtScenarioKind::MinWeight => {
-            let candidate_diameters_mm: Vec<f64> = form
-                .candidate_diameters
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| length_mm("candidate diameter", s, us))
-                .collect::<Result<_>>()?;
-            if candidate_diameters_mm.is_empty() {
-                return Err(springcore::SpringError::InconsistentInputs(
-                    "provide at least one candidate wire diameter".into(),
-                ));
-            }
+            let candidate_diameters_mm = parse_candidate_diameters_mm(form, us)?;
             let max_outer_dia_mm = if form.max_outer_dia.trim().is_empty() {
                 None
             } else {
