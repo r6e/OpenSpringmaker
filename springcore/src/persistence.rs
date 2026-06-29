@@ -67,6 +67,9 @@ pub enum ScenarioSpec {
         max_force_n: f64,
         index_min: f64,
         index_max: f64,
+        // The only optional field: serde maps a missing key to `None` for `Option` types
+        // (no `#[serde(default)]` needed), so unlike every other (required) payload field a
+        // missing or misspelled `max_outer_dia_mm` deserializes to `None` rather than erroring.
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
         clash_allowance: f64,
@@ -74,12 +77,16 @@ pub enum ScenarioSpec {
 }
 
 // `#[serde(deny_unknown_fields)]` is intentionally NOT applied to the
-// family/type/mode-tagged enums below: serde rejects that attribute on
+// family/type/mode-tagged enums here: serde rejects that attribute on
 // internally-tagged enums. Forward-compat safety is structural instead — every
 // payload field is required (none carry `#[serde(default)]`), so a misspelled
 // key surfaces as a "missing field" error on the correctly-spelled field rather
-// than silently defaulting. (A genuinely unknown extra key is ignored, which is
-// the desired additive-forward-compatibility behavior.)
+// than silently defaulting. The one exception is `Option` fields
+// (`max_outer_dia_mm`): serde implicitly maps a missing key to `None` without
+// `#[serde(default)]`, so a missing or misspelled `max_outer_dia_mm` deserializes
+// to `None` rather than erroring — see the field-level note at each site. (A
+// genuinely unknown extra key is ignored, which is the desired
+// additive-forward-compatibility behavior.)
 /// A design's family-tagged scenario inputs. `family` is the discriminant tag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "family")]
@@ -136,6 +143,9 @@ pub enum ExtScenarioSpec {
         hooks: HookSpecSpec,
         index_min: f64,
         index_max: f64,
+        // The only optional field: serde maps a missing key to `None` for `Option` types
+        // (no `#[serde(default)]` needed), so unlike every other (required) payload field a
+        // missing or misspelled `max_outer_dia_mm` deserializes to `None` rather than erroring.
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
     },

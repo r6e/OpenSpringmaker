@@ -1312,12 +1312,16 @@ Each forward arm parses `wire_dia` inline in its own struct literal (there is no
         }
 ```
 
-`is_blank` arm (required = rate, max_force, candidate_diameters; the pre-filled `index_*` and optional `max_outer_dia` do not count):
+`is_blank` arm — every displayed input clears blank except the pre-filled `index_*` defaults, so `rate`, `max_force`, `initial_tension`, `max_outer_dia`, and `candidate_diameters` all count (the optional `initial_tension`/`max_outer_dia` included: typing either signals intent, matching how `loads` is treated in the forward modes):
 
 ```rust
-            ExtScenarioKind::MinWeight => {
-                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
-            }
+            ExtScenarioKind::MinWeight => all_empty(&[
+                &self.rate,
+                &self.max_force,
+                &self.initial_tension,
+                &self.max_outer_dia,
+                &self.candidate_diameters,
+            ]),
 ```
 
 - [ ] **Step 5: MinWeight inputs view, results section, ids, app wiring**
