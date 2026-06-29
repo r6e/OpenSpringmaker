@@ -77,8 +77,11 @@ fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
     if v_si.is_finite() {
         Ok(v_si)
     } else {
+        // The display value already passed num's finiteness check, so the only way to
+        // reach here is the unit conversion overflowing to ±Inf — report that, not a
+        // misleading "not a finite number" (the user's input was finite).
         Err(SpringError::InconsistentInputs(format!(
-            "{field} must be a finite number: '{value}'"
+            "{field} is too large: '{value}' overflows after unit conversion"
         )))
     }
 }
@@ -188,9 +191,14 @@ mod tests {
     #[test]
     fn length_mm_us_overflow_to_inf_is_rejected() {
         let result = length_mm("test field", "1e308", UnitSystem::Us);
+        let Err(SpringError::InconsistentInputs(msg)) = result else {
+            panic!("US length overflow to +Inf must be rejected; got {result:?}");
+        };
+        // The input "1e308" is itself finite — the error must name the conversion
+        // overflow, not claim the user typed a non-finite number.
         assert!(
-            matches!(result, Err(SpringError::InconsistentInputs(_))),
-            "US length overflow to +Inf must be rejected; got {result:?}"
+            msg.contains("overflow") && msg.contains("test field"),
+            "overflow error should name the field and the overflow; got: {msg}"
         );
     }
 
