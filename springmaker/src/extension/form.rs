@@ -1,7 +1,7 @@
 //! Pure extension form-to-design logic. No iced dependency.
 use crate::form_helpers::{
     fmt_force, fmt_len, fmt_loads, fmt_rate, length_mm, loads_n, non_negative_force_n,
-    positive_num, rate_npm,
+    positive_force_n, positive_num, rate_npm,
 };
 use springcore::extension::{
     solve_min_weight, Dimensional, ExtBindingConstraint, ExtMinWeightRequest, ExtensionDesign,
@@ -397,11 +397,7 @@ pub fn parse_and_solve(
                     &form.rate,
                     us,
                 )?),
-                max_force: Force::from_newtons(non_negative_force_n(
-                    "max force",
-                    &form.max_force,
-                    us,
-                )?),
+                max_force: Force::from_newtons(positive_force_n("max force", &form.max_force, us)?),
                 initial_tension: Force::from_newtons(non_negative_force_n(
                     "initial tension",
                     &form.initial_tension,
@@ -497,7 +493,7 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             };
             Ok(ExtScenarioSpec::MinWeight {
                 required_rate_n_per_m: rate_npm("required rate", &form.rate, us)?,
-                max_force_n: non_negative_force_n("max force", &form.max_force, us)?,
+                max_force_n: positive_force_n("max force", &form.max_force, us)?,
                 initial_tension_n: non_negative_force_n(
                     "initial tension",
                     &form.initial_tension,
@@ -1156,6 +1152,56 @@ mod tests {
         assert!(
             f.is_blank(),
             "pre-filled index defaults do not count as input"
+        );
+    }
+
+    /// MinWeight `max_force` must be strictly positive: it is the design force the
+    /// optimiser sizes against, so `0` is meaningless. The form boundary must reject
+    /// it directly — matching compression's MinWeight form and the solver's own
+    /// validation — rather than deferring to the engine with a misleading
+    /// "zero or greater" message. `build_spec` does not call the solver, so this
+    /// test pins the form-helper boundary, not the engine fallback.
+    #[test]
+    fn minweight_zero_max_force_rejected_at_form_boundary() {
+        let us = UnitSystem::Metric;
+        let form = ExtFormState {
+            max_force: "0".into(),
+            ..minweight_metric_form()
+        };
+        let msg = build_spec(&form, us)
+            .expect_err("zero max force must be rejected at the form boundary")
+            .to_string();
+        assert!(
+            msg.contains("max force") && msg.contains("greater than zero"),
+            "expected field-named strictly-positive error, got: {msg}"
+        );
+    }
+
+    /// Companion to the `build_spec` boundary test, pinning the OTHER call site:
+    /// `parse_and_solve` must also reject `max_force = 0` at the form helper, BEFORE
+    /// the solver. The engine independently rejects 0 with a different message
+    /// ("positive finite number"), so asserting the form-layer "greater than zero"
+    /// message proves the rejection came from `positive_force_n` here — catching a
+    /// revert of this site that the engine's own guard would otherwise mask.
+    #[test]
+    fn minweight_zero_max_force_rejected_in_parse_and_solve() {
+        let materials = default_materials();
+        let form = ExtFormState {
+            max_force: "0".into(),
+            ..minweight_metric_form()
+        };
+        let msg = parse_and_solve(
+            &form,
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect_err("zero max force must be rejected before the solver")
+        .to_string();
+        assert!(
+            msg.contains("max force") && msg.contains("greater than zero"),
+            "expected the form-helper error, not the engine fallback, got: {msg}"
         );
     }
 
