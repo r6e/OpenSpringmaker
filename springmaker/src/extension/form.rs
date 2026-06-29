@@ -192,9 +192,18 @@ impl ExtFormState {
                 &self.force2,
                 &self.length2,
             ]),
-            ExtScenarioKind::MinWeight => {
-                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
-            }
+            // Every displayed MinWeight input EXCEPT the pre-filled index bounds
+            // (`index_min`/`index_max` default to "4"/"12", so they do not signal
+            // that the user has begun). `initial_tension` and `max_outer_dia` count
+            // even though each is optional/valid-empty — typing either signals intent,
+            // matching how `loads` is treated above.
+            ExtScenarioKind::MinWeight => all_empty(&[
+                &self.rate,
+                &self.max_force,
+                &self.initial_tension,
+                &self.max_outer_dia,
+                &self.candidate_diameters,
+            ]),
         };
         core_blank && hooks_blank
     }
@@ -1152,6 +1161,34 @@ mod tests {
         assert!(
             f.is_blank(),
             "pre-filled index defaults do not count as input"
+        );
+    }
+
+    /// MinWeight renders `initial_tension` and `max_outer_dia` as inputs with no
+    /// pre-filled default, so typing either must clear blank and surface parse
+    /// feedback — the other scenarios include every displayed input in their blank
+    /// check, and these two were the only displayed MinWeight inputs omitted
+    /// (`index_min`/`index_max` stay out because they ARE pre-filled defaults).
+    #[test]
+    fn minweight_blank_trips_on_initial_tension_or_max_outer_dia() {
+        let only_initial_tension = ExtFormState {
+            scenario: ExtScenarioKind::MinWeight,
+            initial_tension: "5".into(),
+            ..ExtFormState::default()
+        };
+        assert!(
+            !only_initial_tension.is_blank(),
+            "entering initial tension clears blank (it is a MinWeight input)"
+        );
+
+        let only_max_outer_dia = ExtFormState {
+            scenario: ExtScenarioKind::MinWeight,
+            max_outer_dia: "20".into(),
+            ..ExtFormState::default()
+        };
+        assert!(
+            !only_max_outer_dia.is_blank(),
+            "entering a max outer diameter clears blank (it is a MinWeight input)"
         );
     }
 
