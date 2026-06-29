@@ -121,6 +121,7 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
     match field {
         Field::WireDia => &form.wire_dia,
         Field::MeanDia => &form.mean_dia,
+        Field::OuterDia => &form.outer_dia,
         Field::Active => &form.active,
         Field::FreeLength => &form.free_length,
         Field::InitialTension => &form.initial_tension,
@@ -144,6 +145,7 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
     match field {
         Field::WireDia => "ext-wire-dia",
         Field::MeanDia => "ext-mean-dia",
+        Field::OuterDia => "ext-outer-dia",
         Field::Active => "ext-active",
         Field::FreeLength => "ext-free-length",
         Field::InitialTension => "ext-initial-tension",

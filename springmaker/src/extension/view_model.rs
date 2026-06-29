@@ -202,6 +202,14 @@ pub fn ext_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             initial_tension,
             loads,
         ],
+        ExtScenarioKind::Dimensional => vec![
+            wire,
+            FieldDescriptor::new(format!("Outer diameter ({len})"), Field::OuterDia),
+            FieldDescriptor::new("Active coils".to_string(), Field::Active),
+            free_length,
+            initial_tension,
+            loads,
+        ],
     }
 }
 

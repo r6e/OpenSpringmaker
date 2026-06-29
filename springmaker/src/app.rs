@@ -628,6 +628,7 @@ impl App {
         match field {
             EF::WireDia => f.wire_dia = value,
             EF::MeanDia => f.mean_dia = value,
+            EF::OuterDia => f.outer_dia = value,
             EF::Active => f.active = value,
             EF::FreeLength => f.free_length = value,
             EF::InitialTension => f.initial_tension = value,

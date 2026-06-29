@@ -3,7 +3,9 @@ use crate::form_helpers::{
     fmt_force, fmt_len, fmt_loads, fmt_rate, length_mm, loads_n, non_negative_force_n,
     positive_num, rate_npm,
 };
-use springcore::extension::{ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario};
+use springcore::extension::{
+    Dimensional, ExtensionDesign, HookEnds, PowerUser, RateBased, Scenario,
+};
 use springcore::units::{Force, Length};
 use springcore::{
     CurvatureCorrection, ExtScenarioSpec, HookSpecSpec, Material, MaterialStore, Result, UnitSystem,
@@ -17,17 +19,22 @@ pub enum ExtScenarioKind {
     #[default]
     PowerUser,
     RateBased,
+    Dimensional,
 }
 
 /// All `ExtScenarioKind` variants in display order.
-pub const ALL_EXT_SCENARIOS: &[ExtScenarioKind] =
-    &[ExtScenarioKind::PowerUser, ExtScenarioKind::RateBased];
+pub const ALL_EXT_SCENARIOS: &[ExtScenarioKind] = &[
+    ExtScenarioKind::PowerUser,
+    ExtScenarioKind::RateBased,
+    ExtScenarioKind::Dimensional,
+];
 
 impl std::fmt::Display for ExtScenarioKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExtScenarioKind::PowerUser => write!(f, "Power User"),
             ExtScenarioKind::RateBased => write!(f, "Rate Based"),
+            ExtScenarioKind::Dimensional => write!(f, "Dimensional"),
         }
     }
 }
@@ -37,6 +44,7 @@ impl std::fmt::Display for ExtScenarioKind {
 pub enum Field {
     WireDia,
     MeanDia,
+    OuterDia,
     Active,
     FreeLength,
     InitialTension,
@@ -70,6 +78,7 @@ pub struct ExtFormState {
     pub scenario: ExtScenarioKind,
     pub wire_dia: String,
     pub mean_dia: String,
+    pub outer_dia: String,
     pub active: String,
     pub free_length: String,
     pub initial_tension: String,
@@ -86,6 +95,7 @@ impl Default for ExtFormState {
             scenario: ExtScenarioKind::default(),
             wire_dia: String::new(),
             mean_dia: String::new(),
+            outer_dia: String::new(),
             active: String::new(),
             free_length: String::new(),
             initial_tension: String::new(),
@@ -127,6 +137,14 @@ impl ExtFormState {
                 &self.wire_dia,
                 &self.mean_dia,
                 &self.rate,
+                &self.free_length,
+                &self.initial_tension,
+                &self.loads,
+            ]),
+            ExtScenarioKind::Dimensional => all_empty(&[
+                &self.wire_dia,
+                &self.outer_dia,
+                &self.active,
                 &self.free_length,
                 &self.initial_tension,
                 &self.loads,
@@ -221,6 +239,34 @@ pub fn parse_and_solve(
                 design: scenario.solve(material, correction)?,
             })
         }
+        ExtScenarioKind::Dimensional => {
+            let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
+            let outer_dia_mm = length_mm("outer diameter", &form.outer_dia, us)?;
+            let hooks = resolve_hooks(form, outer_dia_mm - wire_dia_mm, us)?;
+            let scenario = Dimensional {
+                wire_dia: Length::from_millimeters(wire_dia_mm),
+                outer_dia: Length::from_millimeters(outer_dia_mm),
+                active: positive_num("active coils", &form.active)?,
+                free_length: Length::from_millimeters(length_mm(
+                    "free length",
+                    &form.free_length,
+                    us,
+                )?),
+                initial_tension: Force::from_newtons(non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?),
+                hooks,
+                loads: loads_n(&form.loads, us)?
+                    .into_iter()
+                    .map(Force::from_newtons)
+                    .collect(),
+            };
+            Ok(ExtFormOutcome {
+                design: scenario.solve(material, correction)?,
+            })
+        }
     }
 }
 
@@ -261,6 +307,15 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
             mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
             rate_n_per_m: rate_npm("spring rate", &form.rate, us)?,
+            free_length_mm: length_mm("free length", &form.free_length, us)?,
+            initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
+            hooks: build_hooks_spec(form, us)?,
+            loads_n: loads_n(&form.loads, us)?,
+        }),
+        ExtScenarioKind::Dimensional => Ok(ExtScenarioSpec::Dimensional {
+            wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+            outer_dia_mm: length_mm("outer diameter", &form.outer_dia, us)?,
+            active: positive_num("active coils", &form.active)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
             hooks: build_hooks_spec(form, us)?,
@@ -320,6 +375,24 @@ pub fn populate_from_spec(form: &mut ExtFormState, spec: &ExtScenarioSpec, us: U
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.mean_dia = fmt_len(*mean_dia_mm, us);
             form.rate = fmt_rate(*rate_n_per_m, us);
+            form.free_length = fmt_len(*free_length_mm, us);
+            form.initial_tension = fmt_force(*initial_tension_n, us);
+            form.loads = fmt_loads(loads_n, us);
+            apply_hooks_spec(form, hooks, us);
+        }
+        ExtScenarioSpec::Dimensional {
+            wire_dia_mm,
+            outer_dia_mm,
+            active,
+            free_length_mm,
+            initial_tension_n,
+            hooks,
+            loads_n,
+        } => {
+            form.scenario = ExtScenarioKind::Dimensional;
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.outer_dia = fmt_len(*outer_dia_mm, us);
+            form.active = format!("{active}");
             form.free_length = fmt_len(*free_length_mm, us);
             form.initial_tension = fmt_force(*initial_tension_n, us);
             form.loads = fmt_loads(loads_n, us);
@@ -653,6 +726,59 @@ mod tests {
         assert!(f.is_blank(), "untouched RateBased form is blank");
         f.rate = "2".into();
         assert!(!f.is_blank(), "entering the rate clears blank");
+    }
+
+    #[test]
+    fn dimensional_solves_with_outer_dia() {
+        let materials = default_materials();
+        let form = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(), // mean = 20
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "10, 30".into(),
+            ..ExtFormState::default()
+        };
+        let out = parse_and_solve(
+            &form,
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect("Dimensional should solve");
+        // mean = OD - d = 20 mm → same geometry as the D=20 PowerUser case.
+        assert_relative_eq!(out.design.outer_dia.millimeters(), 22.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn dimensional_round_trip_and_blank() {
+        let us = UnitSystem::Metric;
+        let form = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "10".into(),
+            ..ExtFormState::default()
+        };
+        let spec = build_spec(&form, us).unwrap();
+        let mut form2 = ExtFormState::default();
+        populate_from_spec(&mut form2, &spec, us);
+        assert_eq!(form2.scenario, ExtScenarioKind::Dimensional);
+        assert_eq!(build_spec(&form2, us).unwrap(), spec);
+
+        let mut blank = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            ..ExtFormState::default()
+        };
+        assert!(blank.is_blank());
+        blank.outer_dia = "22".into();
+        assert!(!blank.is_blank(), "Dimensional blank check uses outer_dia");
     }
 
     /// `build_spec` → extract `ExtScenarioSpec` → `populate_from_spec` → `build_spec` again
