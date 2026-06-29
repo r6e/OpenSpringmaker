@@ -137,17 +137,19 @@ impl Default for FormState {
 }
 
 impl FormState {
-    /// Whether the user has entered none of the active scenario's required inputs.
+    /// Whether the user has entered none of the active scenario's primary input
+    /// fields.
     ///
     /// Drives the "untouched form" suppression in `App::recompute`: an entirely
     /// empty form (e.g. just after a family/scenario switch) stays in the initial
-    /// Empty state instead of surfacing a parse error, but once ANY required field
-    /// for the active scenario is filled the form is no longer blank and parse
-    /// feedback shows. Each scenario lists the fields it actually reads — Dimensional
-    /// uses `outer_dia` (not `mean_dia`), MinWeight optimises over
-    /// `candidate_diameters` — so a partially-filled form is never mistaken for blank.
-    /// Pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) are not user
-    /// input and are excluded.
+    /// Empty state instead of surfacing a parse error, but once ANY of those fields
+    /// is filled the form is no longer blank and parse feedback shows. Each scenario
+    /// lists the input fields it actually reads — Dimensional uses `outer_dia` (not
+    /// `mean_dia`), MinWeight optimises over `candidate_diameters` — so a
+    /// partially-filled form is never mistaken for blank. `loads` is included even
+    /// though an empty loads list is itself valid (entering it still signals intent);
+    /// pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) and the
+    /// optional `max_outer_dia` are not user-entered design intent and are excluded.
     pub fn is_blank(&self) -> bool {
         let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
         match self.scenario {

@@ -70,12 +70,14 @@ impl Default for ExtFormState {
 }
 
 impl ExtFormState {
-    /// Whether the user has entered none of the PowerUser scenario's required
-    /// inputs. Drives the "untouched form" suppression in `App::recompute`: the
-    /// results panel stays in its initial Empty state until ANY required field is
-    /// filled, after which parse feedback shows. In Default hook mode the radii are
-    /// auto-resolved from the mean diameter and are not input; in Custom mode they
-    /// are required, so they count toward blankness only then. Mirrors
+    /// Whether the user has entered none of the PowerUser scenario's primary input
+    /// fields. Drives the "untouched form" suppression in `App::recompute`: the
+    /// results panel stays in its initial Empty state until ANY of those fields is
+    /// filled, after which parse feedback shows. The list is the fields whose presence
+    /// means the user has begun a design — `loads` is included even though an empty
+    /// loads list is itself valid (typing into it still signals intent). In Default
+    /// hook mode the radii are auto-resolved from the mean diameter and are not input;
+    /// in Custom mode they are user input and count toward blankness. Mirrors
     /// `compression::form::FormState::is_blank`.
     pub fn is_blank(&self) -> bool {
         let core_blank = [

@@ -174,7 +174,7 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(2)),
-            text("%\u{03c4}")
+            text("%\u{03c4}_body")
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(1)),
@@ -182,7 +182,7 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(1)),
-            text("%\u{03c4}_end")
+            text("%\u{03c4}_hook")
                 .size(SZ_CAPTION)
                 .color(C::MUTED)
                 .width(Length::FillPortion(1)),
