@@ -10,7 +10,7 @@
 
 use crate::app::{App, Message, Screen};
 use crate::compression::form::Field;
-use crate::extension::form::{build_spec, Field as ExtField, HookMode};
+use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use iced_test::core::Settings;
 use iced_test::Simulator;
@@ -239,6 +239,10 @@ fn save_entry_commits_a_clone_and_closes_the_editor() {
 /// it, then apply every resulting message. Mirrors `type_into`, resolving the
 /// widget id through the view's `ext_field_id` so the test and the view share a
 /// single source of truth for the id strings.
+///
+/// Note: `typewrite` APPENDS to the focused input's existing content — it does
+/// not clear or replace it. Re-typing into a field already populated by a prior
+/// call concatenates (e.g. two `"2"` calls yield `"22"`).
 fn type_into_ext(app: &mut App, field: ExtField, text: &str) {
     let id = iced_test::core::widget::Id::from(crate::extension::view::ext_field_id(field));
     let mut sim = ui(app);
@@ -529,4 +533,40 @@ fn ext_save_load_round_trip_custom_hooks() {
     );
 
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn ext_scenario_switch_solves_each_mode() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+
+    // RateBased: rate + free length + loads → solves to a standard design.
+    app.update(Message::ExtScenario(ExtScenarioKind::RateBased));
+    type_into_ext(&mut app, ExtField::WireDia, "2");
+    type_into_ext(&mut app, ExtField::MeanDia, "20");
+    type_into_ext(&mut app, ExtField::Rate, "2");
+    type_into_ext(&mut app, ExtField::FreeLength, "100");
+    type_into_ext(&mut app, ExtField::InitialTension, "5");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+    assert!(
+        matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
+        "RateBased should render results"
+    );
+
+    // MinWeight: rate ("2") and initial_tension ("5") carry over from the RateBased
+    // phase above. `type_into_ext`/typewrite APPENDS to existing field content, so
+    // re-typing them here would produce "22"/"55" and break the solve — only supply
+    // the MinWeight-specific fields (max_force, candidate_diameters) that were blank.
+    app.update(Message::ExtScenario(ExtScenarioKind::MinWeight));
+    type_into_ext(&mut app, ExtField::MaxForce, "50");
+    type_into_ext(&mut app, ExtField::CandidateDiameters, "1.5, 2.0, 2.5");
+    match ext_results_view(&app) {
+        ExtResultsView::Populated(p) => {
+            assert!(
+                p.min_weight.is_some(),
+                "MinWeight shows the optimisation section"
+            );
+        }
+        other => panic!("expected Populated MinWeight results, got {other:?}"),
+    }
 }

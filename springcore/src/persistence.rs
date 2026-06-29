@@ -67,6 +67,9 @@ pub enum ScenarioSpec {
         max_force_n: f64,
         index_min: f64,
         index_max: f64,
+        // The only optional field: serde maps a missing key to `None` for `Option` types
+        // (no `#[serde(default)]` needed), so unlike every other (required) payload field a
+        // missing or misspelled `max_outer_dia_mm` deserializes to `None` rather than erroring.
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
         clash_allowance: f64,
@@ -74,12 +77,16 @@ pub enum ScenarioSpec {
 }
 
 // `#[serde(deny_unknown_fields)]` is intentionally NOT applied to the
-// family/type/mode-tagged enums below: serde rejects that attribute on
+// family/type/mode-tagged enums here: serde rejects that attribute on
 // internally-tagged enums. Forward-compat safety is structural instead — every
 // payload field is required (none carry `#[serde(default)]`), so a misspelled
 // key surfaces as a "missing field" error on the correctly-spelled field rather
-// than silently defaulting. (A genuinely unknown extra key is ignored, which is
-// the desired additive-forward-compatibility behavior.)
+// than silently defaulting. The one exception is `Option` fields
+// (`max_outer_dia_mm`): serde implicitly maps a missing key to `None` without
+// `#[serde(default)]`, so a missing or misspelled `max_outer_dia_mm` deserializes
+// to `None` rather than erroring — see the field-level note at each site. (A
+// genuinely unknown extra key is ignored, which is the desired
+// additive-forward-compatibility behavior.)
 /// A design's family-tagged scenario inputs. `family` is the discriminant tag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "family")]
@@ -100,6 +107,47 @@ pub enum ExtScenarioSpec {
         initial_tension_n: f64,
         hooks: HookSpecSpec,
         loads_n: Vec<f64>,
+    },
+    RateBased {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        rate_n_per_m: f64,
+        free_length_mm: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        loads_n: Vec<f64>,
+    },
+    Dimensional {
+        wire_dia_mm: f64,
+        outer_dia_mm: f64,
+        active: f64,
+        free_length_mm: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        loads_n: Vec<f64>,
+    },
+    TwoLoad {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        free_length_mm: f64,
+        hooks: HookSpecSpec,
+        force1_n: f64,
+        length1_mm: f64,
+        force2_n: f64,
+        length2_mm: f64,
+    },
+    MinWeight {
+        required_rate_n_per_m: f64,
+        max_force_n: f64,
+        initial_tension_n: f64,
+        hooks: HookSpecSpec,
+        index_min: f64,
+        index_max: f64,
+        // The only optional field: serde maps a missing key to `None` for `Option` types
+        // (no `#[serde(default)]` needed), so unlike every other (required) payload field a
+        // missing or misspelled `max_outer_dia_mm` deserializes to `None` rather than erroring.
+        max_outer_dia_mm: Option<f64>,
+        candidate_diameters_mm: Vec<f64>,
     },
 }
 
@@ -837,6 +885,183 @@ mod tests {
             .join("design.toml");
         assert!(matches!(
             ext_power_user_saved().save(&path),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn ext_dimensional_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::Dimensional {
+                wire_dia_mm: 2.0,
+                outer_dia_mm: 22.0,
+                active: 10.0,
+                free_length_mm: 100.0,
+                initial_tension_n: 5.0,
+                hooks: HookSpecSpec::Custom {
+                    r1_mm: 8.0,
+                    r2_mm: 4.0,
+                },
+                loads_n: vec![10.0, 30.0],
+            }),
+        };
+        let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+        assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn ext_twoload_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::TwoLoad {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                free_length_mm: 100.0,
+                hooks: HookSpecSpec::Default,
+                force1_n: 10.0,
+                length1_mm: 110.0,
+                force2_n: 30.0,
+                length2_mm: 130.0,
+            }),
+        };
+        let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+        assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn ext_minweight_round_trips_both_max_outer_dia_states() {
+        for max_od in [None, Some(30.0)] {
+            let saved = SavedDesign {
+                material: "Music Wire".into(),
+                unit_system: UnitSystem::Metric,
+                design: DesignSpec::Extension(ExtScenarioSpec::MinWeight {
+                    required_rate_n_per_m: 2000.0,
+                    max_force_n: 50.0,
+                    initial_tension_n: 5.0,
+                    hooks: HookSpecSpec::Default,
+                    index_min: 4.0,
+                    index_max: 12.0,
+                    max_outer_dia_mm: max_od,
+                    candidate_diameters_mm: vec![1.5, 2.0, 2.5],
+                }),
+            };
+            let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+            assert_eq!(saved, back);
+        }
+    }
+
+    #[test]
+    fn ext_ratebased_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Extension(ExtScenarioSpec::RateBased {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                rate_n_per_m: 2000.0,
+                free_length_mm: 100.0,
+                initial_tension_n: 5.0,
+                hooks: HookSpecSpec::Default,
+                loads_n: vec![10.0, 30.0],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(saved, back);
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_ratebased_rate() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "RateBased"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+rate_n_per_m = inf
+free_length_mm = 100.0
+initial_tension_n = 5.0
+loads_n = [10.0, 30.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_dimensional_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "Dimensional"
+wire_dia_mm = 2.0
+outer_dia_mm = inf
+active = 10.0
+free_length_mm = 100.0
+initial_tension_n = 5.0
+loads_n = [10.0, 30.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_twoload_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "TwoLoad"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+free_length_mm = 100.0
+force1_n = nan
+length1_mm = 110.0
+force2_n = 30.0
+length2_mm = 130.0
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_minweight_float() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+[design]
+family = "Extension"
+type = "MinWeight"
+required_rate_n_per_m = 2000.0
+max_force_n = -inf
+initial_tension_n = 5.0
+index_min = 4.0
+index_max = 12.0
+candidate_diameters_mm = [1.5, 2.0]
+[design.hooks]
+mode = "Default"
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
             Err(SpringError::DataFile(_))
         ));
     }

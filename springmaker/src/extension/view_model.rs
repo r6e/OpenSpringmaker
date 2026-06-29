@@ -3,13 +3,13 @@
 //! No iced dependency — every decision (which results mode, unit conversions,
 //! status severity mapping) is unit-testable without a renderer.
 use crate::app::App;
-use crate::extension::form::Field;
+use crate::extension::form::{ExtScenarioKind, Field};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
     unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor,
     GoverningRate, ResultRow, StatusLine,
 };
-use springcore::extension::ExtensionDesign;
+use springcore::extension::{ExtBindingConstraint, ExtensionDesign};
 
 // ── Extension load-point table ───────────────────────────────────────────────
 
@@ -102,6 +102,29 @@ pub struct ExtPopulatedResults {
     pub governing_rate: GoverningRate,
     pub geometry: Vec<ResultRow>,
     pub load_table: ExtLoadTable,
+    /// Min-weight optimisation rows when the active outcome is a MinWeight solve. A plain Option
+    /// (vs compression's MinWeightView enum) suffices because extension has no fatigue section
+    /// for the enum to also gate.
+    pub min_weight: Option<Vec<ResultRow>>,
+}
+
+/// Min-weight optimisation result rows, or `None` when the active outcome is not
+/// a Min-Weight solve.
+fn ext_min_weight_rows(out: &crate::extension::form::ExtFormOutcome) -> Option<Vec<ResultRow>> {
+    let mw = out.min_weight.as_ref()?;
+    let binding = match mw.binding {
+        ExtBindingConstraint::BodyShear => "body shear",
+        ExtBindingConstraint::HookBending => "hook bending",
+        ExtBindingConstraint::HookTorsion => "hook torsion",
+        ExtBindingConstraint::Index => "index",
+        ExtBindingConstraint::OuterDiameter => "outer diameter",
+        // `ExtBindingConstraint` is `#[non_exhaustive]`; a future variant falls here.
+        _ => "other",
+    };
+    Some(vec![
+        ResultRow::new("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
+        ResultRow::new("Binding constraint", binding, ""),
+    ])
 }
 
 /// Build the extension results panel view model from app state.
@@ -117,6 +140,7 @@ pub fn ext_results_view(app: &App) -> ExtResultsView {
                 governing_rate: GoverningRate::from_rate(out.design.rate, us),
                 geometry: geometry_rows(&out.design, us),
                 load_table: ext_load_table(&out.design, us),
+                min_weight: ext_min_weight_rows(out),
             }))
         }
         None => match &app.error {
@@ -171,21 +195,73 @@ pub fn ext_status_view(app: &App) -> Vec<StatusLine> {
 
 // ── Inputs panel ─────────────────────────────────────────────────────────────
 
-/// The PowerUser input fields with unit-aware labels.
+/// The scenario-aware input fields with unit-aware labels.
 ///
 /// Hook fields are rendered separately in the view via the mode toggle.
 pub fn ext_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
     let force = unit_force_label(us);
-    vec![
-        FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-        FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-        FieldDescriptor::new("Active coils".to_string(), Field::Active),
-        FieldDescriptor::new(format!("Free length ({len})"), Field::FreeLength),
-        FieldDescriptor::new(format!("Initial tension ({force})"), Field::InitialTension),
-        FieldDescriptor::new(format!("Loads ({force}), comma-separated"), Field::Loads),
-    ]
+    let rate = unit_rate_label(us);
+    if app.extension.scenario == ExtScenarioKind::MinWeight {
+        return vec![
+            FieldDescriptor::new(format!("Required rate ({rate})"), Field::Rate),
+            FieldDescriptor::new(format!("Max force ({force})"), Field::MaxForce),
+            FieldDescriptor::new(format!("Initial tension ({force})"), Field::InitialTension),
+            FieldDescriptor::new("Index min".to_string(), Field::IndexMin),
+            FieldDescriptor::new("Index max".to_string(), Field::IndexMax),
+            FieldDescriptor::new(
+                format!("Max outer diameter ({len}, optional)"),
+                Field::MaxOuterDia,
+            ),
+            FieldDescriptor::new(
+                format!("Candidate wire diameters ({len}), comma-separated"),
+                Field::CandidateDiameters,
+            ),
+        ];
+    }
+    let wire = FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia);
+    let mean = FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia);
+    let free_length = FieldDescriptor::new(format!("Free length ({len})"), Field::FreeLength);
+    let initial_tension =
+        FieldDescriptor::new(format!("Initial tension ({force})"), Field::InitialTension);
+    let loads = FieldDescriptor::new(format!("Loads ({force}), comma-separated"), Field::Loads);
+    match app.extension.scenario {
+        ExtScenarioKind::PowerUser => vec![
+            wire,
+            mean,
+            FieldDescriptor::new("Active coils".to_string(), Field::Active),
+            free_length,
+            initial_tension,
+            loads,
+        ],
+        ExtScenarioKind::RateBased => vec![
+            wire,
+            mean,
+            FieldDescriptor::new(format!("Spring rate ({rate})"), Field::Rate),
+            free_length,
+            initial_tension,
+            loads,
+        ],
+        ExtScenarioKind::Dimensional => vec![
+            wire,
+            FieldDescriptor::new(format!("Outer diameter ({len})"), Field::OuterDia),
+            FieldDescriptor::new("Active coils".to_string(), Field::Active),
+            free_length,
+            initial_tension,
+            loads,
+        ],
+        ExtScenarioKind::TwoLoad => vec![
+            wire,
+            mean,
+            free_length,
+            FieldDescriptor::new(format!("Force 1 ({force})"), Field::Force1),
+            FieldDescriptor::new(format!("Length 1 ({len})"), Field::Length1),
+            FieldDescriptor::new(format!("Force 2 ({force})"), Field::Force2),
+            FieldDescriptor::new(format!("Length 2 ({len})"), Field::Length2),
+        ],
+        ExtScenarioKind::MinWeight => unreachable!("MinWeight handled by the early return above"),
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +373,40 @@ mod tests {
     }
 
     // ── inputs view ──
+
+    #[test]
+    fn inputs_view_twoload_has_no_initial_tension() {
+        let mut app = fresh_app();
+        app.extension.scenario = crate::extension::form::ExtScenarioKind::TwoLoad;
+        let kinds: Vec<Field> = ext_inputs_view(&app).iter().map(|fd| fd.field).collect();
+        assert!(
+            kinds.contains(&Field::Force1)
+                && kinds.contains(&Field::Length1)
+                && kinds.contains(&Field::Force2)
+                && kinds.contains(&Field::Length2),
+            "TwoLoad inputs view must contain all four load-point fields"
+        );
+        assert!(
+            !kinds.contains(&Field::InitialTension),
+            "TwoLoad derives initial tension; it is not an input"
+        );
+    }
+
+    #[test]
+    fn inputs_view_ratebased_shows_rate_not_active() {
+        let mut app = fresh_app();
+        app.extension.scenario = crate::extension::form::ExtScenarioKind::RateBased;
+        let fields = ext_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert!(
+            kinds.contains(&Field::Rate),
+            "RateBased shows the rate field"
+        );
+        assert!(
+            !kinds.contains(&Field::Active),
+            "RateBased has no active-coils field"
+        );
+    }
 
     #[test]
     fn inputs_view_has_six_fields_metric() {
@@ -424,6 +534,40 @@ mod tests {
             ext_results_view(&app),
             ExtResultsView::Populated(_)
         ));
+    }
+
+    // ── MinWeight results view ──
+
+    #[test]
+    fn minweight_results_include_optimisation_section() {
+        let materials = store();
+        let mut app = fresh_app();
+        let out = parse_and_solve(
+            &ExtFormState {
+                scenario: crate::extension::form::ExtScenarioKind::MinWeight,
+                rate: "2".into(),
+                max_force: "50".into(),
+                initial_tension: "5".into(),
+                candidate_diameters: "1.5, 2.0, 2.5".into(),
+                ..ExtFormState::default()
+            },
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .unwrap();
+        app.family = Family::Extension;
+        app.ext_outcome = Some(out);
+        let p = match ext_results_view(&app) {
+            ExtResultsView::Populated(p) => *p,
+            other => panic!("expected Populated, got {other:?}"),
+        };
+        let rows = p
+            .min_weight
+            .expect("MinWeight outcome shows the optimisation section");
+        assert!(rows.iter().any(|r| r.label == "Wire mass"));
+        assert!(rows.iter().any(|r| r.label == "Binding constraint"));
     }
 
     // ── Regression tests for review-panel findings ──

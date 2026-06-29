@@ -153,6 +153,7 @@ pub enum Message {
     // Calculator screen — extension
     ExtField(crate::extension::form::Field, String),
     ExtHookMode(crate::extension::form::HookMode),
+    ExtScenario(crate::extension::form::ExtScenarioKind),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -359,6 +360,10 @@ impl App {
             }
             Message::ExtHookMode(m) => {
                 self.extension.hook_mode = m;
+                true
+            }
+            Message::ExtScenario(s) => {
+                self.extension.scenario = s;
                 true
             }
             Message::Material(m) => {
@@ -623,12 +628,23 @@ impl App {
         match field {
             EF::WireDia => f.wire_dia = value,
             EF::MeanDia => f.mean_dia = value,
+            EF::OuterDia => f.outer_dia = value,
             EF::Active => f.active = value,
             EF::FreeLength => f.free_length = value,
             EF::InitialTension => f.initial_tension = value,
             EF::Loads => f.loads = value,
+            EF::Rate => f.rate = value,
             EF::HookR1 => f.hook_r1 = value,
             EF::HookR2 => f.hook_r2 = value,
+            EF::Force1 => f.force1 = value,
+            EF::Length1 => f.length1 = value,
+            EF::Force2 => f.force2 = value,
+            EF::Length2 => f.length2 = value,
+            EF::MaxForce => f.max_force = value,
+            EF::CandidateDiameters => f.candidate_diameters = value,
+            EF::IndexMin => f.index_min = value,
+            EF::IndexMax => f.index_max = value,
+            EF::MaxOuterDia => f.max_outer_dia = value,
         }
     }
 

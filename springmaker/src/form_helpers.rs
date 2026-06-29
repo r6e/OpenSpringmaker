@@ -69,15 +69,33 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
     Ok(v)
 }
 
+/// Return `v_si` if finite, else a field-named error. Centralizes the post-conversion
+/// finiteness guard shared by the unit-converting helpers: a finite display value can
+/// overflow to ±Inf after the US/metric scale factor, so each helper re-checks its
+/// converted SI result here.
+fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
+    if v_si.is_finite() {
+        Ok(v_si)
+    } else {
+        // The display value already passed num's finiteness check, so the only way to
+        // reach here is the unit conversion overflowing to ±Inf — report that, not a
+        // misleading "not a finite number" (the user's input was finite).
+        Err(SpringError::InconsistentInputs(format!(
+            "{field} is too large: '{value}' overflows after unit conversion"
+        )))
+    }
+}
+
 /// Parse a strictly-positive length, returning millimetres (SI internal):
 /// US inputs are converted from inches, metric inputs are already mm.
 pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // Lengths must be strictly positive — a zero-length dimension is unphysical.
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Length::from_inches(v).millimeters(),
         UnitSystem::Metric => v,
-    })
+    };
+    finite_or_err(field, value, v_si)
 }
 
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
@@ -88,30 +106,33 @@ pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> 
             "{field} must be zero or greater"
         )));
     }
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
-    })
+    };
+    finite_or_err(field, value, v_si)
 }
 
 /// Like `non_negative_force_n` but requires the value to be strictly positive
 /// (e.g. max force, which must be greater than zero).
 pub(crate) fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => Force::from_pounds_force(v).newtons(),
         UnitSystem::Metric => v,
-    })
+    };
+    finite_or_err(field, value, v_si)
 }
 
 pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // A spring rate must be strictly positive.
     // Metric input is in N/mm (display unit); convert to N/m for internal storage.
     let v = positive_num(field, value)?;
-    Ok(match us {
+    let v_si = match us {
         UnitSystem::Us => SpringRate::from_pounds_per_inch(v).newtons_per_meter(),
         UnitSystem::Metric => v * MM_PER_M,
-    })
+    };
+    finite_or_err(field, value, v_si)
 }
 
 pub(crate) fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
@@ -158,4 +179,55 @@ pub(crate) fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
         .map(|&n| fmt_force(n, us))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use springcore::SpringError;
+
+    /// A US-unit length of "1e308" (inches) overflows to +Inf after ×25.4 conversion.
+    /// The post-conversion `is_finite()` guard must catch this and return `Err`, not `Ok(+Inf)`.
+    #[test]
+    fn length_mm_us_overflow_to_inf_is_rejected() {
+        let result = length_mm("test field", "1e308", UnitSystem::Us);
+        let Err(SpringError::InconsistentInputs(msg)) = result else {
+            panic!("US length overflow to +Inf must be rejected; got {result:?}");
+        };
+        // The input "1e308" is itself finite — the error must name the conversion
+        // overflow, not claim the user typed a non-finite number.
+        assert!(
+            msg.contains("overflow") && msg.contains("test field"),
+            "overflow error should name the field and the overflow; got: {msg}"
+        );
+    }
+
+    /// Same guard applies to the metric `rate_npm` branch (×1000): a finite metric
+    /// rate that overflows after unit conversion must also be rejected.
+    #[test]
+    fn rate_npm_metric_overflow_to_inf_is_rejected() {
+        let result = rate_npm("spring rate", "1e306", UnitSystem::Metric);
+        let Err(SpringError::InconsistentInputs(msg)) = result else {
+            panic!("metric rate overflow to +Inf must be rejected; got {result:?}");
+        };
+        // The ×1000 N/mm→N/m conversion overflows a finite input; the message must name
+        // the conversion overflow, not claim the rate the user typed was non-finite.
+        assert!(
+            msg.contains("overflow") && msg.contains("spring rate"),
+            "overflow error should name the field and the overflow; got: {msg}"
+        );
+    }
+
+    /// Normal finite US and metric inputs must still pass through cleanly.
+    #[test]
+    fn length_mm_normal_inputs_are_accepted() {
+        assert!(length_mm("test", "1.0", UnitSystem::Us).is_ok());
+        assert!(length_mm("test", "1.0", UnitSystem::Metric).is_ok());
+    }
+
+    #[test]
+    fn rate_npm_normal_inputs_are_accepted() {
+        assert!(rate_npm("rate", "2.0", UnitSystem::Us).is_ok());
+        assert!(rate_npm("rate", "2.0", UnitSystem::Metric).is_ok());
+    }
 }
