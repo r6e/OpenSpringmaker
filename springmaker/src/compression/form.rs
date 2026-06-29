@@ -146,10 +146,11 @@ impl FormState {
     /// is filled the form is no longer blank and parse feedback shows. Each scenario
     /// lists the input fields it actually reads — Dimensional uses `outer_dia` (not
     /// `mean_dia`), MinWeight optimises over `candidate_diameters` — so a
-    /// partially-filled form is never mistaken for blank. `loads` is included even
-    /// though an empty loads list is itself valid (entering it still signals intent);
-    /// pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) and the
-    /// optional `max_outer_dia` are not user-entered design intent and are excluded.
+    /// partially-filled form is never mistaken for blank. The valid-empty inputs still
+    /// count when entered — `loads` in the forward modes, the optional `max_outer_dia` in
+    /// MinWeight — because typing either signals intent (matching the extension family).
+    /// Only the pre-filled defaults (`index_min`, `index_max`, `clash_allowance`) are
+    /// excluded, as they are not user-entered design intent.
     pub fn is_blank(&self) -> bool {
         let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
         match self.scenario {
@@ -182,9 +183,12 @@ impl FormState {
                 &self.free_length,
                 &self.loads,
             ]),
-            ScenarioKind::MinWeight => {
-                all_empty(&[&self.rate, &self.max_force, &self.candidate_diameters])
-            }
+            ScenarioKind::MinWeight => all_empty(&[
+                &self.rate,
+                &self.max_force,
+                &self.max_outer_dia,
+                &self.candidate_diameters,
+            ]),
         }
     }
 }
@@ -541,17 +545,17 @@ mod tests {
     }
 
     #[test]
-    fn is_blank_minweight_optional_max_outer_dia_does_not_count() {
+    fn is_blank_minweight_typing_max_outer_dia_clears_blank() {
         let mut f = FormState {
             scenario: ScenarioKind::MinWeight,
             ..FormState::default()
         };
-        // max_outer_dia is an optional cap, not a required input — filling only it
-        // must NOT clear blank (else an optional field would trigger a parse error).
+        // max_outer_dia is an optional cap, but — like `loads` — typing it signals intent,
+        // so it must clear blank. It was previously (wrongly) excluded.
         f.max_outer_dia = "30".into();
         assert!(
-            f.is_blank(),
-            "the optional max_outer_dia is not required input; the form stays blank"
+            !f.is_blank(),
+            "typing the optional max_outer_dia signals intent and clears blank"
         );
     }
 
