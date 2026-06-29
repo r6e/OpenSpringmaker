@@ -106,8 +106,15 @@ pub(crate) fn atomic_write(path: &Path, contents: &str) -> std::io::Result<()> {
         std::process::id(),
         std::thread::current().id()
     ));
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)
+    // Write to the temp file then rename it over the target. On any failure,
+    // remove the temp so repeated errors (a rename onto an existing directory, a
+    // write to a full disk) don't accumulate stray `.materials.*.tmp` files — the
+    // same cleanup settings.rs::save_to performs for its `.settings.*.tmp`.
+    if let Err(e) = std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, path)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 impl MaterialStore {
@@ -397,5 +404,38 @@ mod tests {
         assert!(warns.is_empty());
         assert!(store.user_materials().is_empty());
         assert!(store.get("Music Wire").is_ok());
+    }
+
+    #[test]
+    fn atomic_write_removes_temp_when_rename_fails() {
+        // atomic_write writes a temp file then renames it over the target. When
+        // the rename fails, the temp must be removed rather than orphaned —
+        // otherwise repeated failures accumulate stray `.materials.*.tmp` files
+        // (the same cleanup settings.rs::save_to performs for `.settings.*.tmp`).
+        // Force a rename failure by making the target an existing directory:
+        // renaming a file onto a directory fails on every platform.
+        let work = std::env::temp_dir().join(format!("osm_atomic_leak_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).unwrap();
+        let target = work.join("target_is_a_directory");
+        std::fs::create_dir(&target).unwrap();
+
+        let result = atomic_write(&target, "contents");
+
+        // Collect any orphaned temp before asserting, so a failed assertion still
+        // leaves a clean temp_dir behind.
+        let strays: Vec<String> = std::fs::read_dir(&work)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".materials.") && name.ends_with(".tmp"))
+            .collect();
+        let _ = std::fs::remove_dir_all(&work);
+
+        assert!(result.is_err(), "rename onto a directory must fail");
+        assert!(
+            strays.is_empty(),
+            "atomic_write orphaned temp file(s) after a failed rename: {strays:?}"
+        );
     }
 }

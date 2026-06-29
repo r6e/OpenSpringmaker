@@ -21,6 +21,12 @@ ignore = [
     # (metal → wgpu → iced); we have no direct use and no reachable replacement.
     # Accepted in docs/adr/0010-accept-transitive-paste-advisory.md.
     "RUSTSEC-2024-0436",
+    # `ttf-parser` — unmaintained, informational (no CVE; the advisory states "no
+    # safe upgrade is available"). A transitive font parser with no direct use and no
+    # reachable replacement, pulled on three GUI paths: text shaping (iced/cosmic-text),
+    # chart glyphs (plotters/ab_glyph), window decorations (winit/sctk-adwaita).
+    # Accepted in docs/adr/0011-accept-transitive-ttf-parser-advisory.md.
+    "RUSTSEC-2026-0192",
 ]
 
 # ── Licenses ─────────────────────────────────────────────────────────────────

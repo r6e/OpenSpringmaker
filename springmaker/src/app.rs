@@ -922,16 +922,29 @@ mod tests {
         app
     }
 
-    /// A path every OS rejects (embedded NUL), so save/load IO fails
-    /// deterministically without touching the real filesystem.
-    fn unwritable_path() -> std::path::PathBuf {
-        std::path::PathBuf::from("invalid\0path.toml")
+    /// A path every OS rejects (embedded NUL), so both `save_to` (write→rename)
+    /// and `load_from` (read) fail deterministically with the same `InvalidInput`
+    /// error on every platform — the NUL is rejected at the path→CString/wide-string
+    /// conversion before any syscall (as `unreadable_path_yields_warning` also relies
+    /// on). Rooted in `temp_dir()`, not a bare relative name, so the `.materials.*.tmp`
+    /// a failing `save_to` writes before its rename fails lands in the system temp
+    /// dir, never the repo tree (`atomic_write` cleans it up; rooting it here keeps
+    /// even a SIGKILL-orphaned temp out of the working tree).
+    ///
+    /// Why not an empty path like `unwritable_settings_path`? That helper is save-only
+    /// (it fails at `save_to`'s no-parent guard). Here an empty path reads as `NotFound`,
+    /// not `InvalidInput` — breaking the same-error guarantee, and silently hollowing out
+    /// the load test if `SavedDesign::load` ever treats `NotFound` as benign (as
+    /// `MaterialStore::from_overlay_file` does). The NUL also exercises `atomic_write`'s
+    /// rename-fail cleanup, which the empty-path guard would skip.
+    fn io_failing_path() -> std::path::PathBuf {
+        std::env::temp_dir().join("invalid\0path.toml")
     }
 
     #[test]
     fn save_failure_surfaces_action_error_and_preserves_outcome() {
         let mut app = solved_app();
-        app.save_to(&unwritable_path());
+        app.save_to(&io_failing_path());
         // The displayed design is untouched — a failed save must not wipe it.
         assert!(
             app.outcome.is_some(),
@@ -949,7 +962,7 @@ mod tests {
     fn load_failure_surfaces_action_error_and_preserves_form() {
         let mut app = solved_app();
         let before_material = app.material.clone();
-        let mutated = app.load_from(&unwritable_path());
+        let mutated = app.load_from(&io_failing_path());
         assert!(!mutated, "a failed load reports no form mutation");
         assert!(app.action_error.is_some(), "load failure must be surfaced");
         assert!(

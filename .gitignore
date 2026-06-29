@@ -9,6 +9,13 @@ Cargo.lock.orig
 /mutants.out/
 /mutants.out.old/
 
+# Atomic-write temp files: the persistence layer writes `.materials.*.tmp` /
+# `.settings.*.tmp` then renames over the target. In-code cleanup removes them on
+# a failed write/rename, but a SIGKILL or power loss mid-write can still orphan
+# one, so ignore them repo-wide as defense-in-depth.
+.materials.*.tmp
+.settings.*.tmp
+
 # Claude Code local session/config state
 /.claude/
 
