@@ -234,6 +234,25 @@ fn resolve_hooks(form: &ExtFormState, mean_dia_mm: f64, us: UnitSystem) -> Resul
     }
 }
 
+/// Mean coil diameter for the Dimensional scenario (`outer − wire`), rejecting a
+/// non-positive result with a field-named error. Dimensional is the only scenario
+/// whose mean diameter is *derived* by subtraction rather than entered directly, so an
+/// outer diameter at or below the wire diameter yields `mean ≤ 0` — which feeds negative
+/// default hook radii (`HookEnds::default_for`) into the solve and would persist as an
+/// unbuildable spec. The engine independently rejects `mean ≤ wire` at solve time
+/// ("spring index must exceed 1"), but validating here surfaces the failure at the form
+/// boundary against the field the user actually typed, and stops `build_spec` writing a
+/// spec that can never be loaded.
+fn dimensional_mean_mm(wire_dia_mm: f64, outer_dia_mm: f64) -> Result<f64> {
+    let mean_dia_mm = outer_dia_mm - wire_dia_mm;
+    if mean_dia_mm <= 0.0 {
+        return Err(springcore::SpringError::InconsistentInputs(
+            "outer diameter must be greater than wire diameter".into(),
+        ));
+    }
+    Ok(mean_dia_mm)
+}
+
 /// Resolve the form's hook mode into the optimiser's `HookSpec` (scaling Default,
 /// or fixed radii). No mean diameter is needed — the optimiser varies D per candidate.
 fn resolve_hooks_spec(form: &ExtFormState, us: UnitSystem) -> Result<HookSpec> {
@@ -334,7 +353,8 @@ pub fn parse_and_solve(
         ExtScenarioKind::Dimensional => {
             let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
             let outer_dia_mm = length_mm("outer diameter", &form.outer_dia, us)?;
-            let hooks = resolve_hooks(form, outer_dia_mm - wire_dia_mm, us)?;
+            let mean_dia_mm = dimensional_mean_mm(wire_dia_mm, outer_dia_mm)?;
+            let hooks = resolve_hooks(form, mean_dia_mm, us)?;
             let scenario = Dimensional {
                 wire_dia: Length::from_millimeters(wire_dia_mm),
                 outer_dia: Length::from_millimeters(outer_dia_mm),
@@ -474,15 +494,24 @@ pub fn build_spec(form: &ExtFormState, us: UnitSystem) -> Result<ExtScenarioSpec
             hooks: build_hooks_spec(form, us)?,
             loads_n: loads_n(&form.loads, us)?,
         }),
-        ExtScenarioKind::Dimensional => Ok(ExtScenarioSpec::Dimensional {
-            wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
-            outer_dia_mm: length_mm("outer diameter", &form.outer_dia, us)?,
-            active: positive_num("active coils", &form.active)?,
-            free_length_mm: length_mm("free length", &form.free_length, us)?,
-            initial_tension_n: non_negative_force_n("initial tension", &form.initial_tension, us)?,
-            hooks: build_hooks_spec(form, us)?,
-            loads_n: loads_n(&form.loads, us)?,
-        }),
+        ExtScenarioKind::Dimensional => {
+            let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
+            let outer_dia_mm = length_mm("outer diameter", &form.outer_dia, us)?;
+            dimensional_mean_mm(wire_dia_mm, outer_dia_mm)?; // reject outer ≤ wire before persisting
+            Ok(ExtScenarioSpec::Dimensional {
+                wire_dia_mm,
+                outer_dia_mm,
+                active: positive_num("active coils", &form.active)?,
+                free_length_mm: length_mm("free length", &form.free_length, us)?,
+                initial_tension_n: non_negative_force_n(
+                    "initial tension",
+                    &form.initial_tension,
+                    us,
+                )?,
+                hooks: build_hooks_spec(form, us)?,
+                loads_n: loads_n(&form.loads, us)?,
+            })
+        }
         ExtScenarioKind::TwoLoad => Ok(ExtScenarioSpec::TwoLoad {
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
             mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
@@ -1020,6 +1049,63 @@ mod tests {
         assert!(blank.is_blank());
         blank.outer_dia = "22".into();
         assert!(!blank.is_blank(), "Dimensional blank check uses outer_dia");
+    }
+
+    #[test]
+    fn dimensional_parse_rejects_outer_not_greater_than_wire() {
+        // Outer ≤ wire gives a mean diameter ≤ 0, which would feed negative default
+        // hook radii into the solve. The form must reject this at its boundary with a
+        // field-named "outer diameter" error — not defer to the engine's later
+        // "mean diameter must be greater than wire diameter" backstop.
+        let materials = default_materials();
+        let form = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            wire_dia: "5".into(),
+            outer_dia: "5".into(), // mean = 0; every other field valid
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "10".into(),
+            ..ExtFormState::default()
+        };
+        let msg = parse_and_solve(
+            &form,
+            default_material_name(),
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .expect_err("outer ≤ wire must be rejected")
+        .to_string();
+        assert!(
+            msg.contains("outer diameter") && msg.contains("greater than wire diameter"),
+            "expected the form-boundary outer>wire error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn dimensional_build_spec_rejects_outer_not_greater_than_wire() {
+        // build_spec must not persist an unbuildable Dimensional spec: outer ≤ wire
+        // yields mean ≤ 0 (negative default hook radii), so reject it at build time
+        // rather than write a spec that can never be loaded and solved.
+        let us = UnitSystem::Metric;
+        let form = ExtFormState {
+            scenario: ExtScenarioKind::Dimensional,
+            wire_dia: "5".into(),
+            outer_dia: "4".into(), // mean = -1; every other field valid
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "10".into(),
+            ..ExtFormState::default()
+        };
+        let msg = build_spec(&form, us)
+            .expect_err("outer ≤ wire must be rejected at build time")
+            .to_string();
+        assert!(
+            msg.contains("outer diameter") && msg.contains("greater than wire diameter"),
+            "expected the outer>wire build error, got: {msg}"
+        );
     }
 
     fn twoload_metric_form() -> ExtFormState {
