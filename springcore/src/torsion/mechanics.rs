@@ -13,7 +13,7 @@ const SHIGLEY_TURN_DENOM: f64 = 10.8;
 /// Deliberately NOT `#[non_exhaustive]`: `springcore` is an unpublished workspace crate
 /// and the GUI will match this enum (variant → label), where a future variant should
 /// force a compile error rather than a silent fallback (per the PR #32 scope decision).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum FrictionModel {
     /// Shigley Eq. 10-51 with empirical inter-coil friction (10.8 per turn). Default.
     #[default]

@@ -93,6 +93,24 @@ pub enum ScenarioSpec {
 pub enum DesignSpec {
     Compression(ScenarioSpec),
     Extension(ExtScenarioSpec),
+    Torsion(TorsionSpec),
+}
+
+/// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
+/// Single-scenario (PowerUser) family: a struct, not a `#[serde(tag="type")]` enum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TorsionSpec {
+    pub wire_dia_mm: f64,
+    pub mean_dia_mm: f64,
+    pub body_coils: f64,
+    pub leg1_mm: f64,
+    pub leg2_mm: f64,
+    // The only optional field: the `toml` deserializer maps a missing key to
+    // `None` for `Option` types (no `#[serde(default)]` needed), so a missing or
+    // misspelled `arbor_dia_mm` deserializes to `None` rather than erroring.
+    pub arbor_dia_mm: Option<f64>,
+    pub friction_model: crate::torsion::FrictionModel,
+    pub moments_nmm: Vec<f64>,
 }
 
 /// Extension scenario inputs (SI millimetres / newtons, as stored). 1c adds the other modes.
@@ -467,6 +485,11 @@ impl SavedDesign {
             DesignSpec::Extension(_) => Err(SpringError::InconsistentInputs(
                 "SavedDesign::solve handles compression designs; extension designs are solved \
                  via the extension scenario"
+                    .into(),
+            )),
+            DesignSpec::Torsion(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; torsion designs are solved \
+                 via the torsion scenario"
                     .into(),
             )),
         }
@@ -1080,6 +1103,89 @@ mode = "Default"
             msg.contains("extension"),
             "error must mention 'extension', got: {msg}"
         );
+    }
+
+    #[test]
+    fn solve_with_material_rejects_torsion_design() {
+        use crate::torsion::FrictionModel;
+        let set = MaterialSet::load_default();
+        let m = set.get("Music Wire").unwrap();
+        let saved = SavedDesign {
+            material: "Music Wire".into(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Torsion(TorsionSpec {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                body_coils: 5.0,
+                leg1_mm: 50.0,
+                leg2_mm: 50.0,
+                arbor_dia_mm: Some(10.0),
+                friction_model: FrictionModel::ShigleyFriction,
+                moments_nmm: vec![100.0, 250.0],
+            }),
+        };
+        let err = saved
+            .solve_with_material(m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(err, SpringError::InconsistentInputs(_)));
+        // Pin the error content to kill mutation survivors on the Torsion arm.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("torsion"),
+            "error must mention 'torsion', got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2: Torsion persistence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn torsion_round_trips_both_arbor_states_and_friction_models() {
+        use crate::torsion::FrictionModel;
+        for arbor in [None, Some(10.0)] {
+            for friction in [FrictionModel::ShigleyFriction, FrictionModel::PureBending] {
+                let saved = SavedDesign {
+                    material: "Music Wire".into(),
+                    unit_system: UnitSystem::Metric,
+                    design: DesignSpec::Torsion(TorsionSpec {
+                        wire_dia_mm: 2.0,
+                        mean_dia_mm: 20.0,
+                        body_coils: 5.0,
+                        leg1_mm: 50.0,
+                        leg2_mm: 50.0,
+                        arbor_dia_mm: arbor,
+                        friction_model: friction,
+                        moments_nmm: vec![100.0, 250.0],
+                    }),
+                };
+                let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+                assert_eq!(saved, back);
+            }
+        }
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_torsion_moment() {
+        // reject_non_finite must reject an inf inside the moments array of a Torsion spec.
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "ShigleyFriction"
+moments_nmm = [100.0, inf]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(crate::SpringError::DataFile(_))
+        ));
     }
 
     // -----------------------------------------------------------------------
