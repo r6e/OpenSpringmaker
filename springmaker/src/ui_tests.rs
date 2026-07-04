@@ -597,6 +597,115 @@ fn torsion_save_load_round_trip() {
 }
 
 #[test]
+fn torsion_scenario_switch_solves_each_mode() {
+    use crate::torsion::form::{Field as TF, TorScenarioKind};
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+
+    // RateBased through real widgets.
+    app.update(Message::TorScenario(TorScenarioKind::RateBased));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::Rate, "8.875");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+    assert!(app.tor_outcome.is_some(), "RateBased must solve");
+
+    // Dimensional: switch + fill its distinct field (shared fields carry over).
+    app.update(Message::TorScenario(TorScenarioKind::Dimensional));
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::OuterDia, "22");
+    assert!(app.tor_outcome.is_some(), "Dimensional must solve");
+
+    // TwoLoad: switch + the four point fields.
+    app.update(Message::TorScenario(TorScenarioKind::TwoLoad));
+    type_into_tor(&mut app, TF::Moment1, "508.5");
+    type_into_tor(&mut app, TF::Angle1, "57.29578");
+    type_into_tor(&mut app, TF::Moment2, "1017");
+    type_into_tor(&mut app, TF::Angle2, "114.59156");
+    assert!(app.tor_outcome.is_some(), "TwoLoad must solve");
+    assert!(app.error.is_none());
+}
+
+#[test]
+fn torsion_force_at_radius_e2e() {
+    use crate::torsion::form::{Field as TF, MomentEntry};
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    app.update(Message::TorMomentEntry(MomentEntry::ForceAtRadius));
+    type_into_tor(&mut app, TF::Forces, "10");
+    type_into_tor(&mut app, TF::LoadRadius, "50");
+    assert!(app.tor_outcome.is_some(), "F@r entry must solve");
+}
+
+#[test]
+fn torsion_mode_save_load_round_trips() {
+    use crate::torsion::form::{TorFormState, TorScenarioKind};
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    app.torsion = TorFormState {
+        scenario: TorScenarioKind::RateBased,
+        wire_dia: "2".into(),
+        mean_dia: "20".into(),
+        rate: "8.875".into(),
+        leg1: "0".into(),
+        leg2: "0".into(),
+        moments: "1000".into(),
+        ..TorFormState::default()
+    };
+    app.recompute();
+    let dir = std::env::temp_dir().join(format!("osm_tor_modes_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ratebased.toml");
+    app.save_to(&path);
+    let mut app2 = test_app();
+    assert!(app2.load_from(&path));
+    assert_eq!(app2.family, Family::Torsion);
+    assert_eq!(app2.torsion.scenario, TorScenarioKind::RateBased);
+    assert_eq!(app2.torsion.rate, "8.875");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn legacy_tagless_torsion_file_surfaces_clean_break_error() {
+    // A file in the pre-migration flat layout must fail to load with the error in
+    // `action_error` (status panel), leaving the current form untouched.
+    let legacy = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "ShigleyFriction"
+moments_nmm = [1000.0]
+"#;
+    let dir = std::env::temp_dir().join(format!("osm_tor_legacy_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("legacy.toml");
+    std::fs::write(&path, legacy).unwrap();
+    let mut app = test_app();
+    assert!(!app.load_from(&path), "legacy file must fail to load");
+    assert!(
+        app.action_error
+            .as_deref()
+            .is_some_and(|m| m.contains("type")),
+        "the clean-break error (missing `type` tag) must surface in action_error"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn ext_scenario_switch_solves_each_mode() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));
