@@ -9,6 +9,7 @@ use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::presenter::Emphasis;
+use crate::torsion::form::ALL_TOR_SCENARIOS;
 use crate::torsion::form::{Field, TorFormState};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
@@ -22,10 +23,19 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    // Setup group — material selector and friction model pick-list.
+    // Setup group — material selector, scenario pick-list, and friction model pick-list.
     let setup_group = column![
         section_heading("Setup"),
         material_picker(app),
+        column![
+            field_label("Input mode"),
+            styled_pick_list(
+                ALL_TOR_SCENARIOS,
+                Some(app.torsion.scenario),
+                Message::TorScenario,
+            ),
+        ]
+        .spacing(4),
         column![
             field_label("Friction model"),
             styled_pick_list(
@@ -64,6 +74,7 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::WireDia => &form.wire_dia,
         Field::MeanDia => &form.mean_dia,
         Field::BodyCoils => &form.body_coils,
+        Field::Rate => &form.rate,
         Field::Leg1 => &form.leg1,
         Field::Leg2 => &form.leg2,
         Field::ArborDia => &form.arbor_dia,
@@ -80,6 +91,7 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::WireDia => "tor-wire-dia",
         Field::MeanDia => "tor-mean-dia",
         Field::BodyCoils => "tor-body-coils",
+        Field::Rate => "tor-rate",
         Field::Leg1 => "tor-leg1",
         Field::Leg2 => "tor-leg2",
         Field::ArborDia => "tor-arbor-dia",

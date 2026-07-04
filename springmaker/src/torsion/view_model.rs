@@ -11,7 +11,7 @@ use crate::presenter::{
     unit_length_label, unit_moment_label, unit_stress_label, Emphasis, FieldDescriptor, ResultRow,
     StatusLine,
 };
-use crate::torsion::form::Field;
+use crate::torsion::form::{Field, TorScenarioKind};
 use springcore::torsion::TorsionDesign;
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
@@ -171,25 +171,42 @@ pub fn tor_status_view(app: &App) -> Vec<StatusLine> {
 
 // ── Inputs panel ──────────────────────────────────────────────────────────────
 
-/// The torsion input fields with unit-aware labels (seven fields, PowerUser only).
+/// The torsion input fields with unit-aware labels, varying by active scenario.
 ///
-/// The friction-model pick-list is rendered separately in the view.
+/// The friction-model and scenario pick-lists are rendered separately in the view.
 pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
     let moment = unit_moment_label(us);
-    vec![
-        FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-        FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-        FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
-        FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
-        FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
-        FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-        FieldDescriptor::new(
-            format!("Moments ({moment}), comma-separated"),
-            Field::Moments,
-        ),
-    ]
+    match app.torsion.scenario {
+        TorScenarioKind::RateBased => vec![
+            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+            FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+            FieldDescriptor::new(format!("Rate ({moment}/°)"), Field::Rate),
+            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            FieldDescriptor::new(
+                format!("Moments ({moment}), comma-separated"),
+                Field::Moments,
+            ),
+        ],
+        // Task 3 replaces the Dimensional/TwoLoad arms with their own field sets.
+        TorScenarioKind::PowerUser | TorScenarioKind::Dimensional | TorScenarioKind::TwoLoad => {
+            vec![
+                FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+                FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+                FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
+                FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+                FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+                FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+                FieldDescriptor::new(
+                    format!("Moments ({moment}), comma-separated"),
+                    Field::Moments,
+                ),
+            ]
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -538,6 +555,40 @@ mod tests {
         let app = fresh_app_torsion();
         let fields = tor_inputs_view(&app);
         assert_eq!(fields.last().expect("non-empty").field, Field::Moments);
+    }
+
+    #[test]
+    fn ratebased_inputs_view_contains_rate_not_body_coils() {
+        use crate::torsion::form::TorScenarioKind;
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = TorScenarioKind::RateBased;
+        let fields = tor_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert!(
+            kinds.contains(&Field::Rate),
+            "RateBased inputs must contain Field::Rate; got {kinds:?}"
+        );
+        assert!(
+            !kinds.contains(&Field::BodyCoils),
+            "RateBased inputs must NOT contain Field::BodyCoils; got {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn ratebased_rate_field_label_contains_per_degree() {
+        use crate::torsion::form::TorScenarioKind;
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = TorScenarioKind::RateBased;
+        let fields = tor_inputs_view(&app);
+        let rate_fd = fields
+            .iter()
+            .find(|fd| fd.field == Field::Rate)
+            .expect("Field::Rate must be present in RateBased inputs");
+        assert!(
+            rate_fd.label.contains("/°"),
+            "rate field label must contain '/°'; got '{}'",
+            rate_fd.label
+        );
     }
 
     // ── cross-family outcome clearing ────────────────────────────────────────

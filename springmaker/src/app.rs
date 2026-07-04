@@ -157,6 +157,7 @@ pub enum Message {
     // Calculator screen — torsion
     TorField(crate::torsion::form::Field, String),
     TorFriction(springcore::torsion::FrictionModel),
+    TorScenario(crate::torsion::form::TorScenarioKind),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -407,6 +408,10 @@ impl App {
             }
             Message::TorFriction(m) => {
                 self.torsion.friction_model = m;
+                true
+            }
+            Message::TorScenario(s) => {
+                self.torsion.scenario = s;
                 true
             }
             Message::Material(m) => {
@@ -698,6 +703,7 @@ impl App {
             TF::WireDia => f.wire_dia = value,
             TF::MeanDia => f.mean_dia = value,
             TF::BodyCoils => f.body_coils = value,
+            TF::Rate => f.rate = value,
             TF::Leg1 => f.leg1 = value,
             TF::Leg2 => f.leg2 = value,
             TF::ArborDia => f.arbor_dia = value,
