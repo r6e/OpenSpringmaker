@@ -8,10 +8,10 @@ use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_ang_rate_per_deg, display_ang_rate_per_turn,
     display_angle_degrees, display_angle_turns, display_len, display_moment, display_stress,
-    unit_length_label, unit_moment_label, unit_stress_label, Emphasis, FieldDescriptor, ResultRow,
-    StatusLine,
+    unit_force_label, unit_length_label, unit_moment_label, unit_stress_label, Emphasis,
+    FieldDescriptor, ResultRow, StatusLine,
 };
-use crate::torsion::form::{Field, TorScenarioKind};
+use crate::torsion::form::{Field, MomentEntry, TorScenarioKind};
 use springcore::torsion::TorsionDesign;
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
@@ -171,6 +171,31 @@ pub fn tor_status_view(app: &App) -> Vec<StatusLine> {
 
 // ── Inputs panel ──────────────────────────────────────────────────────────────
 
+/// Builds the trailing moment-entry fields for the three moments-list scenarios.
+///
+/// In `Direct` mode: one Moments field. In `ForceAtRadius` mode: Forces + LoadRadius.
+/// Extracted to avoid field-list drift across PowerUser / RateBased / Dimensional arms.
+fn moment_entry_fields(
+    entry: MomentEntry,
+    moment_lbl: &str,
+    force_lbl: &str,
+    len_lbl: &str,
+) -> Vec<FieldDescriptor<Field>> {
+    match entry {
+        MomentEntry::Direct => vec![FieldDescriptor::new(
+            format!("Moments ({moment_lbl}), comma-separated"),
+            Field::Moments,
+        )],
+        MomentEntry::ForceAtRadius => vec![
+            FieldDescriptor::new(
+                format!("Forces ({force_lbl}), comma-separated"),
+                Field::Forces,
+            ),
+            FieldDescriptor::new(format!("Load radius ({len_lbl})"), Field::LoadRadius),
+        ],
+    }
+}
+
 /// The torsion input fields with unit-aware labels, varying by active scenario.
 ///
 /// The friction-model and scenario pick-lists are rendered separately in the view.
@@ -178,43 +203,45 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
     let moment = unit_moment_label(us);
+    let force = unit_force_label(us);
+    let entry = app.torsion.moment_entry;
     match app.torsion.scenario {
-        TorScenarioKind::RateBased => vec![
-            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-            FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-            FieldDescriptor::new(format!("Rate ({moment}/°)"), Field::Rate),
-            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
-            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
-            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-            FieldDescriptor::new(
-                format!("Moments ({moment}), comma-separated"),
-                Field::Moments,
-            ),
-        ],
-        TorScenarioKind::PowerUser => vec![
-            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-            FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-            FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
-            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
-            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
-            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-            FieldDescriptor::new(
-                format!("Moments ({moment}), comma-separated"),
-                Field::Moments,
-            ),
-        ],
-        TorScenarioKind::Dimensional => vec![
-            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-            FieldDescriptor::new(format!("Outer diameter ({len})"), Field::OuterDia),
-            FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
-            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
-            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
-            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-            FieldDescriptor::new(
-                format!("Moments ({moment}), comma-separated"),
-                Field::Moments,
-            ),
-        ],
+        TorScenarioKind::RateBased => {
+            let mut fields = vec![
+                FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+                FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+                FieldDescriptor::new(format!("Rate ({moment}/°)"), Field::Rate),
+                FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+                FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+                FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            ];
+            fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields
+        }
+        TorScenarioKind::PowerUser => {
+            let mut fields = vec![
+                FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+                FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+                FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
+                FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+                FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+                FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            ];
+            fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields
+        }
+        TorScenarioKind::Dimensional => {
+            let mut fields = vec![
+                FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+                FieldDescriptor::new(format!("Outer diameter ({len})"), Field::OuterDia),
+                FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
+                FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+                FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+                FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            ];
+            fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields
+        }
         TorScenarioKind::TwoLoad => vec![
             FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
             FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
@@ -659,6 +686,43 @@ mod tests {
             angle_fd.label.contains('°'),
             "angle field label must contain '°'; got '{}'",
             angle_fd.label
+        );
+    }
+
+    #[test]
+    fn inputs_view_far_mode_swaps_moments_for_forces_and_load_radius() {
+        // In F@r mode the three moments-list scenarios replace the Moments field with
+        // Forces + LoadRadius. PowerUser is the representative arm; the shared helper
+        // `moment_entry_fields` guarantees Dimensional and RateBased behave identically.
+        let mut app = fresh_app_torsion();
+        app.torsion.moment_entry = MomentEntry::ForceAtRadius;
+        let fields = tor_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert_eq!(
+            fields.len(),
+            8,
+            "F@r PowerUser must have 8 fields; got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&Field::Forces),
+            "F@r mode must include Field::Forces; got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&Field::LoadRadius),
+            "F@r mode must include Field::LoadRadius; got {kinds:?}"
+        );
+        assert!(
+            !kinds.contains(&Field::Moments),
+            "F@r mode must NOT include Field::Moments; got {kinds:?}"
+        );
+        let force_fd = fields
+            .iter()
+            .find(|fd| fd.field == Field::Forces)
+            .expect("Field::Forces must be present");
+        assert!(
+            force_fd.label.contains('N') || force_fd.label.contains("lbf"),
+            "forces label must contain a force unit; got '{}'",
+            force_fd.label
         );
     }
 

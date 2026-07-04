@@ -9,8 +9,8 @@ use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::presenter::Emphasis;
-use crate::torsion::form::ALL_TOR_SCENARIOS;
-use crate::torsion::form::{Field, TorFormState};
+use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
+use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
     field_label, labeled_input, material_picker, panel_container, render_result_row, results_empty,
@@ -23,19 +23,36 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    // Setup group — material selector, scenario pick-list, and friction model pick-list.
-    let setup_group = column![
-        section_heading("Setup"),
-        material_picker(app),
-        column![
-            field_label("Input mode"),
-            styled_pick_list(
-                ALL_TOR_SCENARIOS,
-                Some(app.torsion.scenario),
-                Message::TorScenario,
-            ),
-        ]
-        .spacing(4),
+    // Setup group — material selector, scenario pick-list, optional moment-entry
+    // pick-list (hidden for TwoLoad), and friction model pick-list.
+    let scenario_col = column![
+        field_label("Input mode"),
+        styled_pick_list(
+            ALL_TOR_SCENARIOS,
+            Some(app.torsion.scenario),
+            Message::TorScenario,
+        ),
+    ]
+    .spacing(4);
+
+    let mut setup_group =
+        column![section_heading("Setup"), material_picker(app), scenario_col].spacing(10);
+
+    if app.torsion.scenario != TorScenarioKind::TwoLoad {
+        setup_group = setup_group.push(
+            column![
+                field_label("Moment entry"),
+                styled_pick_list(
+                    ALL_MOMENT_ENTRIES,
+                    Some(app.torsion.moment_entry),
+                    Message::TorMomentEntry,
+                ),
+            ]
+            .spacing(4),
+        );
+    }
+
+    setup_group = setup_group.push(
         column![
             field_label("Friction model"),
             styled_pick_list(
@@ -45,8 +62,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
             ),
         ]
         .spacing(4),
-    ]
-    .spacing(10);
+    );
 
     // Inputs group — driven by the presenter's field list.
     let inputs = tor_inputs_view(app);
@@ -84,6 +100,8 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::Angle1 => &form.angle1,
         Field::Moment2 => &form.moment2,
         Field::Angle2 => &form.angle2,
+        Field::Forces => &form.forces,
+        Field::LoadRadius => &form.load_radius,
     }
 }
 
@@ -106,6 +124,8 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::Angle1 => "tor-angle1",
         Field::Moment2 => "tor-moment2",
         Field::Angle2 => "tor-angle2",
+        Field::Forces => "tor-forces",
+        Field::LoadRadius => "tor-load-radius",
     }
 }
 

@@ -1,10 +1,11 @@
 //! Pure torsion form-to-design logic. No iced dependency.
 use crate::form_helpers::{
     ang_rate_nmm_per_deg, angle_deg, fmt_ang_rate_nmm_per_deg, fmt_angle_deg, fmt_len, fmt_moment,
-    fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm, positive_num,
+    fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm, positive_force_n,
+    positive_num,
 };
 use springcore::torsion::{FrictionModel, PowerUser, Scenario, TorsionDesign};
-use springcore::units::{Angle, AngularRate, Length, Moment};
+use springcore::units::{Angle, AngularRate, Force, Length, Moment};
 use springcore::{Material, MaterialStore, Result, TorsionSpec, UnitSystem};
 
 /// Which torsion input scenario is active. The torsion family's own enum — the
@@ -37,6 +38,28 @@ impl std::fmt::Display for TorScenarioKind {
     }
 }
 
+/// How applied moments are entered: directly, or as forces on a leg at one radius
+/// (`M = F·r`, converted at the form boundary — the choice is NOT persisted; specs
+/// always store the derived moments).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MomentEntry {
+    #[default]
+    Direct,
+    ForceAtRadius,
+}
+
+/// All `MomentEntry` variants in display order.
+pub const ALL_MOMENT_ENTRIES: &[MomentEntry] = &[MomentEntry::Direct, MomentEntry::ForceAtRadius];
+
+impl std::fmt::Display for MomentEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            MomentEntry::Direct => "Moments",
+            MomentEntry::ForceAtRadius => "Force @ radius",
+        })
+    }
+}
+
 /// Which torsion text field a `Message::TorField` targets.
 // Variants are constructed by `torsion::view_model::tor_inputs_view` (Task 4) and
 // `torsion::view` (Task 5). No dead_code annotation is needed: the variants are
@@ -56,12 +79,18 @@ pub enum Field {
     Angle1,
     Moment2,
     Angle2,
+    /// Forces comma-separated (F@r mode only).
+    Forces,
+    /// Load radius (F@r mode only).
+    LoadRadius,
 }
 
 /// Torsion form inputs as raw strings, plus the friction-model selector.
 #[derive(Debug, Clone, Default)]
 pub struct TorFormState {
     pub scenario: TorScenarioKind,
+    /// Whether moments are entered directly or derived from F·r. NOT persisted.
+    pub moment_entry: MomentEntry,
     pub wire_dia: String,
     pub mean_dia: String,
     /// Outer diameter (Dimensional mode only): wire + 2 × mean_radius.
@@ -72,6 +101,10 @@ pub struct TorFormState {
     pub leg2: String,
     pub arbor_dia: String,
     pub moments: String,
+    /// Applied forces, comma-separated (F@r entry mode only).
+    pub forces: String,
+    /// Load radius for F@r moment derivation (F@r entry mode only).
+    pub load_radius: String,
     /// First operating-point moment (TwoLoad mode).
     pub moment1: String,
     /// First operating-point angle in degrees (TwoLoad mode).
@@ -99,6 +132,8 @@ impl TorFormState {
                 &self.leg2,
                 &self.arbor_dia,
                 &self.moments,
+                &self.forces,
+                &self.load_radius,
             ]),
             TorScenarioKind::RateBased => all_empty(&[
                 &self.wire_dia,
@@ -108,6 +143,8 @@ impl TorFormState {
                 &self.leg2,
                 &self.arbor_dia,
                 &self.moments,
+                &self.forces,
+                &self.load_radius,
             ]),
             TorScenarioKind::Dimensional => all_empty(&[
                 &self.wire_dia,
@@ -117,6 +154,8 @@ impl TorFormState {
                 &self.leg2,
                 &self.arbor_dia,
                 &self.moments,
+                &self.forces,
+                &self.load_radius,
             ]),
             TorScenarioKind::TwoLoad => all_empty(&[
                 &self.wire_dia,
@@ -154,6 +193,39 @@ fn parse_moments_nmm_nonempty(form: &TorFormState, us: UnitSystem) -> Result<Vec
         ));
     }
     Ok(moments)
+}
+
+/// The applied-moment list per the active entry mode: Direct parses the moments
+/// field; ForceAtRadius derives each moment as `M = F·r` (engine helper, cited)
+/// from strictly-positive forces at one strictly-positive load radius. Both modes
+/// reject an empty list at the form boundary.
+fn parse_applied_moments_nmm(form: &TorFormState, us: UnitSystem) -> Result<Vec<f64>> {
+    match form.moment_entry {
+        MomentEntry::Direct => parse_moments_nmm_nonempty(form, us),
+        MomentEntry::ForceAtRadius => {
+            let radius_mm = length_mm("load radius", &form.load_radius, us)?;
+            let moments: Vec<f64> = form
+                .forces
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    let force_n = positive_force_n("force", s, us)?;
+                    Ok(springcore::torsion::moment_from_force_at_radius(
+                        Force::from_newtons(force_n),
+                        Length::from_millimeters(radius_mm),
+                    )
+                    .newton_millimeters())
+                })
+                .collect::<Result<_>>()?;
+            if moments.is_empty() {
+                return Err(springcore::SpringError::InconsistentInputs(
+                    "provide at least one applied force".into(),
+                ));
+            }
+            Ok(moments)
+        }
+    }
 }
 
 /// Reject at the form boundary when outer diameter ≤ wire diameter (mean ≤ 0).
@@ -208,7 +280,7 @@ pub fn parse_and_solve(
                 leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
                 leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
                 arbor_dia: parse_arbor(form, us)?,
-                moments: parse_moments_nmm_nonempty(form, us)?
+                moments: parse_applied_moments_nmm(form, us)?
                     .into_iter()
                     .map(Moment::from_newton_millimeters)
                     .collect(),
@@ -227,7 +299,7 @@ pub fn parse_and_solve(
                 leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
                 leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
                 arbor_dia: parse_arbor(form, us)?,
-                moments: parse_moments_nmm_nonempty(form, us)?
+                moments: parse_applied_moments_nmm(form, us)?
                     .into_iter()
                     .map(Moment::from_newton_millimeters)
                     .collect(),
@@ -247,7 +319,7 @@ pub fn parse_and_solve(
                 leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
                 leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
                 arbor_dia: parse_arbor(form, us)?,
-                moments: parse_moments_nmm_nonempty(form, us)?
+                moments: parse_applied_moments_nmm(form, us)?
                     .into_iter()
                     .map(Moment::from_newton_millimeters)
                     .collect(),
@@ -291,7 +363,7 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
             leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
             arbor_dia_mm: parse_arbor_mm(form, us)?,
             friction_model: form.friction_model,
-            moments_nmm: parse_moments_nmm_nonempty(form, us)?,
+            moments_nmm: parse_applied_moments_nmm(form, us)?,
         }),
         TorScenarioKind::RateBased => Ok(TorsionSpec::RateBased {
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
@@ -301,7 +373,7 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
             leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
             arbor_dia_mm: parse_arbor_mm(form, us)?,
             friction_model: form.friction_model,
-            moments_nmm: parse_moments_nmm_nonempty(form, us)?,
+            moments_nmm: parse_applied_moments_nmm(form, us)?,
         }),
         TorScenarioKind::Dimensional => {
             let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
@@ -315,7 +387,7 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
                 leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
                 arbor_dia_mm: parse_arbor_mm(form, us)?,
                 friction_model: form.friction_model,
-                moments_nmm: parse_moments_nmm_nonempty(form, us)?,
+                moments_nmm: parse_applied_moments_nmm(form, us)?,
             })
         }
         TorScenarioKind::TwoLoad => Ok(TorsionSpec::TwoLoad {
@@ -348,6 +420,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             moments_nmm,
         } => {
             form.scenario = TorScenarioKind::PowerUser;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.mean_dia = fmt_len(*mean_dia_mm, us);
             form.body_coils = format!("{body_coils}");
@@ -371,6 +446,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             moments_nmm,
         } => {
             form.scenario = TorScenarioKind::RateBased;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.mean_dia = fmt_len(*mean_dia_mm, us);
             form.rate = fmt_ang_rate_nmm_per_deg(*rate_nmm_per_deg, us);
@@ -394,6 +472,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             moments_nmm,
         } => {
             form.scenario = TorScenarioKind::Dimensional;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.outer_dia = fmt_len(*outer_dia_mm, us);
             form.body_coils = format!("{body_coils}");
@@ -419,6 +500,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             angle2_deg,
         } => {
             form.scenario = TorScenarioKind::TwoLoad;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.mean_dia = fmt_len(*mean_dia_mm, us);
             form.leg1 = fmt_len(*leg1_mm, us);
@@ -595,6 +679,80 @@ mod tests {
                 .contains("provide at least one applied moment"),
             "expected the form-boundary moment guard message; got: {err}"
         );
+    }
+
+    #[test]
+    fn force_at_radius_equals_direct_moments() {
+        // 10 N @ 50 mm ≡ 500 N·mm — identical solve AND identical persisted spec.
+        let far = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            forces: "10".into(),
+            load_radius: "50".into(),
+            moments: String::new(),
+            ..metric_form()
+        };
+        let direct = TorFormState {
+            moments: "500".into(),
+            ..metric_form()
+        };
+        let out_far = parse_and_solve(&far, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        let out_direct =
+            parse_and_solve(&direct, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        assert_relative_eq!(
+            out_far.design.load_points[0].moment.newton_millimeters(),
+            out_direct.design.load_points[0].moment.newton_millimeters(),
+            max_relative = 1e-12
+        );
+        assert_eq!(
+            build_spec(&far, UnitSystem::Metric).unwrap(),
+            build_spec(&direct, UnitSystem::Metric).unwrap(),
+            "F@r persists the derived moments — specs must be identical"
+        );
+    }
+
+    #[test]
+    fn force_at_radius_empty_forces_rejected() {
+        let f = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            forces: String::new(),
+            load_radius: "50".into(),
+            moments: String::new(),
+            ..metric_form()
+        };
+        let err = parse_and_solve(&f, "Music Wire", UnitSystem::Metric, &store()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("provide at least one applied force"),
+            "expected the F@r non-empty guard; got: {err}"
+        );
+    }
+
+    #[test]
+    fn populate_resets_moment_entry_and_clears_far_fields() {
+        let far = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            forces: "10".into(),
+            load_radius: "50".into(),
+            moments: String::new(),
+            ..metric_form()
+        };
+        let spec = build_spec(&far, UnitSystem::Metric).unwrap();
+        let mut form2 = far.clone();
+        populate_from_spec(&mut form2, &spec, UnitSystem::Metric);
+        assert_eq!(form2.moment_entry, MomentEntry::Direct);
+        assert!(form2.forces.is_empty() && form2.load_radius.is_empty());
+        assert_eq!(form2.moments, "500", "derived moments shown in Direct mode");
+    }
+
+    #[test]
+    fn is_blank_trips_on_far_fields_but_not_selector() {
+        let mut f = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            ..TorFormState::default()
+        };
+        assert!(f.is_blank(), "selector alone cannot distinguish blank");
+        f.forces = "10".into();
+        assert!(!f.is_blank(), "typing a force clears blank");
     }
 
     fn ratebased_metric_form() -> TorFormState {

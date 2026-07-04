@@ -158,6 +158,7 @@ pub enum Message {
     TorField(crate::torsion::form::Field, String),
     TorFriction(springcore::torsion::FrictionModel),
     TorScenario(crate::torsion::form::TorScenarioKind),
+    TorMomentEntry(crate::torsion::form::MomentEntry),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -412,6 +413,10 @@ impl App {
             }
             Message::TorScenario(s) => {
                 self.torsion.scenario = s;
+                true
+            }
+            Message::TorMomentEntry(m) => {
+                self.torsion.moment_entry = m;
                 true
             }
             Message::Material(m) => {
@@ -713,6 +718,8 @@ impl App {
             TF::Angle1 => f.angle1 = value,
             TF::Moment2 => f.moment2 = value,
             TF::Angle2 => f.angle2 = value,
+            TF::Forces => f.forces = value,
+            TF::LoadRadius => f.load_radius = value,
         }
     }
 
