@@ -69,9 +69,12 @@ variant exists yet.
        pub moments_nmm: Vec<f64>,        // each > 0
    }
    ```
-3. **`FrictionModel` gains `Serialize`/`Deserialize`** (serde derive, tagged as a
-   lowercase string, e.g. `"pure_bending"` / `"shigley_friction"`) so it persists
-   in `TorsionSpec`.
+3. **`FrictionModel` gains `Serialize`/`Deserialize`** (plain serde derive) so it
+   persists in `TorsionSpec`. It serializes as the default variant-name strings
+   `"ShigleyFriction"` / `"PureBending"` — consistent with the PascalCase serde tags of
+   every other persisted enum (`DesignSpec` family, `ScenarioSpec`/`ExtScenarioSpec`
+   type, `HookSpecSpec` mode; none use `rename_all`). An unknown string is rejected on
+   load (serde "unknown variant" → `DataFile`), not silently defaulted.
 4. **Units US support** (additive on `springcore/src/units.rs`): the module
    *already* provides `Moment::from_pound_force_inches`/`pound_force_inches`,
    `Angle::degrees`/`turns`, and `AngularRate::newton_meters_per_degree`/`_per_turn`
