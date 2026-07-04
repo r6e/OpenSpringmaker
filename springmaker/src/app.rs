@@ -154,6 +154,13 @@ pub enum Message {
     ExtField(crate::extension::form::Field, String),
     ExtHookMode(crate::extension::form::HookMode),
     ExtScenario(crate::extension::form::ExtScenarioKind),
+    // Calculator screen — torsion
+    // Constructed by `torsion::view` (Task 5); `#[expect]` keeps clippy clean
+    // during the transitional Task-3 state.
+    #[expect(dead_code)]
+    TorField(crate::torsion::form::Field, String),
+    #[expect(dead_code)]
+    TorFriction(springcore::torsion::FrictionModel),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -182,6 +189,10 @@ pub struct App {
     pub extension: ExtFormState,
     /// Solved extension outcome; `None` until a valid extension form is solved.
     pub ext_outcome: Option<ExtFormOutcome>,
+    /// Torsion PowerUser form inputs.
+    pub torsion: crate::torsion::form::TorFormState,
+    /// Solved torsion outcome; `None` until a valid torsion form is solved.
+    pub tor_outcome: Option<crate::torsion::form::TorFormOutcome>,
     /// Selected material name (shared across families). Lifted out of `FormState`.
     pub material: String,
     /// Active unit system (shared across families). Lifted out of `FormState`.
@@ -232,6 +243,8 @@ impl App {
             form: FormState::default(),
             extension: ExtFormState::default(),
             ext_outcome: None,
+            torsion: crate::torsion::form::TorFormState::default(),
+            tor_outcome: None,
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
             materials,
@@ -266,8 +279,9 @@ impl App {
         self.action_error = None;
         match self.family {
             Family::Compression => {
-                // Stale extension outcome from a prior solve is no longer active.
+                // Stale extension/torsion outcomes from a prior solve are no longer active.
                 self.ext_outcome = None;
+                self.tor_outcome = None;
                 // If the user has entered none of the active scenario's required
                 // inputs (e.g. switched families on an untouched form), treat this
                 // as the initial state rather than surfacing a parse error. Once any
@@ -296,8 +310,9 @@ impl App {
                 }
             }
             Family::Extension => {
-                // Stale compression outcome from a prior solve is no longer active.
+                // Stale compression/torsion outcomes from a prior solve are no longer active.
                 self.outcome = None;
+                self.tor_outcome = None;
                 // If the user has entered none of the PowerUser required inputs
                 // (e.g. switched families on an untouched form), treat this as the
                 // initial state rather than surfacing a parse error. Once any
@@ -321,6 +336,30 @@ impl App {
                     }
                     Err(e) => {
                         self.ext_outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
+            }
+            Family::Torsion => {
+                self.outcome = None;
+                self.ext_outcome = None;
+                if self.torsion.is_blank() {
+                    self.error = None;
+                    self.tor_outcome = None;
+                    return;
+                }
+                match crate::torsion::form::parse_and_solve(
+                    &self.torsion,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                ) {
+                    Ok(out) => {
+                        self.tor_outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.tor_outcome = None;
                         self.error = Some(format_error(&e, self.unit_system));
                     }
                 }
@@ -364,6 +403,14 @@ impl App {
             }
             Message::ExtScenario(s) => {
                 self.extension.scenario = s;
+                true
+            }
+            Message::TorField(f, v) => {
+                self.set_tor_field(f, v);
+                true
+            }
+            Message::TorFriction(m) => {
+                self.torsion.friction_model = m;
                 true
             }
             Message::Material(m) => {
@@ -648,6 +695,20 @@ impl App {
         }
     }
 
+    fn set_tor_field(&mut self, field: crate::torsion::form::Field, value: String) {
+        use crate::torsion::form::Field as TF;
+        let f = &mut self.torsion;
+        match field {
+            TF::WireDia => f.wire_dia = value,
+            TF::MeanDia => f.mean_dia = value,
+            TF::BodyCoils => f.body_coils = value,
+            TF::Leg1 => f.leg1 = value,
+            TF::Leg2 => f.leg2 = value,
+            TF::ArborDia => f.arbor_dia = value,
+            TF::Moments => f.moments = value,
+        }
+    }
+
     fn set_mat_field(&mut self, field: MatField, value: String) {
         let f = &mut self.mat_form;
         match field {
@@ -697,6 +758,15 @@ impl App {
             Family::Extension => {
                 match crate::extension::form::build_spec(&self.extension, self.unit_system) {
                     Ok(e) => springcore::DesignSpec::Extension(e),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
+            }
+            Family::Torsion => {
+                match crate::torsion::form::build_spec(&self.torsion, self.unit_system) {
+                    Ok(s) => springcore::DesignSpec::Torsion(s),
                     Err(e) => {
                         self.action_error = Some(e.to_string());
                         return;
@@ -758,6 +828,14 @@ impl App {
                 self.family = Family::Extension;
                 crate::extension::form::populate_from_spec(
                     &mut self.extension,
+                    &spec,
+                    self.unit_system,
+                );
+            }
+            springcore::DesignSpec::Torsion(spec) => {
+                self.family = Family::Torsion;
+                crate::torsion::form::populate_from_spec(
+                    &mut self.torsion,
                     &spec,
                     self.unit_system,
                 );

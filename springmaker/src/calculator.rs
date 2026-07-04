@@ -27,6 +27,10 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             crate::extension::view::design_panel(app),
             crate::extension::view::results_panel(app),
         ),
+        Family::Torsion => (
+            column![].into(), // torsion design panel — Task 5
+            column![].into(), // torsion results panel — Task 5
+        ),
     };
     let status = status_panel(app);
     let footer = footer();
@@ -123,6 +127,7 @@ fn status_panel(app: &App) -> Element<'_, Message> {
     let lines = match app.family {
         Family::Compression => crate::compression::view_model::status_view(app),
         Family::Extension => crate::extension::view_model::ext_status_view(app),
+        Family::Torsion => crate::presenter::common_status_lines(app),
     };
 
     if lines.is_empty() {

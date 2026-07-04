@@ -11,6 +11,7 @@ mod presenter;
 mod settings;
 mod settings_view;
 mod settings_view_model;
+mod torsion;
 mod widgets;
 
 #[cfg(test)]
