@@ -289,7 +289,7 @@ pub(crate) fn append_status_messages(lines: &mut Vec<StatusLine>, messages: &[St
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use springcore::{Angle, Force, Length, Moment, SpringRate, Stress, UnitSystem};
+    use springcore::{Angle, AngularRate, Force, Length, Moment, SpringRate, Stress, UnitSystem};
 
     // ── Unit conversions (the surface of the prior 1000× magnitude bug) ──
 
@@ -359,6 +359,41 @@ mod tests {
         assert_relative_eq!(
             display_angle_turns(Angle::from_turns(0.25)),
             0.25,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn ang_rate_per_deg_magnitude_pins_mm_per_m_scale() {
+        // 1 N·m/° stored in SI must display as 1000 N·mm/° metric (same * MM_PER_M
+        // pattern as display_rate). A dropped constant would produce 1.0 or 0.001.
+        let r = AngularRate::from_newton_meters_per_degree(1.0);
+        assert_relative_eq!(
+            display_ang_rate_per_deg(r, UnitSystem::Metric),
+            1000.0,
+            epsilon = 1e-9
+        );
+        // US: no scale factor — must equal the native accessor value.
+        assert_relative_eq!(
+            display_ang_rate_per_deg(r, UnitSystem::Us),
+            r.pound_force_inches_per_degree(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn ang_rate_per_turn_magnitude_pins_mm_per_m_scale() {
+        // Same contract: 1 N·m/turn → 1000 N·mm/turn metric.
+        let r = AngularRate::from_newton_meters_per_turn(1.0);
+        assert_relative_eq!(
+            display_ang_rate_per_turn(r, UnitSystem::Metric),
+            1000.0,
+            epsilon = 1e-9
+        );
+        // US: no scale factor.
+        assert_relative_eq!(
+            display_ang_rate_per_turn(r, UnitSystem::Us),
+            r.pound_force_inches_per_turn(),
             epsilon = 1e-9
         );
     }
