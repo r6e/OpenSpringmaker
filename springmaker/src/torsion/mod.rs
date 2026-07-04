@@ -1,4 +1,5 @@
-//! Torsion-spring Calculator GUI: form (pure presenter).
+//! Torsion-spring Calculator GUI: form and view-model (pure presenter).
 //!
-//! `view_model` and `view` are added in Tasks 4 and 5.
+//! `view` is added in Task 5.
 pub mod form;
+pub mod view_model;

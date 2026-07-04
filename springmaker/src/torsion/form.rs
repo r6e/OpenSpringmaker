@@ -7,9 +7,9 @@ use springcore::units::{Length, Moment};
 use springcore::{Material, MaterialStore, Result, TorsionSpec, UnitSystem};
 
 /// Which torsion text field a `Message::TorField` targets.
-// Variants are constructed by `torsion::view` (Task 5); `#[expect]` keeps the
-// clippy-D-warnings gate clean during the transitional Task-3 state.
-#[expect(dead_code)]
+// Variants are constructed by `torsion::view_model::tor_inputs_view` (Task 4) and
+// `torsion::view` (Task 5). No dead_code annotation is needed: the variants are
+// referenced in `tor_inputs_view`'s body and test code, keeping them "live."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     WireDia,
@@ -58,10 +58,9 @@ impl TorFormState {
 /// A solved torsion form: the design (which carries engine-computed status).
 #[derive(Debug, Clone)]
 pub struct TorFormOutcome {
-    // Read by `torsion::view_model` (Task 4) and by tests; `#[expect]` is
-    // scoped to non-test builds where the dead_code lint fires (tests DO read
-    // this field, so `#[expect]` would be unfulfilled in the test target).
-    #[cfg_attr(not(test), expect(dead_code))]
+    // Read by `torsion::view_model::tor_status_view` (now wired in Task 4) and by
+    // tests; the `#[cfg_attr]` guard is no longer needed because `tor_status_view`
+    // references `out.design` in non-test builds via `calculator::status_panel`.
     pub design: TorsionDesign,
 }
 

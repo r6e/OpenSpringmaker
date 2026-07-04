@@ -127,7 +127,7 @@ fn status_panel(app: &App) -> Element<'_, Message> {
     let lines = match app.family {
         Family::Compression => crate::compression::view_model::status_view(app),
         Family::Extension => crate::extension::view_model::ext_status_view(app),
-        Family::Torsion => crate::presenter::common_status_lines(app),
+        Family::Torsion => crate::torsion::view_model::tor_status_view(app),
     };
 
     if lines.is_empty() {
