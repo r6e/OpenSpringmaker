@@ -173,8 +173,10 @@ pub enum TorsionSpec {
 ## E. is_blank invariant
 
 Per scenario, the arm lists EVERY displayed text input (torsion has no pre-filled text
-defaults); typing any — including the optional `arbor_dia`, the F@r `forces` /
-`load_radius`, and TwoLoad's four point fields — clears blank. Selectors
+defaults); typing any — including the optional `arbor_dia` and TwoLoad's four point
+fields — clears blank. The moment-entry fields count only in their active entry mode:
+`moments` in Direct mode; `forces`/`load_radius` in ForceAtRadius mode (mirroring
+extension's `hook_mode`-gated blank term — final-review refinement). Selectors
 (`scenario`, `friction_model`, `moment_entry`) are excluded: they always hold a
 default and cannot distinguish an untouched form. Invariant tests mirror extension's
 (untouched-per-scenario blank; each field-class trips it; selector changes alone do

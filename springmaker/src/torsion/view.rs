@@ -106,7 +106,7 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
 }
 
 /// Stable widget ID for a torsion field's text input. Single source of truth shared
-/// by the view and tests (Task 6 Simulator resolves widget ids through this fn).
+/// by the view and Simulator tests, which resolve widget ids through this fn.
 /// An explicit, exhaustive match avoids `Debug`-derived strings and forces a
 /// deliberate choice when a `Field` variant is added.
 pub(crate) fn tor_field_id(field: Field) -> &'static str {

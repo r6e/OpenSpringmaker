@@ -1,8 +1,8 @@
 //! Pure torsion form-to-design logic. No iced dependency.
 use crate::form_helpers::{
-    ang_rate_nmm_per_deg, angle_deg, fmt_ang_rate_nmm_per_deg, fmt_angle_deg, fmt_len, fmt_moment,
-    fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm, positive_force_n,
-    positive_num,
+    ang_rate_nmm_per_deg, angle_deg, finite_or_err, fmt_ang_rate_nmm_per_deg, fmt_angle_deg,
+    fmt_len, fmt_moment, fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm,
+    positive_force_n, positive_num,
 };
 use springcore::torsion::{FrictionModel, PowerUser, Scenario, TorsionDesign};
 use springcore::units::{Angle, AngularRate, Force, Length, Moment};
@@ -61,9 +61,9 @@ impl std::fmt::Display for MomentEntry {
 }
 
 /// Which torsion text field a `Message::TorField` targets.
-// Variants are constructed by `torsion::view_model::tor_inputs_view` (Task 4) and
-// `torsion::view` (Task 5). No dead_code annotation is needed: the variants are
-// referenced in `tor_inputs_view`'s body and test code, keeping them "live."
+// Variants are constructed by `torsion::view_model::tor_inputs_view` and
+// `torsion::view`. No dead_code annotation is needed: the variants are referenced in
+// `tor_inputs_view`'s body and test code, keeping them "live."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     WireDia,
@@ -123,40 +123,49 @@ impl TorFormState {
     /// a blank form.
     pub fn is_blank(&self) -> bool {
         let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
+        // Only the ACTIVE entry mode's fields signal intent — a hidden field left over
+        // from a toggled-away mode must not un-blank a visually empty form (mirrors
+        // extension's hook_mode-gated hooks_blank term).
+        let moment_entry_blank = match self.moment_entry {
+            MomentEntry::Direct => self.moments.trim().is_empty(),
+            MomentEntry::ForceAtRadius => {
+                self.forces.trim().is_empty() && self.load_radius.trim().is_empty()
+            }
+        };
         match self.scenario {
-            TorScenarioKind::PowerUser => all_empty(&[
-                &self.wire_dia,
-                &self.mean_dia,
-                &self.body_coils,
-                &self.leg1,
-                &self.leg2,
-                &self.arbor_dia,
-                &self.moments,
-                &self.forces,
-                &self.load_radius,
-            ]),
-            TorScenarioKind::RateBased => all_empty(&[
-                &self.wire_dia,
-                &self.mean_dia,
-                &self.rate,
-                &self.leg1,
-                &self.leg2,
-                &self.arbor_dia,
-                &self.moments,
-                &self.forces,
-                &self.load_radius,
-            ]),
-            TorScenarioKind::Dimensional => all_empty(&[
-                &self.wire_dia,
-                &self.outer_dia,
-                &self.body_coils,
-                &self.leg1,
-                &self.leg2,
-                &self.arbor_dia,
-                &self.moments,
-                &self.forces,
-                &self.load_radius,
-            ]),
+            TorScenarioKind::PowerUser => {
+                moment_entry_blank
+                    && all_empty(&[
+                        &self.wire_dia,
+                        &self.mean_dia,
+                        &self.body_coils,
+                        &self.leg1,
+                        &self.leg2,
+                        &self.arbor_dia,
+                    ])
+            }
+            TorScenarioKind::RateBased => {
+                moment_entry_blank
+                    && all_empty(&[
+                        &self.wire_dia,
+                        &self.mean_dia,
+                        &self.rate,
+                        &self.leg1,
+                        &self.leg2,
+                        &self.arbor_dia,
+                    ])
+            }
+            TorScenarioKind::Dimensional => {
+                moment_entry_blank
+                    && all_empty(&[
+                        &self.wire_dia,
+                        &self.outer_dia,
+                        &self.body_coils,
+                        &self.leg1,
+                        &self.leg2,
+                        &self.arbor_dia,
+                    ])
+            }
             TorScenarioKind::TwoLoad => all_empty(&[
                 &self.wire_dia,
                 &self.mean_dia,
@@ -175,9 +184,9 @@ impl TorFormState {
 /// A solved torsion form: the design (which carries engine-computed status).
 #[derive(Debug, Clone)]
 pub struct TorFormOutcome {
-    // Read by `torsion::view_model::tor_status_view` (now wired in Task 4) and by
-    // tests; the `#[cfg_attr]` guard is no longer needed because `tor_status_view`
-    // references `out.design` in non-test builds via `calculator::status_panel`.
+    // Read by `torsion::view_model::tor_status_view` and by tests;
+    // the `#[cfg_attr]` guard is no longer needed because `tor_status_view` references
+    // `out.design` in non-test builds via `calculator::status_panel`.
     pub design: TorsionDesign,
 }
 
@@ -211,11 +220,12 @@ fn parse_applied_moments_nmm(form: &TorFormState, us: UnitSystem) -> Result<Vec<
                 .filter(|s| !s.is_empty())
                 .map(|s| {
                     let force_n = positive_force_n("force", s, us)?;
-                    Ok(springcore::torsion::moment_from_force_at_radius(
+                    let nmm = springcore::torsion::moment_from_force_at_radius(
                         Force::from_newtons(force_n),
                         Length::from_millimeters(radius_mm),
                     )
-                    .newton_millimeters())
+                    .newton_millimeters();
+                    finite_or_err("force", s, nmm)
                 })
                 .collect::<Result<_>>()?;
             if moments.is_empty() {
@@ -742,6 +752,45 @@ mod tests {
         assert_eq!(form2.moment_entry, MomentEntry::Direct);
         assert!(form2.forces.is_empty() && form2.load_radius.is_empty());
         assert_eq!(form2.moments, "500", "derived moments shown in Direct mode");
+    }
+
+    #[test]
+    fn is_blank_ignores_hidden_far_fields_after_toggle_back() {
+        // Toggle to F@r, type a force, toggle back to Direct: the hidden forces field
+        // must not un-blank the visually empty Direct form.
+        let mut f = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            forces: "10".into(),
+            ..TorFormState::default()
+        };
+        assert!(
+            !f.is_blank(),
+            "typed force in the ACTIVE mode signals intent"
+        );
+        f.moment_entry = MomentEntry::Direct;
+        assert!(
+            f.is_blank(),
+            "a hidden F@r field must not un-blank a visually empty Direct form"
+        );
+    }
+
+    #[test]
+    fn far_huge_force_overflow_is_rejected() {
+        // 1e308 N × 50 mm = 5e309 N·mm, which overflows to +Inf.
+        // finite_or_err must catch this before the engine sees it.
+        let f = TorFormState {
+            moment_entry: MomentEntry::ForceAtRadius,
+            forces: "1e308".into(),
+            load_radius: "50".into(),
+            moments: String::new(),
+            ..metric_form()
+        };
+        let err = parse_and_solve(&f, "Music Wire", UnitSystem::Metric, &store())
+            .expect_err("overflow moment must be caught at form boundary");
+        assert!(
+            err.to_string().contains("overflow"),
+            "expected overflow guard message; got: {err}"
+        );
     }
 
     #[test]

@@ -73,7 +73,7 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
 /// finiteness guard shared by the unit-converting helpers: a finite display value can
 /// overflow to ±Inf after the US/metric scale factor, so each helper re-checks its
 /// converted SI result here.
-fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
+pub(crate) fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
     if v_si.is_finite() {
         Ok(v_si)
     } else {
