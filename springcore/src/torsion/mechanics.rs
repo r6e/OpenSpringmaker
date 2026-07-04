@@ -22,6 +22,19 @@ pub enum FrictionModel {
     PureBending,
 }
 
+impl std::fmt::Display for FrictionModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            FrictionModel::ShigleyFriction => "Shigley (with friction)",
+            FrictionModel::PureBending => "Pure bending (EN 13906-3)",
+        })
+    }
+}
+
+/// All friction models in pick-list display order.
+pub const ALL_FRICTION_MODELS: &[FrictionModel] =
+    &[FrictionModel::ShigleyFriction, FrictionModel::PureBending];
+
 /// Inner-fiber bending stress-correction factor K_bi for round wire (Shigley Eq. 10-43):
 /// `K_bi = (4C² − C − 1) / (4C(C − 1))`, where `C` is the spring index `D/d`. The inner
 /// fiber carries the maximum bending stress and governs design.
@@ -179,6 +192,18 @@ mod tests {
     #[test]
     fn friction_model_default_is_shigley() {
         assert_eq!(FrictionModel::default(), FrictionModel::ShigleyFriction);
+    }
+
+    #[test]
+    fn friction_model_display_names() {
+        assert_eq!(
+            FrictionModel::ShigleyFriction.to_string(),
+            "Shigley (with friction)"
+        );
+        assert_eq!(
+            FrictionModel::PureBending.to_string(),
+            "Pure bending (EN 13906-3)"
+        );
     }
 
     #[test]

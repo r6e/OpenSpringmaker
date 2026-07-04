@@ -28,8 +28,8 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             crate::extension::view::results_panel(app),
         ),
         Family::Torsion => (
-            column![].into(), // torsion design panel — Task 5
-            column![].into(), // torsion results panel — Task 5
+            crate::torsion::view::design_panel(app),
+            crate::torsion::view::results_panel(app),
         ),
     };
     let status = status_panel(app);

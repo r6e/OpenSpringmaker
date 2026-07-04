@@ -155,11 +155,7 @@ pub enum Message {
     ExtHookMode(crate::extension::form::HookMode),
     ExtScenario(crate::extension::form::ExtScenarioKind),
     // Calculator screen — torsion
-    // Constructed by `torsion::view` (Task 5); `#[expect]` keeps clippy clean
-    // during the transitional Task-3 state.
-    #[expect(dead_code)]
     TorField(crate::torsion::form::Field, String),
-    #[expect(dead_code)]
     TorFriction(springcore::torsion::FrictionModel),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),

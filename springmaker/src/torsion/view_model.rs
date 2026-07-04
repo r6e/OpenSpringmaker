@@ -6,9 +6,10 @@
 
 use crate::app::App;
 use crate::presenter::{
-    append_status_messages, display_ang_rate_per_deg, display_ang_rate_per_turn, display_len,
-    display_moment, display_stress, unit_length_label, unit_moment_label, unit_stress_label,
-    Emphasis, FieldDescriptor, ResultRow, StatusLine,
+    append_status_messages, display_ang_rate_per_deg, display_ang_rate_per_turn,
+    display_angle_degrees, display_angle_turns, display_len, display_moment, display_stress,
+    unit_length_label, unit_moment_label, unit_stress_label, Emphasis, FieldDescriptor, ResultRow,
+    StatusLine,
 };
 use crate::torsion::form::Field;
 use springcore::torsion::TorsionDesign;
@@ -43,8 +44,6 @@ pub(crate) struct TorLoadTable {
 
 /// Build a [`TorLoadTable`] from a solved torsion design.
 fn tor_load_table(d: &TorsionDesign, us: springcore::UnitSystem) -> TorLoadTable {
-    use crate::presenter::display_angle_degrees;
-    use crate::presenter::display_angle_turns;
     let rows = d
         .load_points
         .iter()
@@ -141,7 +140,6 @@ fn rate_per_turn_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow
 ///
 /// A solved outcome takes priority over an error string (the two are mutually
 /// exclusive after any recompute); blank state with neither is Empty.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn tor_results_view(app: &App) -> TorResultsView {
     match &app.tor_outcome {
         Some(out) => {
@@ -176,7 +174,6 @@ pub fn tor_status_view(app: &App) -> Vec<StatusLine> {
 /// The torsion input fields with unit-aware labels (seven fields, PowerUser only).
 ///
 /// The friction-model pick-list is rendered separately in the view.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let us = app.unit_system;
     let len = unit_length_label(us);
