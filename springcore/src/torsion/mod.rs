@@ -8,5 +8,7 @@ mod mechanics;
 mod scenario;
 
 pub use design::{solve_forward, TorsionDesign, TorsionInputs, TorsionLoadPoint};
-pub use mechanics::{FrictionModel, ALL_FRICTION_MODELS};
-pub use scenario::{PowerUser, Scenario};
+pub use mechanics::{
+    active_coils_for_rate, moment_from_force_at_radius, FrictionModel, ALL_FRICTION_MODELS,
+};
+pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
