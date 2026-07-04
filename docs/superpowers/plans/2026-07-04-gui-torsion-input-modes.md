@@ -581,7 +581,7 @@ git commit -m "feat(gui): torsion scenario picker + RateBased input mode"
 - Modify: `springmaker/src/app.rs` (`set_tor_field` arms), `view_model.rs` (scenario input lists), `view.rs` (field maps + ids)
 
 **Interfaces:**
-- Consumes: Task 2's threading; Task 1's `TorsionSpec::{Dimensional, TwoLoad}` shapes; engine `springcore::torsion::{Dimensional, TwoLoad}`; `Angle::from_degrees`.
+- Consumes: Task 2's threading; Task 1's `TorsionSpec::{Dimensional, TwoLoad}` shapes; engine `springcore::torsion::{Dimensional, TwoLoad}`; `Angle::from_degrees`. NOTE (plan fix from Task 2): oracle fixtures that assert derived body coils == 5.0 MUST set `friction_model: FrictionModel::PureBending` — 0.5085 N·m/rad is the PureBending oracle; the default ShigleyFriction derives ≈4.714 coils. Slope/rate/index assertions are friction-independent.
 - Produces: `TorFormState` gains `pub outer_dia: String, pub moment1: String, pub angle1: String, pub moment2: String, pub angle2: String`; `Field::{OuterDia, Moment1, Angle1, Moment2, Angle2}`; ids `tor-outer-dia`, `tor-moment1`, `tor-angle1`, `tor-moment2`, `tor-angle2`; `angle_deg(field, value) -> Result<f64>` (any finite; `num` only — degrees both unit systems, NO unit conversion) and `fmt_angle_deg(deg) -> String` (`format!("{deg}")`); private `fn dimensional_mean_check(wire_dia_mm: f64, outer_dia_mm: f64) -> Result<()>` rejecting `outer − wire ≤ 0` with `"outer diameter must be greater than wire diameter"`.
 
 **dimensional_mean_check** (form.rs, mirroring extension's `dimensional_mean_mm` rationale — reject at the form boundary against the field the user typed; the engine's OD/mean/index guards remain the backstop; applied in BOTH `parse_and_solve` and `build_spec` so an unloadable spec is never persisted):
@@ -711,6 +711,7 @@ with tests: `-10` accepted, `nan`/`inf` rejected, `fmt` round-trip.
         // (508.5 N·mm, 1 rad = 57.29578°), (1017 N·mm, 2 rad = 114.59156°).
         TorFormState {
             scenario: TorScenarioKind::TwoLoad,
+            friction_model: FrictionModel::PureBending, // 0.5085 N·m/rad is the PureBending oracle
             wire_dia: "2".into(),
             mean_dia: "20".into(),
             leg1: "0".into(),
