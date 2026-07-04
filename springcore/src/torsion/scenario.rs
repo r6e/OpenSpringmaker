@@ -2,7 +2,9 @@
 //! of which quantities are inputs; it delegates to `design::solve_forward`.
 
 use crate::material::Material;
-use crate::torsion::design::{solve_forward, TorsionDesign, TorsionInputs};
+use crate::torsion::design::{
+    solve_forward, validate_wire_mean_geometry, TorsionDesign, TorsionInputs,
+};
 use crate::torsion::mechanics::{active_coils_for_rate, active_coils_with_legs, FrictionModel};
 use crate::units::{Angle, AngularRate, Length, Moment};
 use crate::{Result, SpringError};
@@ -51,36 +53,17 @@ impl Scenario for PowerUser {
     }
 }
 
-/// Validate wire/mean geometry with `solve_forward`'s messages, for scenarios whose
-/// derivation consumes the geometry BEFORE delegation. Error precedence (spec
-/// requirement): a degenerate wire/mean must surface the geometry error, not a
-/// misleading derived-coils error.
-fn validate_rate_geometry(wire_dia: Length, mean_dia: Length) -> Result<()> {
-    let d = wire_dia.meters();
-    if !(d.is_finite() && d > 0.0) {
-        return Err(SpringError::InconsistentInputs(
-            "wire diameter must be a positive finite number".into(),
-        ));
-    }
-    let dm = mean_dia.meters();
-    if !(dm.is_finite() && dm > 0.0) {
-        return Err(SpringError::InconsistentInputs(
-            "mean diameter must be a positive finite number".into(),
-        ));
-    }
-    if dm <= d {
-        return Err(SpringError::InconsistentInputs(
-            "mean diameter must exceed wire diameter (spring index must exceed 1)".into(),
-        ));
-    }
-    Ok(())
-}
+/// Error text for a non-finite derived active-coil count, emitted by the `na` gate
+/// in [`body_coils_for_rate_input`] and by [`validate_derived_body_coils`]'s
+/// finiteness backstop — single-sourced so the two sites cannot drift.
+const DERIVED_COILS_NOT_FINITE: &str =
+    "derived body coils must be finite (rate too small for this geometry)";
 
 /// Body coils that produce `rate`: effective `Nₐ` from the inverted rate formula
 /// ([`active_coils_for_rate`]) minus the straight-leg contribution (Shigley
 /// Eq. 10-50, via [`active_coils_with_legs`] with zero body coils). Shared by the
 /// RateBased and TwoLoad scenarios. Callers validate geometry first
-/// (`validate_rate_geometry`).
+/// (`validate_wire_mean_geometry`).
 fn body_coils_for_rate_input(
     material: &Material,
     wire_dia: Length,
@@ -97,9 +80,19 @@ fn body_coils_for_rate_input(
         ));
     }
     let na = active_coils_for_rate(material.youngs_modulus, wire_dia, mean_dia, rate, friction);
+    if !na.is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            DERIVED_COILS_NOT_FINITE.into(),
+        ));
+    }
     // Leg term via the forward helper with zero body coils — single source for
     // the (L₁+L₂)/(3πD) formula.
     let leg_term = active_coils_with_legs(0.0, leg1, leg2, mean_dia);
+    if !leg_term.is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            "leg contribution must be finite (leg lengths non-finite or too large)".into(),
+        ));
+    }
     validate_derived_body_coils(na - leg_term)
 }
 
@@ -110,7 +103,7 @@ fn body_coils_for_rate_input(
 fn validate_derived_body_coils(body_coils: f64) -> Result<f64> {
     if !body_coils.is_finite() {
         return Err(SpringError::InconsistentInputs(
-            "derived body coils must be finite (rate too small for this geometry)".into(),
+            DERIVED_COILS_NOT_FINITE.into(),
         ));
     }
     if body_coils <= 0.0 {
@@ -144,7 +137,7 @@ pub struct RateBased {
 
 impl Scenario for RateBased {
     fn solve(&self, material: &Material, friction: FrictionModel) -> Result<TorsionDesign> {
-        validate_rate_geometry(self.wire_dia, self.mean_dia)?;
+        validate_wire_mean_geometry(self.wire_dia, self.mean_dia)?;
         let body_coils = body_coils_for_rate_input(
             material,
             self.wire_dia,
@@ -171,10 +164,10 @@ impl Scenario for RateBased {
 }
 
 /// Outer diameter given instead of mean; mean is derived as `OD − d`. The torsion
-/// counterpart to the compression/extension `Dimensional` scenario. No
-/// scenario-level guard beyond delegation: `solve_forward` rejects the derived
-/// `mean ≤ 0` (positivity guard) and `mean ≤ d` (spring-index guard), covering
-/// every `OD ≤ 2d` input.
+/// counterpart to the compression/extension `Dimensional` scenario. Scenario-level
+/// guard (sibling parity): `outer_dia` must be a positive finite number —
+/// `InconsistentInputs("outer diameter must be a positive finite number")`. The
+/// derived `mean ≤ 0` and `mean ≤ d` cases still delegate to `solve_forward`.
 #[derive(Debug, Clone)]
 pub struct Dimensional {
     /// Wire diameter `d`.
@@ -195,6 +188,12 @@ pub struct Dimensional {
 
 impl Scenario for Dimensional {
     fn solve(&self, material: &Material, friction: FrictionModel) -> Result<TorsionDesign> {
+        let od = self.outer_dia.meters();
+        if !(od.is_finite() && od > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "outer diameter must be a positive finite number".into(),
+            ));
+        }
         let mean_dia = Length::from_meters(self.outer_dia.meters() - self.wire_dia.meters());
         solve_forward(
             material,
@@ -241,7 +240,7 @@ pub struct TwoLoad {
 
 impl Scenario for TwoLoad {
     fn solve(&self, material: &Material, friction: FrictionModel) -> Result<TorsionDesign> {
-        validate_rate_geometry(self.wire_dia, self.mean_dia)?;
+        validate_wire_mean_geometry(self.wire_dia, self.mean_dia)?;
         let (m1, th1) = self.point1;
         let (m2, th2) = self.point2;
         let d_theta = th2.radians() - th1.radians();
@@ -468,6 +467,88 @@ mod tests {
     }
 
     #[test]
+    fn rate_based_rejects_non_finite_leg_with_leg_message() {
+        // leg1 = +Inf → leg_term overflows to +Inf → leg-attributed message,
+        // not the rate-too-small message. Pins the separate leg_term finiteness
+        // gate in body_coils_for_rate_input.
+        let m = crate::test_support::music_wire();
+        let r = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: AngularRate::from_newton_meters_per_radian(0.5085),
+            leg1: Length::from_meters(f64::INFINITY),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        }
+        .solve(&m, FrictionModel::PureBending);
+        match r {
+            Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                msg.contains("leg contribution must be finite"),
+                "expected the leg-contribution finite error, got: {msg}"
+            ),
+            other => panic!("non-finite leg must be rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rate_based_rejects_overflowing_finite_leg_with_leg_message() {
+        // leg1 = 3.4e307 m is finite, but leg_term = (3.4e307)/(3πD) ≈ 1.8e308 >
+        // f64::MAX overflows to +Inf. Pins that finite-but-huge legs still surface
+        // the leg-attributed error — the case is_finite() leg pre-validation alone
+        // would miss.
+        let m = crate::test_support::music_wire();
+        let r = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: AngularRate::from_newton_meters_per_radian(0.5085),
+            leg1: Length::from_meters(3.4e307),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        }
+        .solve(&m, FrictionModel::PureBending);
+        match r {
+            Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                msg.contains("leg contribution must be finite"),
+                "expected the leg-contribution finite error, got: {msg}"
+            ),
+            other => panic!("overflowing finite leg must be rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rate_based_na_gate_precedes_leg_gate_for_combined_overflow() {
+        // Tiny rate (na → +Inf) AND huge leg (leg_term → +Inf): the na gate fires
+        // first with the "rate too small for this geometry" message. Pins na-before-leg
+        // precedence and kills the condition-off mutant on the na gate: under that
+        // mutant, execution with these inputs falls through to the LEG gate, whose
+        // "leg contribution must be finite…" message lacks the asserted "rate too
+        // small" text — that mismatch is the kill. The plain tiny-rate test (no legs)
+        // cannot kill it: there the fall-through reaches validate_derived_body_coils,
+        // whose finiteness backstop emits the byte-identical DERIVED_COILS_NOT_FINITE
+        // text, so its assertion still passes.
+        let m = crate::test_support::music_wire();
+        let r = RateBased {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            rate: AngularRate::from_newton_meters_per_radian(1e-320),
+            leg1: Length::from_meters(3.4e307),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        }
+        .solve(&m, FrictionModel::PureBending);
+        match r {
+            Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                msg.contains("rate too small for this geometry"),
+                "expected the rate-too-small error first, got: {msg}"
+            ),
+            other => panic!("tiny rate + huge leg must be rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn rate_based_rejects_tiny_rate_with_finite_coils_error() {
         // A denormal-scale rate drives Na to +Inf; the derivation must reject it with
         // the finite-coils message, not pass Inf body coils to the engine.
@@ -606,6 +687,34 @@ mod tests {
                 ),
                 "OD = {od} mm with d = 2 mm must be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn dimensional_rejects_non_finite_or_non_positive_outer_dia() {
+        // The scenario-level OD guard (sibling parity) must fire before the mean
+        // derivation. Message assertions are load-bearing: for od=0.0 and od=+Inf,
+        // the `&&→||` and `>→>=` mutants fall through to solve_forward's mean guard,
+        // which returns a DIFFERENT InconsistentInputs message — asserting the exact
+        // text distinguishes the two paths and kills both mutants.
+        let m = crate::test_support::music_wire();
+        let with_od = |od: f64| Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_meters(od),
+            body_coils: 5.0,
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        };
+        for od in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            match with_od(od).solve(&m, FrictionModel::PureBending) {
+                Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                    msg.contains("outer diameter must be a positive finite number"),
+                    "expected the OD guard message for od={od}, got: {msg}"
+                ),
+                other => panic!("od={od} must be rejected, got {other:?}"),
+            }
         }
     }
 

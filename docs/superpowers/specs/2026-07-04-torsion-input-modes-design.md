@@ -120,11 +120,13 @@ pub struct Dimensional {
 }
 ```
 
-Derivation: `mean = outer_dia − wire_dia`. No scenario-level guard beyond what
-delegation provides: `solve_forward` rejects `mean ≤ 0` ("must be a positive finite
-number") and `mean ≤ d` ("spring index must exceed 1"), which covers every
-`OD ≤ 2d` input. (The GUI phase adds the field-named `outer > wire` error at the
-form boundary, exactly like extension's `dimensional_mean_mm`.)
+Derivation: `mean = outer_dia − wire_dia`. Scenario-level guard (sibling parity with
+compression/extension's identical guard and message, per final-review decision):
+`outer_dia` must be a positive finite number —
+`InconsistentInputs("outer diameter must be a positive finite number")`. The derived
+`mean ≤ 0` and `mean ≤ d` cases still delegate to `solve_forward` (covers every
+positive-finite `OD ≤ 2d` input). (The GUI phase adds the field-named `outer > wire`
+error at the form boundary, exactly like extension's `dimensional_mean_mm`.)
 
 **TwoLoad** — two measured operating points given; rate, then body coils, derived.
 
@@ -203,12 +205,15 @@ E=203.4 GPa; Nₐ=5 → k'=0.5085 N·m/rad PureBending):
   (identical rate and stress — pins the subtraction).
 - `moment_from_force_at_radius(10 N, 50 mm) == 0.5 N·m` (exact).
 
-**Input-domain rejections:** rate ≤ 0 / non-finite; legs so long the derived
-`N_b ≤ 0` (exact boundary: legs chosen so `N_b == 0`); TwoLoad `θ₂ == θ₁`,
-`M₂ == M₁`, opposite-sign slope (larger moment at smaller angle), non-finite point
-values; Dimensional `OD == 2d` and `OD < 2d` (rejected via delegation); zero/negative
-moments (via delegation). Both friction models exercised where the friction model
-enters the derivation.
+**Input-domain rejections:** rate ≤ 0 / non-finite; legs non-finite or large enough to
+overflow `leg_term` to +Inf (e.g. `3.4e307 m` — finite-but-overflowing, pinning the
+leg-attributed message); na-before-leg precedence (tiny rate + huge leg → rate message
+surfaces first); legs so long the derived `N_b ≤ 0` (exact boundary: legs chosen so
+`N_b == 0`); TwoLoad `θ₂ == θ₁`, `M₂ == M₁`, opposite-sign slope (larger moment at
+smaller angle), non-finite point values; Dimensional `outer_dia` zero / negative /
+non-finite (OD guard, sibling parity) and `OD == 2d` / `OD < 2d` (positive-finite ODs,
+rejected via delegation); zero/negative moments (via delegation). Both friction models
+exercised where the friction model enters the derivation.
 
 **Gates:** the standard local CI-parity set (fmt/clippy -D/doc -D/typos/tests) plus
 `cargo mutants --in-diff` vs origin/main — literal 0 survivors on every changed
