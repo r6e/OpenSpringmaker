@@ -191,21 +191,41 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
                 Field::Moments,
             ),
         ],
-        // Task 3 replaces the Dimensional/TwoLoad arms with their own field sets.
-        TorScenarioKind::PowerUser | TorScenarioKind::Dimensional | TorScenarioKind::TwoLoad => {
-            vec![
-                FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
-                FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
-                FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
-                FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
-                FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
-                FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-                FieldDescriptor::new(
-                    format!("Moments ({moment}), comma-separated"),
-                    Field::Moments,
-                ),
-            ]
-        }
+        TorScenarioKind::PowerUser => vec![
+            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+            FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+            FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
+            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            FieldDescriptor::new(
+                format!("Moments ({moment}), comma-separated"),
+                Field::Moments,
+            ),
+        ],
+        TorScenarioKind::Dimensional => vec![
+            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+            FieldDescriptor::new(format!("Outer diameter ({len})"), Field::OuterDia),
+            FieldDescriptor::new("Body coils".to_string(), Field::BodyCoils),
+            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            FieldDescriptor::new(
+                format!("Moments ({moment}), comma-separated"),
+                Field::Moments,
+            ),
+        ],
+        TorScenarioKind::TwoLoad => vec![
+            FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
+            FieldDescriptor::new(format!("Mean diameter ({len})"), Field::MeanDia),
+            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            FieldDescriptor::new(format!("Moment 1 ({moment})"), Field::Moment1),
+            FieldDescriptor::new("Angle 1 (°)".to_string(), Field::Angle1),
+            FieldDescriptor::new(format!("Moment 2 ({moment})"), Field::Moment2),
+            FieldDescriptor::new("Angle 2 (°)".to_string(), Field::Angle2),
+        ],
     }
 }
 

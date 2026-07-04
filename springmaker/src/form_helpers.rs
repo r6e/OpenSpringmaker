@@ -260,6 +260,17 @@ pub(crate) fn fmt_moments(moments: &[f64], us: UnitSystem) -> String {
         .join(", ")
 }
 
+/// Parse an angle in degrees: any FINITE number (TwoLoad is offset-tolerant, so
+/// negative and zero angles are legal). Degrees in both unit systems — no conversion.
+pub(crate) fn angle_deg(field: &str, value: &str) -> Result<f64> {
+    num(field, value)
+}
+
+/// Format an angle in degrees for form population.
+pub(crate) fn fmt_angle_deg(deg: f64) -> String {
+    format!("{deg}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +387,21 @@ mod tests {
         let s = fmt_ang_rate_nmm_per_deg(nmm, UnitSystem::Us);
         let back = ang_rate_nmm_per_deg("rate", &s, UnitSystem::Us).unwrap();
         approx::assert_relative_eq!(back, nmm, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn angle_deg_accepts_any_finite_including_negative() {
+        assert_eq!(angle_deg("angle", "-10").unwrap(), -10.0);
+        assert_eq!(angle_deg("angle", "0").unwrap(), 0.0);
+        assert_eq!(angle_deg("angle", "90").unwrap(), 90.0);
+        assert!(angle_deg("angle", "nan").is_err());
+        assert!(angle_deg("angle", "inf").is_err());
+        assert!(angle_deg("angle", "abc").is_err());
+    }
+
+    #[test]
+    fn fmt_angle_deg_round_trips() {
+        let v = -42.5_f64;
+        assert_eq!(angle_deg("angle", &fmt_angle_deg(v)).unwrap(), v);
     }
 }

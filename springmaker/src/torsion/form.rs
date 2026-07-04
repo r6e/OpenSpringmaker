@@ -1,10 +1,10 @@
 //! Pure torsion form-to-design logic. No iced dependency.
 use crate::form_helpers::{
-    ang_rate_nmm_per_deg, fmt_ang_rate_nmm_per_deg, fmt_len, fmt_moments, length_mm, moments_nmm,
-    non_negative_length_mm, positive_num,
+    ang_rate_nmm_per_deg, angle_deg, fmt_ang_rate_nmm_per_deg, fmt_angle_deg, fmt_len, fmt_moment,
+    fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm, positive_num,
 };
 use springcore::torsion::{FrictionModel, PowerUser, Scenario, TorsionDesign};
-use springcore::units::{AngularRate, Length, Moment};
+use springcore::units::{Angle, AngularRate, Length, Moment};
 use springcore::{Material, MaterialStore, Result, TorsionSpec, UnitSystem};
 
 /// Which torsion input scenario is active. The torsion family's own enum — the
@@ -45,12 +45,17 @@ impl std::fmt::Display for TorScenarioKind {
 pub enum Field {
     WireDia,
     MeanDia,
+    OuterDia,
     BodyCoils,
     Rate,
     Leg1,
     Leg2,
     ArborDia,
     Moments,
+    Moment1,
+    Angle1,
+    Moment2,
+    Angle2,
 }
 
 /// Torsion form inputs as raw strings, plus the friction-model selector.
@@ -59,12 +64,22 @@ pub struct TorFormState {
     pub scenario: TorScenarioKind,
     pub wire_dia: String,
     pub mean_dia: String,
+    /// Outer diameter (Dimensional mode only): wire + 2 × mean_radius.
+    pub outer_dia: String,
     pub body_coils: String,
     pub rate: String,
     pub leg1: String,
     pub leg2: String,
     pub arbor_dia: String,
     pub moments: String,
+    /// First operating-point moment (TwoLoad mode).
+    pub moment1: String,
+    /// First operating-point angle in degrees (TwoLoad mode).
+    pub angle1: String,
+    /// Second operating-point moment (TwoLoad mode).
+    pub moment2: String,
+    /// Second operating-point angle in degrees (TwoLoad mode).
+    pub angle2: String,
     pub friction_model: FrictionModel,
 }
 
@@ -76,10 +91,7 @@ impl TorFormState {
     pub fn is_blank(&self) -> bool {
         let all_empty = |fields: &[&String]| fields.iter().all(|f| f.trim().is_empty());
         match self.scenario {
-            // Task 3 replaces the Dimensional/TwoLoad arms with their own field sets.
-            TorScenarioKind::PowerUser
-            | TorScenarioKind::Dimensional
-            | TorScenarioKind::TwoLoad => all_empty(&[
+            TorScenarioKind::PowerUser => all_empty(&[
                 &self.wire_dia,
                 &self.mean_dia,
                 &self.body_coils,
@@ -96,6 +108,26 @@ impl TorFormState {
                 &self.leg2,
                 &self.arbor_dia,
                 &self.moments,
+            ]),
+            TorScenarioKind::Dimensional => all_empty(&[
+                &self.wire_dia,
+                &self.outer_dia,
+                &self.body_coils,
+                &self.leg1,
+                &self.leg2,
+                &self.arbor_dia,
+                &self.moments,
+            ]),
+            TorScenarioKind::TwoLoad => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.leg1,
+                &self.leg2,
+                &self.arbor_dia,
+                &self.moment1,
+                &self.angle1,
+                &self.moment2,
+                &self.angle2,
             ]),
         }
     }
@@ -124,6 +156,18 @@ fn parse_moments_nmm_nonempty(form: &TorFormState, us: UnitSystem) -> Result<Vec
     Ok(moments)
 }
 
+/// Reject at the form boundary when outer diameter ≤ wire diameter (mean ≤ 0).
+/// Mirrors extension's `dimensional_mean_mm` guard — the engine's OD/index guards
+/// remain the defense-in-depth backstop.
+fn dimensional_mean_check(wire_dia_mm: f64, outer_dia_mm: f64) -> Result<()> {
+    if outer_dia_mm - wire_dia_mm <= 0.0 {
+        return Err(springcore::SpringError::InconsistentInputs(
+            "outer diameter must be greater than wire diameter".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Parse the optional arbor field: empty → None; non-empty → a positive length.
 fn parse_arbor(form: &TorFormState, us: UnitSystem) -> Result<Option<Length>> {
     if form.arbor_dia.trim().is_empty() {
@@ -134,6 +178,15 @@ fn parse_arbor(form: &TorFormState, us: UnitSystem) -> Result<Option<Length>> {
             &form.arbor_dia,
             us,
         )?)))
+    }
+}
+
+/// Like `parse_arbor` but returns millimetres for `build_spec`.
+fn parse_arbor_mm(form: &TorFormState, us: UnitSystem) -> Result<Option<f64>> {
+    if form.arbor_dia.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(length_mm("arbor diameter", &form.arbor_dia, us)?))
     }
 }
 
@@ -183,11 +236,45 @@ pub fn parse_and_solve(
                 design: scenario.solve(material, form.friction_model)?,
             })
         }
-        // Task 3 replaces this arm.
-        TorScenarioKind::Dimensional | TorScenarioKind::TwoLoad => {
-            Err(springcore::SpringError::InconsistentInputs(
-                "this input mode arrives in a later task".into(),
-            ))
+        TorScenarioKind::Dimensional => {
+            let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
+            let outer_dia_mm = length_mm("outer diameter", &form.outer_dia, us)?;
+            dimensional_mean_check(wire_dia_mm, outer_dia_mm)?;
+            let scenario = springcore::torsion::Dimensional {
+                wire_dia: Length::from_millimeters(wire_dia_mm),
+                outer_dia: Length::from_millimeters(outer_dia_mm),
+                body_coils: positive_num("body coils", &form.body_coils)?,
+                leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
+                leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
+                arbor_dia: parse_arbor(form, us)?,
+                moments: parse_moments_nmm_nonempty(form, us)?
+                    .into_iter()
+                    .map(Moment::from_newton_millimeters)
+                    .collect(),
+            };
+            Ok(TorFormOutcome {
+                design: scenario.solve(material, form.friction_model)?,
+            })
+        }
+        TorScenarioKind::TwoLoad => {
+            let scenario = springcore::torsion::TwoLoad {
+                wire_dia: Length::from_millimeters(length_mm("wire diameter", &form.wire_dia, us)?),
+                mean_dia: Length::from_millimeters(length_mm("mean diameter", &form.mean_dia, us)?),
+                leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
+                leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
+                arbor_dia: parse_arbor(form, us)?,
+                point1: (
+                    Moment::from_newton_millimeters(moment_nmm("moment 1", &form.moment1, us)?),
+                    Angle::from_degrees(angle_deg("angle 1", &form.angle1)?),
+                ),
+                point2: (
+                    Moment::from_newton_millimeters(moment_nmm("moment 2", &form.moment2, us)?),
+                    Angle::from_degrees(angle_deg("angle 2", &form.angle2)?),
+                ),
+            };
+            Ok(TorFormOutcome {
+                design: scenario.solve(material, form.friction_model)?,
+            })
         }
     }
 }
@@ -195,11 +282,6 @@ pub fn parse_and_solve(
 /// Parse `form` into a persisted `TorsionSpec` (SI mm / N·mm). The caller wraps it
 /// in `DesignSpec::Torsion`. Round-trips with `populate_from_spec`.
 pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
-    let arbor_dia_mm = if form.arbor_dia.trim().is_empty() {
-        None
-    } else {
-        Some(length_mm("arbor diameter", &form.arbor_dia, us)?)
-    };
     match form.scenario {
         TorScenarioKind::PowerUser => Ok(TorsionSpec::PowerUser {
             wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
@@ -207,7 +289,7 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
             body_coils: positive_num("body coils", &form.body_coils)?,
             leg1_mm: non_negative_length_mm("leg 1", &form.leg1, us)?,
             leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
-            arbor_dia_mm,
+            arbor_dia_mm: parse_arbor_mm(form, us)?,
             friction_model: form.friction_model,
             moments_nmm: parse_moments_nmm_nonempty(form, us)?,
         }),
@@ -217,16 +299,37 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
             rate_nmm_per_deg: ang_rate_nmm_per_deg("rate", &form.rate, us)?,
             leg1_mm: non_negative_length_mm("leg 1", &form.leg1, us)?,
             leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
-            arbor_dia_mm,
+            arbor_dia_mm: parse_arbor_mm(form, us)?,
             friction_model: form.friction_model,
             moments_nmm: parse_moments_nmm_nonempty(form, us)?,
         }),
-        // Task 3 replaces this arm.
-        TorScenarioKind::Dimensional | TorScenarioKind::TwoLoad => {
-            Err(springcore::SpringError::InconsistentInputs(
-                "this input mode arrives in a later task".into(),
-            ))
+        TorScenarioKind::Dimensional => {
+            let wire_dia_mm = length_mm("wire diameter", &form.wire_dia, us)?;
+            let outer_dia_mm = length_mm("outer diameter", &form.outer_dia, us)?;
+            dimensional_mean_check(wire_dia_mm, outer_dia_mm)?;
+            Ok(TorsionSpec::Dimensional {
+                wire_dia_mm,
+                outer_dia_mm,
+                body_coils: positive_num("body coils", &form.body_coils)?,
+                leg1_mm: non_negative_length_mm("leg 1", &form.leg1, us)?,
+                leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
+                arbor_dia_mm: parse_arbor_mm(form, us)?,
+                friction_model: form.friction_model,
+                moments_nmm: parse_moments_nmm_nonempty(form, us)?,
+            })
         }
+        TorScenarioKind::TwoLoad => Ok(TorsionSpec::TwoLoad {
+            wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
+            mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
+            leg1_mm: non_negative_length_mm("leg 1", &form.leg1, us)?,
+            leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
+            arbor_dia_mm: parse_arbor_mm(form, us)?,
+            friction_model: form.friction_model,
+            moment1_nmm: moment_nmm("moment 1", &form.moment1, us)?,
+            angle1_deg: angle_deg("angle 1", &form.angle1)?,
+            moment2_nmm: moment_nmm("moment 2", &form.moment2, us)?,
+            angle2_deg: angle_deg("angle 2", &form.angle2)?,
+        }),
     }
 }
 
@@ -280,17 +383,20 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             form.friction_model = *friction_model;
             form.moments = fmt_moments(moments_nmm, us);
         }
-        // Tasks 3–4 replace this arm with full per-scenario population.
         TorsionSpec::Dimensional {
             wire_dia_mm,
+            outer_dia_mm,
+            body_coils,
             leg1_mm,
             leg2_mm,
             arbor_dia_mm,
             friction_model,
             moments_nmm,
-            ..
         } => {
+            form.scenario = TorScenarioKind::Dimensional;
             form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.outer_dia = fmt_len(*outer_dia_mm, us);
+            form.body_coils = format!("{body_coils}");
             form.leg1 = fmt_len(*leg1_mm, us);
             form.leg2 = fmt_len(*leg2_mm, us);
             form.arbor_dia = match arbor_dia_mm {
@@ -307,8 +413,12 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             leg2_mm,
             arbor_dia_mm,
             friction_model,
-            ..
+            moment1_nmm,
+            angle1_deg,
+            moment2_nmm,
+            angle2_deg,
         } => {
+            form.scenario = TorScenarioKind::TwoLoad;
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.mean_dia = fmt_len(*mean_dia_mm, us);
             form.leg1 = fmt_len(*leg1_mm, us);
@@ -318,6 +428,10 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
                 None => String::new(),
             };
             form.friction_model = *friction_model;
+            form.moment1 = fmt_moment(*moment1_nmm, us);
+            form.angle1 = fmt_angle_deg(*angle1_deg);
+            form.moment2 = fmt_moment(*moment2_nmm, us);
+            form.angle2 = fmt_angle_deg(*angle2_deg);
         }
     }
 }
@@ -539,5 +653,132 @@ mod tests {
         assert!(f.is_blank(), "untouched RateBased form is blank");
         f.rate = "8.9".into();
         assert!(!f.is_blank(), "entering the rate clears blank");
+    }
+
+    #[test]
+    fn dimensional_matches_power_user_geometry() {
+        let form = TorFormState {
+            scenario: TorScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(), // mean = 20
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        let out = parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        assert_relative_eq!(out.design.index, 10.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn dimensional_outer_not_greater_than_wire_rejected_both_sites() {
+        // The owed field-named boundary error, at BOTH call sites, metric and US.
+        for us in [UnitSystem::Metric, UnitSystem::Us] {
+            let form = TorFormState {
+                scenario: TorScenarioKind::Dimensional,
+                wire_dia: "2".into(),
+                outer_dia: "2".into(), // mean = 0
+                body_coils: "5".into(),
+                leg1: "0".into(),
+                leg2: "0".into(),
+                moments: "1000".into(),
+                ..TorFormState::default()
+            };
+            for err in [
+                parse_and_solve(&form, "Music Wire", us, &store()).unwrap_err(),
+                build_spec(&form, us).unwrap_err(),
+            ] {
+                assert!(
+                    err.to_string()
+                        .contains("outer diameter must be greater than wire diameter"),
+                    "expected the form-boundary outer>wire error ({us:?}); got: {err}"
+                );
+            }
+        }
+    }
+
+    fn twoload_metric_form() -> TorFormState {
+        // Two points on the oracle k' = 0.5085 N·m/rad line, in display units:
+        // (508.5 N·mm, 1 rad = 57.29578°), (1017 N·mm, 2 rad = 114.59156°).
+        TorFormState {
+            scenario: TorScenarioKind::TwoLoad,
+            friction_model: FrictionModel::PureBending, // 0.5085 N·m/rad is the PureBending oracle
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moment1: "508.5".into(),
+            angle1: format!("{}", 180.0_f64 / std::f64::consts::PI),
+            moment2: "1017".into(),
+            angle2: format!("{}", 2.0_f64 * 180.0 / std::f64::consts::PI),
+            ..TorFormState::default()
+        }
+    }
+
+    #[test]
+    fn twoload_derives_rate_and_body_coils_from_points() {
+        let out = parse_and_solve(
+            &twoload_metric_form(),
+            "Music Wire",
+            UnitSystem::Metric,
+            &store(),
+        )
+        .expect("TwoLoad should solve");
+        assert_relative_eq!(
+            out.design.rate.newton_meters_per_radian(),
+            0.5085,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(out.design.inputs.body_coils, 5.0, max_relative = 1e-9);
+        assert_eq!(out.design.load_points.len(), 2);
+    }
+
+    #[test]
+    fn twoload_degenerate_points_surface_engine_message() {
+        let form = TorFormState {
+            angle2: twoload_metric_form().angle1.clone(), // same angle both points
+            ..twoload_metric_form()
+        };
+        let err = parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &store()).unwrap_err();
+        assert!(
+            err.to_string().contains("different angles"),
+            "engine degenerate-point message must surface; got: {err}"
+        );
+    }
+
+    #[test]
+    fn dimensional_and_twoload_round_trip_and_blank() {
+        for us in [UnitSystem::Metric, UnitSystem::Us] {
+            for form in [
+                TorFormState {
+                    scenario: TorScenarioKind::Dimensional,
+                    wire_dia: "2".into(),
+                    outer_dia: "22".into(),
+                    body_coils: "5".into(),
+                    leg1: "0".into(),
+                    leg2: "0".into(),
+                    moments: "1000".into(),
+                    ..TorFormState::default()
+                },
+                twoload_metric_form(),
+            ] {
+                let spec = build_spec(&form, us).unwrap();
+                let mut form2 = TorFormState::default();
+                populate_from_spec(&mut form2, &spec, us);
+                assert_eq!(form2.scenario, form.scenario);
+                assert_eq!(build_spec(&form2, us).unwrap(), spec);
+            }
+        }
+        let mut blank = TorFormState {
+            scenario: TorScenarioKind::TwoLoad,
+            ..TorFormState::default()
+        };
+        assert!(blank.is_blank());
+        blank.angle1 = "-10".into(); // negative angle is a legal, intent-signaling entry
+        assert!(
+            !blank.is_blank(),
+            "typing a TwoLoad point field clears blank"
+        );
     }
 }

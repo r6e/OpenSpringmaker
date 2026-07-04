@@ -73,12 +73,17 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
     match field {
         Field::WireDia => &form.wire_dia,
         Field::MeanDia => &form.mean_dia,
+        Field::OuterDia => &form.outer_dia,
         Field::BodyCoils => &form.body_coils,
         Field::Rate => &form.rate,
         Field::Leg1 => &form.leg1,
         Field::Leg2 => &form.leg2,
         Field::ArborDia => &form.arbor_dia,
         Field::Moments => &form.moments,
+        Field::Moment1 => &form.moment1,
+        Field::Angle1 => &form.angle1,
+        Field::Moment2 => &form.moment2,
+        Field::Angle2 => &form.angle2,
     }
 }
 
@@ -90,12 +95,17 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
     match field {
         Field::WireDia => "tor-wire-dia",
         Field::MeanDia => "tor-mean-dia",
+        Field::OuterDia => "tor-outer-dia",
         Field::BodyCoils => "tor-body-coils",
         Field::Rate => "tor-rate",
         Field::Leg1 => "tor-leg1",
         Field::Leg2 => "tor-leg2",
         Field::ArborDia => "tor-arbor-dia",
         Field::Moments => "tor-moments",
+        Field::Moment1 => "tor-moment1",
+        Field::Angle1 => "tor-angle1",
+        Field::Moment2 => "tor-moment2",
+        Field::Angle2 => "tor-angle2",
     }
 }
 

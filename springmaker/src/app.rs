@@ -702,12 +702,17 @@ impl App {
         match field {
             TF::WireDia => f.wire_dia = value,
             TF::MeanDia => f.mean_dia = value,
+            TF::OuterDia => f.outer_dia = value,
             TF::BodyCoils => f.body_coils = value,
             TF::Rate => f.rate = value,
             TF::Leg1 => f.leg1 = value,
             TF::Leg2 => f.leg2 = value,
             TF::ArborDia => f.arbor_dia = value,
             TF::Moments => f.moments = value,
+            TF::Moment1 => f.moment1 = value,
+            TF::Angle1 => f.angle1 = value,
+            TF::Moment2 => f.moment2 = value,
+            TF::Angle2 => f.angle2 = value,
         }
     }
 
