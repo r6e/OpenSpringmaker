@@ -194,7 +194,7 @@ impl Scenario for Dimensional {
                 "outer diameter must be a positive finite number".into(),
             ));
         }
-        let mean_dia = Length::from_meters(self.outer_dia.meters() - self.wire_dia.meters());
+        let mean_dia = Length::from_meters(od - self.wire_dia.meters());
         solve_forward(
             material,
             TorsionInputs {
