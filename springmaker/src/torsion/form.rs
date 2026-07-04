@@ -125,7 +125,7 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
     } else {
         Some(length_mm("arbor diameter", &form.arbor_dia, us)?)
     };
-    Ok(TorsionSpec {
+    Ok(TorsionSpec::PowerUser {
         wire_dia_mm: length_mm("wire diameter", &form.wire_dia, us)?,
         mean_dia_mm: length_mm("mean diameter", &form.mean_dia, us)?,
         body_coils: positive_num("body coils", &form.body_coils)?,
@@ -140,17 +140,80 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
 /// Write a persisted `TorsionSpec` back into `form`, converting SI to display
 /// units. After this call, `build_spec(form, us)` reproduces the spec.
 pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitSystem) {
-    form.wire_dia = fmt_len(spec.wire_dia_mm, us);
-    form.mean_dia = fmt_len(spec.mean_dia_mm, us);
-    form.body_coils = format!("{}", spec.body_coils);
-    form.leg1 = fmt_len(spec.leg1_mm, us);
-    form.leg2 = fmt_len(spec.leg2_mm, us);
-    form.arbor_dia = match spec.arbor_dia_mm {
-        Some(v) => fmt_len(v, us),
-        None => String::new(),
-    };
-    form.friction_model = spec.friction_model;
-    form.moments = fmt_moments(&spec.moments_nmm, us);
+    match spec {
+        TorsionSpec::PowerUser {
+            wire_dia_mm,
+            mean_dia_mm,
+            body_coils,
+            leg1_mm,
+            leg2_mm,
+            arbor_dia_mm,
+            friction_model,
+            moments_nmm,
+        } => {
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.body_coils = format!("{body_coils}");
+            form.leg1 = fmt_len(*leg1_mm, us);
+            form.leg2 = fmt_len(*leg2_mm, us);
+            form.arbor_dia = match arbor_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.friction_model = *friction_model;
+            form.moments = fmt_moments(moments_nmm, us);
+        }
+        // Tasks 2–4 replace these arms with full per-scenario population (scenario
+        // kind + mode-specific fields). Until then only PowerUser specs exist on
+        // disk — nothing writes the other tags before those tasks land.
+        TorsionSpec::RateBased {
+            wire_dia_mm,
+            leg1_mm,
+            leg2_mm,
+            arbor_dia_mm,
+            friction_model,
+            moments_nmm,
+            ..
+        }
+        | TorsionSpec::Dimensional {
+            wire_dia_mm,
+            leg1_mm,
+            leg2_mm,
+            arbor_dia_mm,
+            friction_model,
+            moments_nmm,
+            ..
+        } => {
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.leg1 = fmt_len(*leg1_mm, us);
+            form.leg2 = fmt_len(*leg2_mm, us);
+            form.arbor_dia = match arbor_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.friction_model = *friction_model;
+            form.moments = fmt_moments(moments_nmm, us);
+        }
+        TorsionSpec::TwoLoad {
+            wire_dia_mm,
+            mean_dia_mm,
+            leg1_mm,
+            leg2_mm,
+            arbor_dia_mm,
+            friction_model,
+            ..
+        } => {
+            form.wire_dia = fmt_len(*wire_dia_mm, us);
+            form.mean_dia = fmt_len(*mean_dia_mm, us);
+            form.leg1 = fmt_len(*leg1_mm, us);
+            form.leg2 = fmt_len(*leg2_mm, us);
+            form.arbor_dia = match arbor_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.friction_model = *friction_model;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -271,7 +334,11 @@ mod tests {
     #[test]
     fn empty_arbor_round_trips_as_none() {
         let spec = build_spec(&metric_form(), UnitSystem::Metric).unwrap();
-        assert_eq!(spec.arbor_dia_mm, None);
+        let arbor = match &spec {
+            springcore::TorsionSpec::PowerUser { arbor_dia_mm, .. } => *arbor_dia_mm,
+            _ => panic!("build_spec must produce a PowerUser spec"),
+        };
+        assert_eq!(arbor, None);
     }
 
     #[test]

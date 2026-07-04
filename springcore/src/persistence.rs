@@ -97,31 +97,69 @@ pub enum DesignSpec {
 }
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
-/// Single-scenario (PowerUser) family: a struct, not a `#[serde(tag="type")]` enum.
+/// One variant per input mode, `type`-tagged — MIGRATED from the original flat
+/// single-scenario struct (a conscious clean break: tag-less files written by the
+/// single-scenario GUI no longer load; `legacy_tagless_torsion_file_fails_cleanly`
+/// pins that they error rather than parse as the wrong shape).
 //
-// GUARDRAIL: Do NOT add `#[serde(deny_unknown_fields)]` to this struct.
-// `TorsionSpec` is flattened under `DesignSpec`'s `#[serde(tag = "family")]`
-// internally-tagged enum; serde rejects `deny_unknown_fields` in that position
-// because the injected `family` discriminant would be treated as an unknown field,
-// breaking deserialization of every existing torsion TOML file.
-//
-// GUARDRAIL: This is a plain struct (single-scenario, YAGNI). If torsion later
-// gains scenario modes, migrating to a `#[serde(tag = "type")]` enum is a
-// TOML-format-breaking change — old files lack the `type` key — and must be a
-// conscious, versioned migration, not an accidental refactor.
+// GUARDRAIL: Do NOT add `#[serde(deny_unknown_fields)]` here. The enum is
+// flattened under `DesignSpec`'s `#[serde(tag = "family")]` internally-tagged
+// enum; serde rejects `deny_unknown_fields` in that position because the injected
+// `family` discriminant would be treated as an unknown field, breaking
+// deserialization of every torsion TOML file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TorsionSpec {
-    pub wire_dia_mm: f64,
-    pub mean_dia_mm: f64,
-    pub body_coils: f64,
-    pub leg1_mm: f64,
-    pub leg2_mm: f64,
-    // The only optional field: the `toml` deserializer maps a missing key to
-    // `None` for `Option` types (no `#[serde(default)]` needed), so a missing or
-    // misspelled `arbor_dia_mm` deserializes to `None` rather than erroring.
-    pub arbor_dia_mm: Option<f64>,
-    pub friction_model: crate::torsion::FrictionModel,
-    pub moments_nmm: Vec<f64>,
+#[serde(tag = "type")]
+pub enum TorsionSpec {
+    PowerUser {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        body_coils: f64,
+        leg1_mm: f64,
+        leg2_mm: f64,
+        // The only optional field: the `toml` deserializer maps a missing key to
+        // `None` for `Option` types (no `#[serde(default)]` needed), so a missing
+        // or misspelled `arbor_dia_mm` deserializes to `None` rather than erroring.
+        arbor_dia_mm: Option<f64>,
+        friction_model: crate::torsion::FrictionModel,
+        moments_nmm: Vec<f64>,
+    },
+    RateBased {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        /// Required angular rate in N·mm per degree — the family's mm/N·mm storage
+        /// flavor and the degree-primary UI unit (exact conversion to the engine's
+        /// N·m/rad via `AngularRate::from_newton_meters_per_degree(v / 1000.0)`).
+        rate_nmm_per_deg: f64,
+        leg1_mm: f64,
+        leg2_mm: f64,
+        arbor_dia_mm: Option<f64>,
+        friction_model: crate::torsion::FrictionModel,
+        moments_nmm: Vec<f64>,
+    },
+    Dimensional {
+        wire_dia_mm: f64,
+        outer_dia_mm: f64,
+        body_coils: f64,
+        leg1_mm: f64,
+        leg2_mm: f64,
+        arbor_dia_mm: Option<f64>,
+        friction_model: crate::torsion::FrictionModel,
+        moments_nmm: Vec<f64>,
+    },
+    TwoLoad {
+        wire_dia_mm: f64,
+        mean_dia_mm: f64,
+        leg1_mm: f64,
+        leg2_mm: f64,
+        arbor_dia_mm: Option<f64>,
+        friction_model: crate::torsion::FrictionModel,
+        /// Two measured operating points. Angles are degrees and may be NEGATIVE
+        /// (the engine's TwoLoad is offset-tolerant) but never non-finite.
+        moment1_nmm: f64,
+        angle1_deg: f64,
+        moment2_nmm: f64,
+        angle2_deg: f64,
+    },
 }
 
 /// Extension scenario inputs (SI millimetres / newtons, as stored). 1c adds the other modes.
@@ -1124,7 +1162,7 @@ mode = "Default"
         let saved = SavedDesign {
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
-            design: DesignSpec::Torsion(TorsionSpec {
+            design: DesignSpec::Torsion(TorsionSpec::PowerUser {
                 wire_dia_mm: 2.0,
                 mean_dia_mm: 20.0,
                 body_coils: 5.0,
@@ -1159,7 +1197,7 @@ mode = "Default"
                 let saved = SavedDesign {
                     material: "Music Wire".into(),
                     unit_system: UnitSystem::Metric,
-                    design: DesignSpec::Torsion(TorsionSpec {
+                    design: DesignSpec::Torsion(TorsionSpec::PowerUser {
                         wire_dia_mm: 2.0,
                         mean_dia_mm: 20.0,
                         body_coils: 5.0,
@@ -1186,6 +1224,7 @@ unit_system = "Metric"
 
 [design]
 family = "Torsion"
+type = "PowerUser"
 wire_dia_mm = 2.0
 mean_dia_mm = 20.0
 body_coils = 5.0
@@ -1211,6 +1250,7 @@ unit_system = "Metric"
 
 [design]
 family = "Torsion"
+type = "PowerUser"
 wire_dia_mm = 2.0
 mean_dia_mm = 20.0
 body_coils = 5.0
@@ -1237,6 +1277,7 @@ unit_system = "Metric"
 
 [design]
 family = "Torsion"
+type = "PowerUser"
 wire_dia_mm = 2.0
 mean_dia_mm = 20.0
 body_coils = 5.0
@@ -1263,6 +1304,7 @@ unit_system = "Metric"
 
 [design]
 family = "Torsion"
+type = "PowerUser"
 wire_dia_mm = 2.0
 mean_dia_mm = 20.0
 body_coils = 5.0
@@ -1274,6 +1316,135 @@ moments_nmm = [100.0, 250.0]
         assert!(matches!(
             SavedDesign::from_toml(toml),
             Err(crate::SpringError::DataFile(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 1: TorsionSpec tagged-enum — new variant round-trips and guards
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn torsion_ratebased_dimensional_twoload_round_trip() {
+        use crate::torsion::FrictionModel;
+        for design in [
+            DesignSpec::Torsion(TorsionSpec::RateBased {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                rate_nmm_per_deg: 8.875,
+                leg1_mm: 10.0,
+                leg2_mm: 0.0,
+                arbor_dia_mm: Some(10.0),
+                friction_model: FrictionModel::PureBending,
+                moments_nmm: vec![1000.0],
+            }),
+            DesignSpec::Torsion(TorsionSpec::Dimensional {
+                wire_dia_mm: 2.0,
+                outer_dia_mm: 22.0,
+                body_coils: 5.0,
+                leg1_mm: 0.0,
+                leg2_mm: 0.0,
+                arbor_dia_mm: None,
+                friction_model: FrictionModel::ShigleyFriction,
+                moments_nmm: vec![100.0, 250.0],
+            }),
+            DesignSpec::Torsion(TorsionSpec::TwoLoad {
+                wire_dia_mm: 2.0,
+                mean_dia_mm: 20.0,
+                leg1_mm: 0.0,
+                leg2_mm: 0.0,
+                arbor_dia_mm: None,
+                friction_model: FrictionModel::ShigleyFriction,
+                moment1_nmm: 508.5,
+                angle1_deg: -10.0, // negative-but-finite angle is legal (offset-tolerant)
+                moment2_nmm: 1017.0,
+                angle2_deg: 47.29578,
+            }),
+        ] {
+            let saved = SavedDesign {
+                material: "Music Wire".into(),
+                unit_system: UnitSystem::Metric,
+                design,
+            };
+            let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+            assert_eq!(saved, back);
+        }
+    }
+
+    #[test]
+    fn legacy_tagless_torsion_file_fails_cleanly() {
+        // The exact flat layout the single-scenario GUI wrote (NO `type` key). The
+        // clean-break decision: it must ERROR (DataFile, naming the missing tag), never
+        // silently parse as some variant.
+        let legacy = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "ShigleyFriction"
+moments_nmm = [1000.0]
+"#;
+        match SavedDesign::from_toml(legacy) {
+            Err(SpringError::DataFile(msg)) => assert!(
+                msg.contains("type"),
+                "clean-break error should name the missing `type` tag; got: {msg}"
+            ),
+            other => panic!("legacy tag-less torsion file must fail to load, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_twoload_angle() {
+        // Angles may be negative (offset-tolerant) but never non-finite; the generic
+        // reject_non_finite tree-walk must cover the new angle fields.
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "TwoLoad"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "ShigleyFriction"
+moment1_nmm = 508.5
+angle1_deg = inf
+moment2_nmm = 1017.0
+angle2_deg = 114.59156
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_torsion_ratebased_rate() {
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "RateBased"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+rate_nmm_per_deg = inf
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "PureBending"
+moments_nmm = [1000.0]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
         ));
     }
 
