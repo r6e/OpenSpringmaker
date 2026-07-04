@@ -170,6 +170,48 @@ impl Scenario for RateBased {
     }
 }
 
+/// Outer diameter given instead of mean; mean is derived as `OD − d`. The torsion
+/// counterpart to the compression/extension `Dimensional` scenario. No
+/// scenario-level guard beyond delegation: `solve_forward` rejects the derived
+/// `mean ≤ 0` (positivity guard) and `mean ≤ d` (spring-index guard), covering
+/// every `OD ≤ 2d` input.
+#[derive(Debug, Clone)]
+pub struct Dimensional {
+    /// Wire diameter `d`.
+    pub wire_dia: Length,
+    /// Coil outer diameter; mean is derived as `OD − d`.
+    pub outer_dia: Length,
+    /// Body (active) coil count `N_b`.
+    pub body_coils: f64,
+    /// First straight-leg length `L₁`.
+    pub leg1: Length,
+    /// Second straight-leg length `L₂`.
+    pub leg2: Length,
+    /// Optional arbor diameter for the wind-up clearance check.
+    pub arbor_dia: Option<Length>,
+    /// Applied moments (one load point each).
+    pub moments: Vec<Moment>,
+}
+
+impl Scenario for Dimensional {
+    fn solve(&self, material: &Material, friction: FrictionModel) -> Result<TorsionDesign> {
+        let mean_dia = Length::from_meters(self.outer_dia.meters() - self.wire_dia.meters());
+        solve_forward(
+            material,
+            TorsionInputs {
+                wire_dia: self.wire_dia,
+                mean_dia,
+                body_coils: self.body_coils,
+                leg1: self.leg1,
+                leg2: self.leg2,
+                arbor_dia: self.arbor_dia,
+            },
+            &self.moments,
+            friction,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +476,59 @@ mod tests {
                 "expected the index guard, got: {msg}"
             ),
             other => panic!("mean == wire must be rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dimensional_matches_power_user_with_derived_mean() {
+        // OD = 22 mm, d = 2 mm → mean = 20 mm: identical design to the PowerUser oracle.
+        let m = crate::test_support::music_wire();
+        let dim = Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(22.0),
+            body_coils: 5.0,
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        }
+        .solve(&m, FrictionModel::PureBending)
+        .unwrap();
+        assert_relative_eq!(
+            dim.rate.newton_meters_per_radian(),
+            0.5085,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            dim.inputs.mean_dia.millimeters(),
+            20.0,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(dim.index, 10.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn dimensional_rejects_outer_at_or_below_two_wire_diameters() {
+        // OD == 2d → mean == d → index == 1 → engine's index guard (delegation).
+        // OD < 2d → mean < d → same guard. OD ≤ d → mean ≤ 0 → the positivity guard.
+        let m = crate::test_support::music_wire();
+        let with_od = |od_mm: f64| Dimensional {
+            wire_dia: Length::from_millimeters(2.0),
+            outer_dia: Length::from_millimeters(od_mm),
+            body_coils: 5.0,
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            moments: vec![Moment::from_newton_meters(1.0)],
+        };
+        for od in [4.0, 3.0, 1.5] {
+            assert!(
+                matches!(
+                    with_od(od).solve(&m, FrictionModel::PureBending),
+                    Err(crate::SpringError::InconsistentInputs(_))
+                ),
+                "OD = {od} mm with d = 2 mm must be rejected"
+            );
         }
     }
 }
