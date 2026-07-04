@@ -12,8 +12,9 @@ use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
-    field_label, labeled_input, panel_container, render_result_row, results_empty, results_error,
-    rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
+    field_label, labeled_input, material_picker, panel_container, render_result_row, results_empty,
+    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
+    SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -24,7 +25,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     // Setup group — material selector and friction model pick-list.
     let setup_group = column![
         section_heading("Setup"),
-        crate::widgets::material_picker(app),
+        material_picker(app),
         column![
             field_label("Friction model"),
             styled_pick_list(

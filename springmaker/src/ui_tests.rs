@@ -535,6 +535,67 @@ fn ext_save_load_round_trip_custom_hooks() {
     let _ = std::fs::remove_file(&path);
 }
 
+// ── Torsion family Simulator tests ───────────────────────────────────────────
+
+/// Torsion analog of `type_into_ext`: focus a torsion field by its stable id and
+/// type `text`, then apply the resulting messages.
+fn type_into_tor(app: &mut App, field: crate::torsion::form::Field, text: &str) {
+    let id = iced_test::core::widget::Id::from(crate::torsion::view::tor_field_id(field));
+    let mut sim = ui(app);
+    sim.click(id)
+        .unwrap_or_else(|e| panic!("could not focus torsion input for {field:?}: {e}"));
+    sim.typewrite(text);
+    for message in sim.into_messages() {
+        app.update(message);
+    }
+}
+
+#[test]
+fn torsion_family_solves_end_to_end() {
+    use crate::torsion::form::Field as TF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    assert_eq!(app.family, Family::Torsion);
+    assert!(shows(&app, "Enter design parameters to see results."));
+
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+
+    assert!(app.tor_outcome.is_some(), "torsion design must solve");
+    assert!(app.error.is_none());
+}
+
+#[test]
+fn torsion_save_load_round_trip() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    app.torsion = crate::torsion::form::TorFormState {
+        wire_dia: "2".into(),
+        mean_dia: "20".into(),
+        body_coils: "5".into(),
+        leg1: "0".into(),
+        leg2: "0".into(),
+        moments: "1000".into(),
+        ..Default::default()
+    };
+    app.recompute();
+
+    let dir = std::env::temp_dir().join(format!("osm_tor_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("design.toml");
+    app.save_to(&path);
+
+    let mut app2 = test_app();
+    assert!(app2.load_from(&path));
+    assert_eq!(app2.family, Family::Torsion);
+    assert_eq!(app2.torsion.mean_dia, "20");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn ext_scenario_switch_solves_each_mode() {
     let mut app = test_app();
