@@ -1,7 +1,7 @@
 //! Torsion-spring mechanics: bending stress, active coils, angular rate, wind-up geometry.
 //! All formulas cited inline (Shigley Ch. 10; EN 13906-3).
 
-use crate::units::{Angle, AngularRate, Length, Moment, Stress};
+use crate::units::{Angle, AngularRate, Force, Length, Moment, Stress};
 use std::f64::consts::{PI, TAU};
 
 /// Shigley's empirical per-turn rate denominator with inter-coil friction (Eq. 10-51).
@@ -89,6 +89,35 @@ pub fn angular_rate(
     AngularRate::from_newton_meters_per_radian(e * d.powi(4) / (denom_factor * dm * active))
 }
 
+/// Effective active coils that produce angular rate `k'` — the [`angular_rate`]
+/// formula inverted: `Nₐ = E·d⁴ / (denom · D · k')`, with `denom` = 64
+/// (PureBending, EN 13906-3 energy method) or 2π·10.8 (ShigleyFriction,
+/// Shigley Eq. 10-51). Pure formula (no guards), like its forward counterpart;
+/// scenarios validate the inputs. Exact inverse of [`angular_rate`].
+pub fn active_coils_for_rate(
+    youngs_modulus: Stress,
+    wire_dia: Length,
+    mean_dia: Length,
+    rate: AngularRate,
+    friction: FrictionModel,
+) -> f64 {
+    let e = youngs_modulus.pascals();
+    let d = wire_dia.meters();
+    let dm = mean_dia.meters();
+    let denom_factor = match friction {
+        FrictionModel::PureBending => 64.0,
+        FrictionModel::ShigleyFriction => TAU * SHIGLEY_TURN_DENOM,
+    };
+    e * d.powi(4) / (denom_factor * dm * rate.newton_meters_per_radian())
+}
+
+/// Moment produced by a force applied at a radius: `M = F·r` (elementary statics;
+/// the torsion-spring loading model of Shigley Ch. 10 — a load on a leg at a
+/// moment arm). The GUI exposes this as a force-at-radius moment-entry convenience.
+pub fn moment_from_force_at_radius(force: Force, radius: Length) -> Moment {
+    Moment::from_newton_meters(force.newtons() * radius.meters())
+}
+
 /// Wound-up mean diameter under load (Shigley Eq. 10-49): as the spring winds in the
 /// load direction the body coils tighten, `D′ = D·N_b/(N_b + θ_turns)`.
 pub fn wound_mean_diameter(mean_dia: Length, body_coils: f64, deflection: Angle) -> Length {
@@ -99,7 +128,7 @@ pub fn wound_mean_diameter(mean_dia: Length, body_coils: f64, deflection: Angle)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::{Angle, Length, Moment, Stress};
+    use crate::units::{Angle, AngularRate, Force, Length, Moment, Stress};
     use approx::assert_relative_eq;
 
     #[test]
@@ -212,5 +241,49 @@ mod tests {
         let dprime =
             wound_mean_diameter(Length::from_millimeters(20.0), 5.0, Angle::from_turns(1.0));
         assert_relative_eq!(dprime.millimeters(), 100.0 / 6.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn active_coils_for_rate_inverts_pure_bending_oracle() {
+        // Na = E·d⁴/(64·D·k'); E=203.4 GPa, d=2 mm, D=20 mm, k'=0.5085 → 5.0 (exact).
+        let na = active_coils_for_rate(
+            Stress::from_pascals(203.4e9),
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            AngularRate::from_newton_meters_per_radian(0.5085),
+            FrictionModel::PureBending,
+        );
+        assert_relative_eq!(na, 5.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn active_coils_for_rate_round_trips_angular_rate_both_models() {
+        // active_coils_for_rate(angular_rate(Na)) == Na for both friction models —
+        // pins the two functions as exact inverses (and the denom per model).
+        for friction in [FrictionModel::PureBending, FrictionModel::ShigleyFriction] {
+            let k = angular_rate(
+                Stress::from_pascals(203.4e9),
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                5.0,
+                friction,
+            );
+            let na = active_coils_for_rate(
+                Stress::from_pascals(203.4e9),
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                k,
+                friction,
+            );
+            assert_relative_eq!(na, 5.0, max_relative = 1e-12);
+        }
+    }
+
+    #[test]
+    fn moment_from_force_at_radius_exact() {
+        // M = F·r; 10 N at 50 mm = 0.5 N·m (exact).
+        let m =
+            moment_from_force_at_radius(Force::from_newtons(10.0), Length::from_millimeters(50.0));
+        assert_relative_eq!(m.newton_meters(), 0.5, max_relative = 1e-12);
     }
 }
