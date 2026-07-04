@@ -611,6 +611,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dimensional_inputs_view_has_outer_dia_not_mean_dia() {
+        use crate::torsion::form::TorScenarioKind;
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = TorScenarioKind::Dimensional;
+        let fields = tor_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert_eq!(
+            fields.len(),
+            7,
+            "Dimensional must have 7 fields; got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&Field::OuterDia),
+            "Dimensional inputs must contain Field::OuterDia; got {kinds:?}"
+        );
+        assert!(
+            !kinds.contains(&Field::MeanDia),
+            "Dimensional inputs must NOT contain Field::MeanDia; got {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn twoload_inputs_view_has_point_fields_not_moments() {
+        use crate::torsion::form::TorScenarioKind;
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = TorScenarioKind::TwoLoad;
+        let fields = tor_inputs_view(&app);
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert_eq!(fields.len(), 9, "TwoLoad must have 9 fields; got {kinds:?}");
+        for required in [Field::Moment1, Field::Angle1, Field::Moment2, Field::Angle2] {
+            assert!(
+                kinds.contains(&required),
+                "TwoLoad inputs must contain {required:?}; got {kinds:?}"
+            );
+        }
+        assert!(
+            !kinds.contains(&Field::Moments),
+            "TwoLoad inputs must NOT contain Field::Moments; got {kinds:?}"
+        );
+        let angle_fd = fields
+            .iter()
+            .find(|fd| fd.field == Field::Angle1)
+            .expect("Field::Angle1 must be present");
+        assert!(
+            angle_fd.label.contains('°'),
+            "angle field label must contain '°'; got '{}'",
+            angle_fd.label
+        );
+    }
+
     // ── cross-family outcome clearing ────────────────────────────────────────
 
     /// Switching to Torsion clears any stale Compression and Extension outcomes.
