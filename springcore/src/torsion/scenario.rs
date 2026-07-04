@@ -4,7 +4,7 @@
 use crate::material::Material;
 use crate::torsion::design::{solve_forward, TorsionDesign, TorsionInputs};
 use crate::torsion::mechanics::{active_coils_for_rate, active_coils_with_legs, FrictionModel};
-use crate::units::{AngularRate, Length, Moment};
+use crate::units::{Angle, AngularRate, Length, Moment};
 use crate::{Result, SpringError};
 
 /// A solve scenario for torsion springs.
@@ -212,11 +212,88 @@ impl Scenario for Dimensional {
     }
 }
 
+/// Two measured (moment, angle) operating points; rate, then body coils, derived.
+/// The torsion counterpart to the compression/extension `TwoLoad` scenario:
+/// `k' = (M₂ − M₁)/(θ₂ − θ₁)`, then the body coils that produce `k'`.
+///
+/// **Offset-tolerant by design:** the static model is linear through the free
+/// position (`M = k'·θ_from_free`), so a constant zero-reference offset in the
+/// *measured* angles cancels in the slope. Measured angles need not be referenced
+/// to the free position — only their difference matters; result deflections are
+/// the true from-free values `M/k'` computed by `solve_forward`.
+#[derive(Debug, Clone)]
+pub struct TwoLoad {
+    /// Wire diameter `d`.
+    pub wire_dia: Length,
+    /// Mean coil diameter `D`.
+    pub mean_dia: Length,
+    /// First straight-leg length `L₁`.
+    pub leg1: Length,
+    /// Second straight-leg length `L₂`.
+    pub leg2: Length,
+    /// Optional arbor diameter for the wind-up clearance check.
+    pub arbor_dia: Option<Length>,
+    /// First measured (moment, angle) operating point.
+    pub point1: (Moment, Angle),
+    /// Second measured (moment, angle) operating point.
+    pub point2: (Moment, Angle),
+}
+
+impl Scenario for TwoLoad {
+    fn solve(&self, material: &Material, friction: FrictionModel) -> Result<TorsionDesign> {
+        validate_rate_geometry(self.wire_dia, self.mean_dia)?;
+        let (m1, th1) = self.point1;
+        let (m2, th2) = self.point2;
+        let d_theta = th2.radians() - th1.radians();
+        if d_theta == 0.0 {
+            return Err(SpringError::InconsistentInputs(
+                "the two operating points must have different angles".into(),
+            ));
+        }
+        let d_moment = m2.newton_meters() - m1.newton_meters();
+        if d_moment == 0.0 {
+            return Err(SpringError::InconsistentInputs(
+                "the two operating points must have different moments".into(),
+            ));
+        }
+        let slope = d_moment / d_theta;
+        if !(slope.is_finite() && slope > 0.0) {
+            return Err(SpringError::InconsistentInputs(
+                "the two operating points must define a positive finite rate (larger moment at larger angle)".into(),
+            ));
+        }
+        let rate = AngularRate::from_newton_meters_per_radian(slope);
+        let body_coils = body_coils_for_rate_input(
+            material,
+            self.wire_dia,
+            self.mean_dia,
+            rate,
+            self.leg1,
+            self.leg2,
+            friction,
+        )?;
+        // The two measured moments become the design's load points, in input order.
+        solve_forward(
+            material,
+            TorsionInputs {
+                wire_dia: self.wire_dia,
+                mean_dia: self.mean_dia,
+                body_coils,
+                leg1: self.leg1,
+                leg2: self.leg2,
+                arbor_dia: self.arbor_dia,
+            },
+            &[m1, m2],
+            friction,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::torsion::FrictionModel;
-    use crate::units::{AngularRate, Length, Moment};
+    use crate::units::{Angle, AngularRate, Length, Moment};
     use approx::assert_relative_eq;
 
     #[test]
@@ -529,6 +606,215 @@ mod tests {
                 ),
                 "OD = {od} mm with d = 2 mm must be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn two_load_derives_rate_from_slope_and_body_coils() {
+        // Two points on the k' = 0.5085 N·m/rad line: (0.5085, 1 rad), (1.0170, 2 rad)
+        // → slope 0.5085 → Nb = 5.0; load points are the two moments in input order.
+        let m = crate::test_support::music_wire();
+        let d = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(0.5085), Angle::from_radians(1.0)),
+            point2: (Moment::from_newton_meters(1.0170), Angle::from_radians(2.0)),
+        }
+        .solve(&m, FrictionModel::PureBending)
+        .unwrap();
+        assert_relative_eq!(
+            d.rate.newton_meters_per_radian(),
+            0.5085,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(d.inputs.body_coils, 5.0, max_relative = 1e-9);
+        assert_eq!(d.load_points.len(), 2);
+        assert_relative_eq!(
+            d.load_points[0].moment.newton_meters(),
+            0.5085,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            d.load_points[1].moment.newton_meters(),
+            1.0170,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn two_load_is_offset_tolerant() {
+        // Shifting BOTH measured angles by a constant zero-reference offset must
+        // derive the identical design — only the slope matters (documented contract).
+        let m = crate::test_support::music_wire();
+        let build = |offset: f64| TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (
+                Moment::from_newton_meters(0.5085),
+                Angle::from_radians(1.0 + offset),
+            ),
+            point2: (
+                Moment::from_newton_meters(1.0170),
+                Angle::from_radians(2.0 + offset),
+            ),
+        };
+        let a = build(0.0).solve(&m, FrictionModel::PureBending).unwrap();
+        let b = build(0.3).solve(&m, FrictionModel::PureBending).unwrap();
+        assert_relative_eq!(
+            a.inputs.body_coils,
+            b.inputs.body_coils,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            a.rate.newton_meters_per_radian(),
+            b.rate.newton_meters_per_radian(),
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn two_load_rejects_degenerate_points() {
+        let m = crate::test_support::music_wire();
+        let build = |m1: f64, th1: f64, m2: f64, th2: f64| TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(m1), Angle::from_radians(th1)),
+            point2: (Moment::from_newton_meters(m2), Angle::from_radians(th2)),
+        };
+        // Same angle → "different angles"; same moment → "different moments";
+        // larger moment at SMALLER angle → negative slope → the positive-rate error.
+        let cases: [(f64, f64, f64, f64, &str); 3] = [
+            (0.5, 1.0, 1.0, 1.0, "different angles"),
+            (0.5, 1.0, 0.5, 2.0, "different moments"),
+            (1.0, 1.0, 0.5, 2.0, "positive finite rate"),
+        ];
+        for (m1, th1, m2, th2, expect) in cases {
+            match build(m1, th1, m2, th2).solve(&m, FrictionModel::PureBending) {
+                Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                    msg.contains(expect),
+                    "case ({m1},{th1})/({m2},{th2}): expected '{expect}', got: {msg}"
+                ),
+                other => panic!("case ({m1},{th1})/({m2},{th2}) must be rejected, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn two_load_geometry_error_precedes_slope_error() {
+        // Error precedence: degenerate geometry surfaces the geometry message even
+        // when the points are also degenerate.
+        let m = crate::test_support::music_wire();
+        let r = TwoLoad {
+            wire_dia: Length::from_meters(0.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(0.5), Angle::from_radians(1.0)),
+            point2: (Moment::from_newton_meters(0.5), Angle::from_radians(1.0)),
+        }
+        .solve(&m, FrictionModel::PureBending);
+        match r {
+            Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                msg.contains("wire diameter must be a positive finite number"),
+                "expected the geometry error first, got: {msg}"
+            ),
+            other => panic!("expected InconsistentInputs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_load_rejects_non_finite_point_values() {
+        // NaN/Inf in either coordinate must be rejected (the slope guard catches what
+        // the distinct-point guards let through, since NaN ≠ anything).
+        let m = crate::test_support::music_wire();
+        let build = |m2: f64, th2: f64| TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(0.5), Angle::from_radians(1.0)),
+            point2: (Moment::from_newton_meters(m2), Angle::from_radians(th2)),
+        };
+        for (m2, th2) in [
+            (f64::NAN, 2.0),
+            (1.0, f64::NAN),
+            (f64::INFINITY, 2.0),
+            (1.0, f64::INFINITY),
+        ] {
+            assert!(
+                matches!(
+                    build(m2, th2).solve(&m, FrictionModel::PureBending),
+                    Err(crate::SpringError::InconsistentInputs(_))
+                ),
+                "non-finite point ({m2}, {th2}) must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn two_load_slope_computed_as_quotient_not_product() {
+        // d_theta = 2.0 rad (not 1.0) so `/` and `*` diverge: slope = 1.017/2.0 = 0.5085
+        // with division, but 1.017*2.0 = 2.034 with multiplication. The body-coil
+        // assertion kills the `replace / with *` mutant.
+        let m = crate::test_support::music_wire();
+        let d = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(0.5085), Angle::from_radians(0.0)),
+            point2: (Moment::from_newton_meters(1.5255), Angle::from_radians(2.0)),
+        }
+        .solve(&m, FrictionModel::PureBending)
+        .unwrap();
+        assert_relative_eq!(
+            d.rate.newton_meters_per_radian(),
+            0.5085,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(d.inputs.body_coils, 5.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn two_load_rejects_zero_slope_from_underflow() {
+        // d_moment > 0 and d_theta > 0 but d_moment/d_theta underflows to 0.0 in f64
+        // (true quotient ≈ 1.2e-616 « smallest subnormal). The slope guard must still
+        // reject it. The message assertion is load-bearing: under the `> → >=` mutant,
+        // slope=0 passes the guard and reaches body_coils_for_rate_input, which errors
+        // "rate must be a positive finite number" — a message that does NOT contain
+        // "positive finite rate", so the assertion fails and the mutant is killed.
+        let m = crate::test_support::music_wire();
+        let r = TwoLoad {
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            leg1: Length::from_meters(0.0),
+            leg2: Length::from_meters(0.0),
+            arbor_dia: None,
+            point1: (Moment::from_newton_meters(0.0), Angle::from_radians(0.0)),
+            point2: (
+                Moment::from_newton_meters(f64::MIN_POSITIVE),
+                Angle::from_radians(f64::MAX),
+            ),
+        }
+        .solve(&m, FrictionModel::PureBending);
+        match r {
+            Err(crate::SpringError::InconsistentInputs(msg)) => assert!(
+                msg.contains("positive finite rate"),
+                "expected the positive-rate error for underflowing slope, got: {msg}"
+            ),
+            other => panic!("underflowing slope must be rejected, got {other:?}"),
         }
     }
 }

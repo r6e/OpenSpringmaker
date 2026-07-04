@@ -89,11 +89,11 @@ pub fn angular_rate(
     AngularRate::from_newton_meters_per_radian(e * d.powi(4) / (denom_factor * dm * active))
 }
 
-/// Effective active coils that produce angular rate `k'` — the [`angular_rate`]
+/// Effective active coils that produce angular rate `k'` — the `angular_rate`
 /// formula inverted: `Nₐ = E·d⁴ / (denom · D · k')`, with `denom` = 64
 /// (PureBending, EN 13906-3 energy method) or 2π·10.8 (ShigleyFriction,
 /// Shigley Eq. 10-51). Pure formula (no guards), like its forward counterpart;
-/// scenarios validate the inputs. Exact inverse of [`angular_rate`].
+/// scenarios validate the inputs. Exact inverse of `angular_rate`.
 pub fn active_coils_for_rate(
     youngs_modulus: Stress,
     wire_dia: Length,
