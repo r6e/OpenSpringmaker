@@ -236,6 +236,14 @@ impl AngularRate {
     pub fn newton_meters_per_turn(self) -> f64 {
         self.0 * TAU
     }
+    /// Return value in pound-force inches per degree (US).
+    pub fn pound_force_inches_per_degree(self) -> f64 {
+        self.newton_meters_per_degree() / (NEWTONS_PER_LBF * METERS_PER_INCH)
+    }
+    /// Return value in pound-force inches per turn / revolution (US).
+    pub fn pound_force_inches_per_turn(self) -> f64 {
+        self.newton_meters_per_turn() / (NEWTONS_PER_LBF * METERS_PER_INCH)
+    }
 }
 
 impl Frequency {
@@ -459,5 +467,28 @@ mod tests {
         // Round-trip: π/180 N·m/deg = 1 N·m/rad.
         let k2 = AngularRate::from_newton_meters_per_degree(PI / 180.0);
         assert_relative_eq!(k2.newton_meters_per_radian(), 1.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn angular_rate_us_per_degree_round_trips() {
+        // 1 N·m/rad = π/180 N·m/deg; in lbf·in/deg divide by (NEWTONS_PER_LBF·METERS_PER_INCH).
+        let r = AngularRate::from_newton_meters_per_radian(1.0);
+        let expected = (std::f64::consts::PI / 180.0) / (4.4482216152605 * 0.0254);
+        assert_relative_eq!(
+            r.pound_force_inches_per_degree(),
+            expected,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn angular_rate_us_per_turn_is_360x_per_degree() {
+        // Per-revolution is 360× the per-degree value (1 turn = 360°).
+        let r = AngularRate::from_newton_meters_per_radian(2.5);
+        assert_relative_eq!(
+            r.pound_force_inches_per_turn(),
+            r.pound_force_inches_per_degree() * 360.0,
+            max_relative = 1e-12
+        );
     }
 }
