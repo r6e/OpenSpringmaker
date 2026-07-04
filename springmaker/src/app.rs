@@ -178,7 +178,7 @@ pub enum Message {
 
 /// Top-level application state.
 pub struct App {
-    /// Active spring family (Compression | Extension).
+    /// Active spring family (Compression | Extension | Torsion).
     pub family: Family,
     pub form: FormState,
     /// Extension PowerUser form inputs.

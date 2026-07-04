@@ -98,6 +98,17 @@ pub enum DesignSpec {
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
 /// Single-scenario (PowerUser) family: a struct, not a `#[serde(tag="type")]` enum.
+//
+// GUARDRAIL: Do NOT add `#[serde(deny_unknown_fields)]` to this struct.
+// `TorsionSpec` is flattened under `DesignSpec`'s `#[serde(tag = "family")]`
+// internally-tagged enum; serde rejects `deny_unknown_fields` in that position
+// because the injected `family` discriminant would be treated as an unknown field,
+// breaking deserialization of every existing torsion TOML file.
+//
+// GUARDRAIL: This is a plain struct (single-scenario, YAGNI). If torsion later
+// gains scenario modes, migrating to a `#[serde(tag = "type")]` enum is a
+// TOML-format-breaking change — old files lack the `type` key — and must be a
+// conscious, versioned migration, not an accidental refactor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TorsionSpec {
     pub wire_dia_mm: f64,
@@ -1165,9 +1176,35 @@ mode = "Default"
         }
     }
 
+    /// Base valid torsion TOML fixture used as the "good" baseline for the
+    /// reject-non-finite and reject-unknown-variant tests below.  Asserting
+    /// `Ok` on this string first ensures the negative tests can't rot into a
+    /// vacuous pass if field names drift.
+    const VALID_TORSION_TOML: &str = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "ShigleyFriction"
+moments_nmm = [100.0, 250.0]
+"#;
+
     #[test]
     fn from_toml_rejects_non_finite_torsion_moment() {
-        // reject_non_finite must reject an inf inside the moments array of a Torsion spec.
+        // Anchor: the same fixture with finite values must parse Ok so the
+        // test can't rot into a vacuous pass if field names drift.
+        assert!(
+            SavedDesign::from_toml(VALID_TORSION_TOML).is_ok(),
+            "base torsion fixture must parse Ok"
+        );
+
+        // reject_non_finite must reject an inf inside the moments array.
         let toml = r#"
 material = "Music Wire"
 unit_system = "Metric"
@@ -1181,6 +1218,58 @@ leg1_mm = 0.0
 leg2_mm = 0.0
 friction_model = "ShigleyFriction"
 moments_nmm = [100.0, inf]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(crate::SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_torsion_arbor() {
+        // reject_non_finite must reject inf in the optional scalar arbor_dia_mm.
+        // Parity with the array case: reject_non_finite recurses into Table
+        // values, so a non-finite Option<f64> scalar is caught at the same
+        // boundary.
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+arbor_dia_mm = inf
+friction_model = "ShigleyFriction"
+moments_nmm = [100.0, 250.0]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(crate::SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_unknown_friction_model() {
+        // A torsion TOML identical to the valid fixture but with a misspelled
+        // friction_model; serde's "unknown variant" error must map to DataFile
+        // rather than silently defaulting.
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+body_coils = 5.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "Bogus"
+moments_nmm = [100.0, 250.0]
 "#;
         assert!(matches!(
             SavedDesign::from_toml(toml),

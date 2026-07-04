@@ -539,4 +539,100 @@ mod tests {
         let fields = tor_inputs_view(&app);
         assert_eq!(fields.last().expect("non-empty").field, Field::Moments);
     }
+
+    // ── cross-family outcome clearing ────────────────────────────────────────
+
+    /// Switching to Torsion clears any stale Compression and Extension outcomes.
+    /// Pins the `self.outcome = None` and `self.ext_outcome = None` lines in
+    /// the Torsion arm of `recompute()` so deleting either makes this test fail.
+    #[test]
+    fn switch_to_torsion_clears_other_family_outcomes() {
+        use crate::app::Message;
+        use crate::extension::form::{parse_and_solve as ext_parse_and_solve, ExtFormState};
+        use springcore::Family;
+
+        let mut app = fresh_app();
+
+        // Produce a real compression outcome via form fields + recompute.
+        app.form.scenario = crate::compression::form::ScenarioKind::RateBased;
+        app.form.wire_dia = "2.0".into();
+        app.form.mean_dia = "20.0".into();
+        app.form.rate = "2.0".into();
+        app.form.free_length = "60".into();
+        app.form.loads = "10, 30".into();
+        app.recompute();
+        assert!(
+            app.outcome.is_some(),
+            "pre-condition: compression outcome must be Some before switching"
+        );
+
+        // Inject a real extension outcome directly (recompute would clobber outcome).
+        let ext_form = ExtFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "50".into(),
+            ..ExtFormState::default()
+        };
+        let ext_out = ext_parse_and_solve(
+            &ext_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &store(),
+            CurvatureCorrection::default(),
+        )
+        .unwrap();
+        app.ext_outcome = Some(ext_out);
+        assert!(
+            app.ext_outcome.is_some(),
+            "pre-condition: ext_outcome must be Some before switching"
+        );
+
+        // Switch to Torsion — the Torsion arm of recompute() clears both.
+        app.update(Message::SelectFamily(Family::Torsion));
+
+        assert!(
+            app.outcome.is_none(),
+            "compression outcome must be None after switching to Torsion"
+        );
+        assert!(
+            app.ext_outcome.is_none(),
+            "ext_outcome must be None after switching to Torsion"
+        );
+    }
+
+    /// Switching away from Torsion (to Compression or Extension) clears
+    /// `tor_outcome`.  Pins every `self.tor_outcome = None` line in the
+    /// Compression and Extension arms of `recompute()`.
+    #[test]
+    fn switch_away_from_torsion_clears_tor_outcome() {
+        use crate::app::Message;
+        use springcore::Family;
+
+        // Part 1: switching to Compression clears tor_outcome.
+        let mut app = app_with_tor(metric_form());
+        assert!(
+            app.tor_outcome.is_some(),
+            "pre-condition: tor_outcome must be Some before switching to Compression"
+        );
+        app.update(Message::SelectFamily(Family::Compression));
+        assert!(
+            app.tor_outcome.is_none(),
+            "tor_outcome must be None after switching to Compression"
+        );
+
+        // Part 2: switching to Extension clears tor_outcome (fresh solve).
+        let mut app2 = app_with_tor(metric_form());
+        assert!(
+            app2.tor_outcome.is_some(),
+            "pre-condition: tor_outcome must be Some before switching to Extension"
+        );
+        app2.update(Message::SelectFamily(Family::Extension));
+        assert!(
+            app2.tor_outcome.is_none(),
+            "tor_outcome must be None after switching to Extension"
+        );
+    }
 }

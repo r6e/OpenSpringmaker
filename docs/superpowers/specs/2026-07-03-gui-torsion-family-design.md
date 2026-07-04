@@ -126,10 +126,10 @@ plus the friction selector:
 | `wire_dia` | mm / in | `length_mm` | round wire `d` |
 | `mean_dia` | mm / in | `length_mm` | coil centre-line `D` |
 | `body_coils` | count (dimensionless) | `positive_num` | active body coils `N_b` |
-| `leg1` | mm / in | `length_mm` | first straight leg `L₁` |
-| `leg2` | mm / in | `length_mm` | second straight leg `L₂` |
+| `leg1` | mm / in | `non_negative_length_mm` | first straight leg `L₁`; accepts 0 |
+| `leg2` | mm / in | `non_negative_length_mm` | second straight leg `L₂`; accepts 0 |
 | `arbor_dia` | mm / in | `length_mm` | **optional** (valid-empty); wind-up clearance check |
-| `moments` | N·mm / lbf·in | new `moments_nmm` | comma-separated load table; each > 0 |
+| `moments` | N·mm / lbf·in | new `moments_nmm` | comma-separated load table; each > 0; empty rejected at form boundary ("provide at least one applied moment") |
 | `friction_model` | — | — (pick-list) | `PureBending` \| `ShigleyFriction` (default Shigley); own `Message`; persisted |
 
 New form-boundary helpers in `form_helpers.rs`:
@@ -158,7 +158,7 @@ Results panel (`tor_results_view` presenter → humble `results_panel`):
 - **Per applied moment** (one section/row per load point): applied moment `M`;
   angular deflection `θ` as **degrees (primary) + revolutions (secondary)**;
   inner-fiber bending stress `σᵢ` with **% of allowable** (the governing check);
-  wound mean and inner diameter under load.
+  wound inner diameter (governs arbor clearance / over-wind) under load.
 - **Advisories** (`tor_status_view`, from `DesignStatus`, non-fatal): overstress,
   arbor binding, over-wind collapse, spring index outside [4, 12].
 
