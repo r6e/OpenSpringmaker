@@ -46,7 +46,7 @@ pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{
     min_weight_request_from_spec, DesignSpec, ExtScenarioSpec, HookSpecSpec, SavedDesign,
-    ScenarioSpec, UnitSystem,
+    ScenarioSpec, TorsionSpec, UnitSystem,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{

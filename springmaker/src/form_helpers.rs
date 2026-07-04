@@ -3,7 +3,7 @@
 //! Pure functions that parse raw strings into SI values and format SI values
 //! back to display strings. No iced dependency; each helper is unit-testable.
 
-use springcore::units::{Force, Length, SpringRate};
+use springcore::units::{Force, Length, Moment, SpringRate};
 use springcore::UnitSystem;
 use springcore::{Result, SpringError};
 
@@ -98,6 +98,21 @@ pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64>
     finite_or_err(field, value, v_si)
 }
 
+/// Like `length_mm` but allows zero (e.g. torsion spring legs that may be absent).
+pub(crate) fn non_negative_length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    let v = num(field, value)?;
+    if v < 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be zero or greater"
+        )));
+    }
+    let v_si = match us {
+        UnitSystem::Us => Length::from_inches(v).millimeters(),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
 pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     let v = num(field, value)?;
@@ -181,10 +196,85 @@ pub(crate) fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
         .join(", ")
 }
 
+/// Parse a strictly-positive moment, returning newton-millimetres (SI internal):
+/// US inputs are lbf·in, metric inputs are already N·mm. Moments must be > 0
+/// (a torsion load winds the coils tighter).
+pub(crate) fn moment_nmm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    let v = positive_num(field, value)?;
+    let v_si = match us {
+        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
+/// Parse a comma-separated moment list into SI newton-millimetres.
+pub(crate) fn moments_nmm(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| moment_nmm("moment", s, us))
+        .collect()
+}
+
+/// Convert N·mm (SI internal) → display string.
+pub(crate) fn fmt_moment(nmm: f64, us: UnitSystem) -> String {
+    match us {
+        UnitSystem::Metric => format!("{nmm}"),
+        UnitSystem::Us => format!(
+            "{}",
+            Moment::from_newton_millimeters(nmm).pound_force_inches()
+        ),
+    }
+}
+
+/// Join a slice of N·mm values → comma-separated display string.
+pub(crate) fn fmt_moments(moments: &[f64], us: UnitSystem) -> String {
+    moments
+        .iter()
+        .map(|&m| fmt_moment(m, us))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use springcore::SpringError;
+
+    #[test]
+    fn moment_nmm_metric_passthrough_and_positive() {
+        assert_eq!(
+            moment_nmm("moment", "100", UnitSystem::Metric).unwrap(),
+            100.0
+        );
+        assert!(moment_nmm("moment", "0", UnitSystem::Metric).is_err()); // must be > 0
+        assert!(moment_nmm("moment", "-1", UnitSystem::Metric).is_err());
+    }
+
+    #[test]
+    fn moment_nmm_us_converts_lbf_in_to_nmm() {
+        // 1 lbf·in = 4.4482216152605 N × 0.0254 m = 0.112984829... N·m = 112.984829 N·mm.
+        let v = moment_nmm("moment", "1", UnitSystem::Us).unwrap();
+        approx::assert_relative_eq!(v, 4.4482216152605 * 0.0254 * 1000.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn moments_nmm_parses_comma_list_and_fmt_moments_round_trips_metric() {
+        let v = moments_nmm("100, 250", UnitSystem::Metric).unwrap();
+        assert_eq!(v, vec![100.0, 250.0]);
+        assert_eq!(fmt_moments(&v, UnitSystem::Metric), "100, 250");
+    }
+
+    #[test]
+    fn fmt_moments_us_round_trips() {
+        // Parse a US "1, 2" lbf·in list to SI, then format back: the display
+        // string must reproduce the input (round-trip coverage for US units,
+        // locally rather than only transitively through the form-level test).
+        let v = moments_nmm("1, 2", UnitSystem::Us).unwrap();
+        assert_eq!(fmt_moments(&v, UnitSystem::Us), "1, 2");
+    }
 
     /// A US-unit length of "1e308" (inches) overflows to +Inf after ×25.4 conversion.
     /// The post-conversion `is_finite()` guard must catch this and return `Err`, not `Ok(+Inf)`.

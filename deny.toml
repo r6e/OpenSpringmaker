@@ -10,9 +10,11 @@ all-features = true
 # ── Security advisories ──────────────────────────────────────────────────────
 [advisories]
 version = 2
-# Vulnerabilities fail the build by default. Make the configurable knobs strict
-# too: fail on yanked crates and on unmaintained advisories anywhere in the tree
-# (including transitive). The one accepted exception is listed in `ignore`.
+# Vulnerabilities fail the build by default; yanked and unmaintained advisories are
+# made strict too (fail anywhere in the tree, including transitive). Accepted
+# exceptions — each an unactionable transitive advisory backed by an ADR: either
+# unmaintained-informational, or a vulnerability proven NON-REACHABLE in our usage
+# and un-bumpable in the current dependency tree — are listed in `ignore`.
 yanked = "deny"
 unmaintained = "all"
 ignore = [
@@ -27,6 +29,17 @@ ignore = [
     # chart glyphs (plotters/ab_glyph), window decorations (winit/sctk-adwaita).
     # Accepted in docs/adr/0011-accept-transitive-ttf-parser-advisory.md.
     "RUSTSEC-2026-0192",
+    # `quick-xml` 0.39 — two DoS *vulnerabilities*: RUSTSEC-2026-0194 (quadratic
+    # attribute-name duplicate check) and RUSTSEC-2026-0195 (unbounded namespace-
+    # declaration allocation). Both require parsing UNTRUSTED XML. NOT reachable here:
+    # quick-xml is pulled only by `wayland-scanner`, a BUILD-TIME proc-macro that parses
+    # the trusted, developer-controlled Wayland protocol `.xml` files to generate bindings
+    # at compile time — never runtime or attacker-supplied input. Un-bumpable within
+    # iced 0.14: `wayland-scanner 0.31.10` pins `quick-xml ^0.39`, so the `>= 0.41.0`
+    # remediation needs a full winit/iced stack upgrade. Accepted in
+    # docs/adr/0012-accept-transitive-quick-xml-advisories.md; revisit on the iced upgrade.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
 ]
 
 # ── Licenses ─────────────────────────────────────────────────────────────────
@@ -60,6 +73,18 @@ multiple-versions = "warn"
 # for internal workspace path deps (springmaker → springcore).
 wildcards = "deny"
 allow-wildcard-paths = true
+
+# `quick-xml` carries two DoS advisories accepted as NON-REACHABLE in ADR 0012
+# (RUSTSEC-2026-0194/0195) — reachable only when parsing untrusted XML, which we
+# never do. That acceptance is contingent on quick-xml staying a BUILD-TIME
+# dependency of the `wayland-scanner` proc-macro (which parses trusted Wayland
+# protocol XML at compile time). Enforce that precondition mechanically rather than
+# by comment alone: quick-xml is allowed ONLY when pulled by `wayland-scanner`. Any
+# NEW direct or otherwise-wrapped quick-xml dependency trips this ban, forcing a
+# conscious re-evaluation of the advisory acceptance instead of a silent ID-keyed pass.
+[[bans.deny]]
+name = "quick-xml"
+wrappers = ["wayland-scanner"]
 
 # ── Sources ──────────────────────────────────────────────────────────────────
 [sources]

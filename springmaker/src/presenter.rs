@@ -4,7 +4,10 @@
 //! functions and result aggregates live in each family's `view_model`.
 
 use crate::form_helpers::MM_PER_M;
-use springcore::{Force, Length, Severity, SpringRate, StatusMessage, Stress, UnitSystem};
+use springcore::{
+    Angle, AngularRate, Force, Length, Moment, Severity, SpringRate, StatusMessage, Stress,
+    UnitSystem,
+};
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
@@ -179,6 +182,48 @@ pub(crate) fn display_stress(s: Stress, us: UnitSystem) -> (f64, &'static str) {
     (value, unit_stress_label(us))
 }
 
+/// Moment unit label for the active unit system.
+pub(crate) fn unit_moment_label(us: UnitSystem) -> &'static str {
+    match us {
+        UnitSystem::Metric => "N·mm",
+        UnitSystem::Us => "lbf·in",
+    }
+}
+
+/// Moment in the active unit system: N·mm (metric) or lbf·in (US).
+pub(crate) fn display_moment(m: Moment, us: UnitSystem) -> f64 {
+    match us {
+        UnitSystem::Metric => m.newton_millimeters(),
+        UnitSystem::Us => m.pound_force_inches(),
+    }
+}
+
+/// Angular deflection in degrees (unit-system independent).
+pub(crate) fn display_angle_degrees(a: Angle) -> f64 {
+    a.degrees()
+}
+
+/// Angular deflection in revolutions / turns (unit-system independent).
+pub(crate) fn display_angle_turns(a: Angle) -> f64 {
+    a.turns()
+}
+
+/// Angular rate as moment per degree: N·mm/° (metric) or lbf·in/° (US).
+pub(crate) fn display_ang_rate_per_deg(r: AngularRate, us: UnitSystem) -> f64 {
+    match us {
+        UnitSystem::Metric => r.newton_meters_per_degree() * MM_PER_M,
+        UnitSystem::Us => r.pound_force_inches_per_degree(),
+    }
+}
+
+/// Angular rate as moment per revolution: N·mm/rev (metric) or lbf·in/rev (US).
+pub(crate) fn display_ang_rate_per_turn(r: AngularRate, us: UnitSystem) -> f64 {
+    match us {
+        UnitSystem::Metric => r.newton_meters_per_turn() * MM_PER_M,
+        UnitSystem::Us => r.pound_force_inches_per_turn(),
+    }
+}
+
 /// Map a design-message severity to its status-line class. Shared by every family.
 pub(crate) fn status_kind(severity: Severity) -> StatusKind {
     match severity {
@@ -244,7 +289,7 @@ pub(crate) fn append_status_messages(lines: &mut Vec<StatusLine>, messages: &[St
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use springcore::{Force, Length, SpringRate, Stress, UnitSystem};
+    use springcore::{Angle, AngularRate, Force, Length, Moment, SpringRate, Stress, UnitSystem};
 
     // ── Unit conversions (the surface of the prior 1000× magnitude bug) ──
 
@@ -287,6 +332,68 @@ mod tests {
         assert_relative_eq!(
             display_rate(SpringRate::from_pounds_per_inch(5.0), UnitSystem::Us),
             5.0,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn moment_conversion_matches_unit_system() {
+        assert_relative_eq!(
+            display_moment(Moment::from_newton_millimeters(100.0), UnitSystem::Metric),
+            100.0
+        );
+        assert_relative_eq!(
+            display_moment(Moment::from_pound_force_inches(1.0), UnitSystem::Us),
+            1.0,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn angle_degrees_and_turns() {
+        assert_relative_eq!(
+            display_angle_degrees(Angle::from_degrees(90.0)),
+            90.0,
+            epsilon = 1e-9
+        );
+        assert_relative_eq!(
+            display_angle_turns(Angle::from_turns(0.25)),
+            0.25,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn ang_rate_per_deg_magnitude_pins_mm_per_m_scale() {
+        // 1 N·m/° stored in SI must display as 1000 N·mm/° metric (same * MM_PER_M
+        // pattern as display_rate). A dropped constant would produce 1.0 or 0.001.
+        let r = AngularRate::from_newton_meters_per_degree(1.0);
+        assert_relative_eq!(
+            display_ang_rate_per_deg(r, UnitSystem::Metric),
+            1000.0,
+            epsilon = 1e-9
+        );
+        // US: no scale factor — must equal the native accessor value.
+        assert_relative_eq!(
+            display_ang_rate_per_deg(r, UnitSystem::Us),
+            r.pound_force_inches_per_degree(),
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn ang_rate_per_turn_magnitude_pins_mm_per_m_scale() {
+        // Same contract: 1 N·m/turn → 1000 N·mm/turn metric.
+        let r = AngularRate::from_newton_meters_per_turn(1.0);
+        assert_relative_eq!(
+            display_ang_rate_per_turn(r, UnitSystem::Metric),
+            1000.0,
+            epsilon = 1e-9
+        );
+        // US: no scale factor.
+        assert_relative_eq!(
+            display_ang_rate_per_turn(r, UnitSystem::Us),
+            r.pound_force_inches_per_turn(),
             epsilon = 1e-9
         );
     }

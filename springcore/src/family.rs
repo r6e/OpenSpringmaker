@@ -7,6 +7,7 @@ pub enum Family {
     #[default]
     Compression,
     Extension,
+    Torsion,
 }
 
 impl std::fmt::Display for Family {
@@ -14,12 +15,13 @@ impl std::fmt::Display for Family {
         f.write_str(match self {
             Family::Compression => "Compression",
             Family::Extension => "Extension",
+            Family::Torsion => "Torsion",
         })
     }
 }
 
 /// All families in selector display order.
-pub const ALL_FAMILIES: &[Family] = &[Family::Compression, Family::Extension];
+pub const ALL_FAMILIES: &[Family] = &[Family::Compression, Family::Extension, Family::Torsion];
 
 #[cfg(test)]
 mod tests {
@@ -32,5 +34,10 @@ mod tests {
     fn display_names_match_serde_tags() {
         assert_eq!(Family::Compression.to_string(), "Compression");
         assert_eq!(Family::Extension.to_string(), "Extension");
+    }
+    #[test]
+    fn torsion_display_and_in_all_families() {
+        assert_eq!(Family::Torsion.to_string(), "Torsion");
+        assert!(ALL_FAMILIES.contains(&Family::Torsion));
     }
 }

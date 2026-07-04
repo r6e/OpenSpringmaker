@@ -8,5 +8,5 @@ mod mechanics;
 mod scenario;
 
 pub use design::{solve_forward, TorsionDesign, TorsionInputs, TorsionLoadPoint};
-pub use mechanics::FrictionModel;
+pub use mechanics::{FrictionModel, ALL_FRICTION_MODELS};
 pub use scenario::{PowerUser, Scenario};
