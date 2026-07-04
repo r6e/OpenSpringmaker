@@ -72,15 +72,14 @@ variant exists yet.
 3. **`FrictionModel` gains `Serialize`/`Deserialize`** (serde derive, tagged as a
    lowercase string, e.g. `"pure_bending"` / `"shigley_friction"`) so it persists
    in `TorsionSpec`.
-4. **Units US support** (additive on `springcore/src/units.rs`):
-   - `Moment::from_pound_inches(f64)` + `Moment::pound_inches(self)` — moment is a
-     user *input*, so it needs both construct and read.
-   - `AngularRate::pound_inches_per_degree(self)` +
-     `AngularRate::pound_inches_per_turn(self)` — the rate is engine *output* only
-     (never constructed from user input), so US read accessors suffice; the metric
-     `newton_meters_per_degree` / `newton_meters_per_turn` already exist.
-   - `Angle::turns(self)` (revolutions = radians / 2π), for the secondary readout.
-   Conversion factor: `1 lbf·in = 0.112984829 N·m` (documented at the definition).
+4. **Units US support** (additive on `springcore/src/units.rs`): the module
+   *already* provides `Moment::from_pound_force_inches`/`pound_force_inches`,
+   `Angle::degrees`/`turns`, and `AngularRate::newton_meters_per_degree`/`_per_turn`
+   (all unit types already derive `Serialize`/`Deserialize`). The **only** gap is
+   US angular-rate read accessors: add `AngularRate::pound_force_inches_per_degree(self)`
+   and `pound_force_inches_per_turn(self)` (the rate is engine *output*, so read
+   accessors suffice), using the same NIST factor as the existing `Moment` US
+   methods (`1 lbf·in = 4.4482216152605 N × 0.0254 m`).
 5. **`reject_non_finite`** (the pre-deserialization guard in
    `springcore/src/persistence.rs`) extended to cover the `Torsion` variant —
    every `f64`, including inside `moments_nmm` and the `arbor_dia_mm` `Option`.
@@ -204,8 +203,8 @@ no parse error).
 - **Angular rate:** moment per degree (primary) + moment per revolution
   (secondary), matching the deflection treatment. Metric N·mm/° · N·mm/rev (via
   `AngularRate::newton_meters_per_degree` / `newton_meters_per_turn` × 1000); US
-  lbf·in/° · lbf·in/rev (via the new `AngularRate::pound_inches_per_degree` /
-  `pound_inches_per_turn`).
+  lbf·in/° · lbf·in/rev (via the new `AngularRate::pound_force_inches_per_degree` /
+  `pound_force_inches_per_turn`).
 
 ## Testing & gates
 
