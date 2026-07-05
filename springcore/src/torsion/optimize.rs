@@ -718,6 +718,89 @@ mod tests {
     }
 
     #[test]
+    fn od_cap_exactly_at_index_ceiling_binding_is_index_not_od() {
+        // d = 1/512 m = 2^{-9} m (exact). With c_max = 12: dm_hi = 12/512 (exact).
+        // OD = 13/512 m → capped = 13/512 − 1/512 = 12/512 = dm_hi (bit-exact).
+        // Guard `capped < dm_hi`: 12/512 < 12/512 → false → hi_is_od_capped stays false
+        // → MaxMargin reports binding = Index.
+        // The `<→<=` mutant flips the guard true → hi_is_od_capped = true →
+        // binding = OuterDiameter, killing survivor at line 214.
+        let m = music_wire();
+        let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
+        let c_max = 12.0_f64;
+        let od = Length::from_meters((c_max + 1.0) * d_val); // 13/512 m — exact
+        let req = TorMinWeightRequest {
+            candidate_diameters: vec![Length::from_meters(d_val)],
+            max_outer_dia: Some(od),
+            dia_policy: DiaPolicy::MaxMargin,
+            ..base_request()
+        };
+        let sol = solve_min_weight(&m, &req).expect("feasible: stress well below allowable");
+        assert_eq!(
+            sol.binding,
+            TorBindingConstraint::Index,
+            "capped == dm_hi: the OD cap at the index ceiling must NOT override it; \
+             binding must be Index, not OuterDiameter"
+        );
+    }
+
+    #[test]
+    fn od_cap_exactly_at_index_floor_still_feasible() {
+        // d = 1/512 m = 2^{-9} m (exact). c_min = 4, c_max = 12.
+        // dm_lo = 4/512 (exact). Initial dm_hi = 12/512 (exact).
+        // OD = 5/512 m → capped = 4/512 = dm_lo, so dm_hi is capped to dm_lo.
+        // Guard `dm_hi < dm_lo`: 4/512 < 4/512 → false → proceeds with C = c_min.
+        // The `<→<=` mutant makes the guard true → skips → Infeasible, killing survivor 219.
+        let m = music_wire();
+        let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
+        let c_min = 4.0_f64;
+        let c_max = 12.0_f64;
+        // OD = (c_min + 1) * d = 5/512 m → capped = c_min * d = dm_lo = dm_hi after cap.
+        let od = Length::from_meters((c_min + 1.0) * d_val);
+        let req = TorMinWeightRequest {
+            candidate_diameters: vec![Length::from_meters(d_val)],
+            max_outer_dia: Some(od),
+            index_bounds: (c_min, c_max),
+            ..base_request()
+        };
+        // Original: dm_hi == dm_lo, guard false → proceeds → feasible.
+        // Mutant:   guard true → skips → Infeasible.
+        solve_min_weight(&m, &req)
+            .expect("dm_hi == dm_lo is NOT a skip condition; the boundary design is feasible");
+    }
+
+    #[test]
+    fn stress_exactly_at_allowable_still_proceeds() {
+        // d = 1/512 m = 2^{-9} m (exact). c_max = 2 → kbi(2) = 13/8 = 1.625 (exact).
+        // M = allow·π·d³/(32·kbi): at d³ = 2^{-27} the π/π and 52/52 terms cancel
+        // bit-exactly (verified empirically — see scratchpad/check_228b), so
+        // bending_stress_inner(...).pascals() == allow in IEEE 754.
+        // Guard `stress_at_hi > allow`: allow > allow → false → proceeds → Ok.
+        // The `>→>=` mutant: allow >= allow → true → skips → Infeasible, killing survivor 228.
+        let m = music_wire();
+        let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
+        let d = Length::from_meters(d_val);
+        let mts_pa = m.min_tensile_strength(d).unwrap().pascals();
+        let allow = m.allowable_pct_bending * mts_pa;
+        // kbi(2.0) = (4·4 − 2 − 1)/(4·2·1) = 13/8 = 1.625 — exact in f64.
+        let c_max_val = 2.0_f64;
+        let kbi_val =
+            (4.0 * c_max_val * c_max_val - c_max_val - 1.0) / (4.0 * c_max_val * (c_max_val - 1.0));
+        let moment_nm = allow * PI * d_val.powi(3) / (32.0 * kbi_val);
+        let req = TorMinWeightRequest {
+            candidate_diameters: vec![d],
+            index_bounds: (1.5, c_max_val),
+            max_moment: Moment::from_newton_meters(moment_nm),
+            max_outer_dia: None,
+            ..base_request()
+        };
+        // Original: stress_at_hi == allow → `>` is false → proceeds → Ok.
+        // Mutant:   `>=` is true → skips → Infeasible.
+        solve_min_weight(&m, &req)
+            .expect("stress == allow passes the strict `>` guard; the `>=` mutant rejects it");
+    }
+
+    #[test]
     fn arbor_passthrough_surfaces_engine_advisories() {
         // An arbor slightly LARGER than the wound-up inner diameter at max moment
         // trips the engine's wind-down advisory (design.rs fires it when
