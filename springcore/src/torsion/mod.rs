@@ -5,10 +5,14 @@
 
 mod design;
 mod mechanics;
+mod optimize;
 mod scenario;
 
 pub use design::{solve_forward, TorsionDesign, TorsionInputs, TorsionLoadPoint};
 pub use mechanics::{
     active_coils_for_rate, moment_from_force_at_radius, FrictionModel, ALL_FRICTION_MODELS,
+};
+pub use optimize::{
+    solve_min_weight, DiaPolicy, TorBindingConstraint, TorMinWeightRequest, TorMinWeightSolution,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
