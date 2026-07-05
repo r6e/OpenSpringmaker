@@ -225,7 +225,10 @@ fn parse_applied_moments_nmm(form: &TorFormState, us: UnitSystem) -> Result<Vec<
                         Length::from_millimeters(radius_mm),
                     )
                     .newton_millimeters();
-                    finite_or_err("force", s, nmm)
+                    // Attribute the overflow to the PRODUCT, not the force alone: a
+                    // moderate force at a huge radius overflows too, and reducing
+                    // either input fixes it. `s` still names the offending entry.
+                    finite_or_err("force × load radius", s, nmm)
                 })
                 .collect::<Result<_>>()?;
             if moments.is_empty() {
@@ -775,22 +778,27 @@ mod tests {
     }
 
     #[test]
-    fn far_huge_force_overflow_is_rejected() {
-        // 1e308 N × 50 mm = 5e309 N·mm, which overflows to +Inf.
-        // finite_or_err must catch this before the engine sees it.
-        let f = TorFormState {
-            moment_entry: MomentEntry::ForceAtRadius,
-            forces: "1e308".into(),
-            load_radius: "50".into(),
-            moments: String::new(),
-            ..metric_form()
-        };
-        let err = parse_and_solve(&f, "Music Wire", UnitSystem::Metric, &store())
-            .expect_err("overflow moment must be caught at form boundary");
-        assert!(
-            err.to_string().contains("overflow"),
-            "expected overflow guard message; got: {err}"
-        );
+    fn far_moment_overflow_is_rejected_and_names_the_product() {
+        // The derived moment F·r can overflow from EITHER a huge force at a small
+        // radius or a moderate force at a huge radius — the guard must catch both
+        // before the engine and attribute the overflow to the product ("force ×
+        // load radius"), not the force alone, since reducing either input fixes it.
+        for (forces, radius) in [("1e308", "50"), ("100", "1e307")] {
+            let f = TorFormState {
+                moment_entry: MomentEntry::ForceAtRadius,
+                forces: forces.into(),
+                load_radius: radius.into(),
+                moments: String::new(),
+                ..metric_form()
+            };
+            let err = parse_and_solve(&f, "Music Wire", UnitSystem::Metric, &store())
+                .expect_err("overflow moment must be caught at form boundary");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("overflow") && msg.contains("force × load radius"),
+                "expected product-attributed overflow for F={forces}, r={radius}; got: {msg}"
+            );
+        }
     }
 
     #[test]
