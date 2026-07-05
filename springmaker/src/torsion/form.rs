@@ -530,6 +530,28 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             form.moment2 = fmt_moment(*moment2_nmm, us);
             form.angle2 = fmt_angle_deg(*angle2_deg);
         }
+        // Task 2 replaces this arm with full MinWeight population (scenario kind,
+        // optimizer fields, both selectors). Until then nothing writes this tag.
+        TorsionSpec::MinWeight {
+            rate_nmm_per_deg,
+            leg1_mm,
+            leg2_mm,
+            arbor_dia_mm,
+            friction_model,
+            ..
+        } => {
+            form.rate = fmt_ang_rate_nmm_per_deg(*rate_nmm_per_deg, us);
+            form.leg1 = fmt_len(*leg1_mm, us);
+            form.leg2 = fmt_len(*leg2_mm, us);
+            form.arbor_dia = match arbor_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.friction_model = *friction_model;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
+        }
     }
 }
 

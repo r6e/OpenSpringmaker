@@ -14,5 +14,6 @@ pub use mechanics::{
 };
 pub use optimize::{
     solve_min_weight, DiaPolicy, TorBindingConstraint, TorMinWeightRequest, TorMinWeightSolution,
+    ALL_DIA_POLICIES,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
