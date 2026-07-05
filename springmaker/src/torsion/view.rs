@@ -102,6 +102,11 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::Angle2 => &form.angle2,
         Field::Forces => &form.forces,
         Field::LoadRadius => &form.load_radius,
+        Field::MaxMoment => &form.max_moment,
+        Field::IndexMin => &form.index_min,
+        Field::IndexMax => &form.index_max,
+        Field::MaxOuterDia => &form.max_outer_dia,
+        Field::CandidateDiameters => &form.candidate_diameters,
     }
 }
 
@@ -126,6 +131,11 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::Angle2 => "tor-angle2",
         Field::Forces => "tor-forces",
         Field::LoadRadius => "tor-load-radius",
+        Field::MaxMoment => "tor-max-moment",
+        Field::IndexMin => "tor-index-min",
+        Field::IndexMax => "tor-index-max",
+        Field::MaxOuterDia => "tor-max-outer-dia",
+        Field::CandidateDiameters => "tor-candidate-diameters",
     }
 }
 

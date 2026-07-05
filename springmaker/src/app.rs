@@ -720,6 +720,11 @@ impl App {
             TF::Angle2 => f.angle2 = value,
             TF::Forces => f.forces = value,
             TF::LoadRadius => f.load_radius = value,
+            TF::MaxMoment => f.max_moment = value,
+            TF::IndexMin => f.index_min = value,
+            TF::IndexMax => f.index_max = value,
+            TF::MaxOuterDia => f.max_outer_dia = value,
+            TF::CandidateDiameters => f.candidate_diameters = value,
         }
     }
 

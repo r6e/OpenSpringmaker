@@ -30,6 +30,9 @@ pub enum DiaPolicy {
     #[default]
     MaxMargin,
     /// Smallest D that satisfies the stress allowable: the most compact coil.
+    /// Never reports [`TorBindingConstraint::OuterDiameter`]: an OD cap only
+    /// narrows the feasible ceiling, while Compact's D lands on the stress bound
+    /// or the index floor.
     Compact,
 }
 

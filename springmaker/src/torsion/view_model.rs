@@ -11,7 +11,7 @@ use crate::presenter::{
     unit_force_label, unit_length_label, unit_moment_label, unit_stress_label, Emphasis,
     FieldDescriptor, ResultRow, StatusLine,
 };
-use crate::torsion::form::{Field, MomentEntry, TorScenarioKind};
+use crate::torsion::form::{Field, MomentEntry, TorFormOutcome, TorScenarioKind};
 use springcore::torsion::TorsionDesign;
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
@@ -108,6 +108,9 @@ pub struct TorPopulatedResults {
     pub geometry: Vec<ResultRow>,
     /// Per-moment load-point table.
     pub load_table: TorLoadTable,
+    /// Min-weight optimisation summary (Hidden for non-MinWeight solves).
+    /// Task 3 expands `TorMinWeightView` with mass and binding rows.
+    pub(crate) min_weight: TorMinWeightView,
 }
 
 /// Geometry summary rows: spring index and effective active coils.
@@ -149,6 +152,7 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
                 rate_per_turn: rate_per_turn_row(&out.design, us),
                 geometry: geometry_rows(&out.design),
                 load_table: tor_load_table(&out.design, us),
+                min_weight: tor_min_weight_view(out),
             }))
         }
         None => match &app.error {
@@ -156,6 +160,31 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
             None => TorResultsView::Empty,
         },
     }
+}
+
+// ── Min-weight section (stub for Task 3) ──────────────────────────────────────
+
+/// Min-weight optimisation summary for the torsion results panel.
+///
+/// Task 3 expands this into `Hidden | Shown(Vec<ResultRow>)` with mass and
+/// binding-constraint rows, mirroring `compression::view_model::MinWeightView`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TorMinWeightView {
+    /// No MinWeight solve is active.
+    Hidden,
+}
+
+/// Build the torsion min-weight view section from a solved outcome.
+///
+/// Task 3 replaces the stub body with formatted mass and binding rows,
+/// mirroring `compression::view_model::min_weight_view`.
+fn tor_min_weight_view(out: &TorFormOutcome) -> TorMinWeightView {
+    if let Some(mw) = &out.min_weight {
+        // Both fields are read here so the dead-code gate stays green while
+        // Task 3 fills in the ResultRow formatting (mass kg + binding label).
+        let _ = (mw.mass_kg, mw.binding);
+    }
+    TorMinWeightView::Hidden
 }
 
 // ── Status panel ──────────────────────────────────────────────────────────────
@@ -252,6 +281,23 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             FieldDescriptor::new("Angle 1 (°)".to_string(), Field::Angle1),
             FieldDescriptor::new(format!("Moment 2 ({moment})"), Field::Moment2),
             FieldDescriptor::new("Angle 2 (°)".to_string(), Field::Angle2),
+        ],
+        TorScenarioKind::MinWeight => vec![
+            FieldDescriptor::new(format!("Rate ({moment}/°)"), Field::Rate),
+            FieldDescriptor::new(format!("Max moment ({moment})"), Field::MaxMoment),
+            FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
+            FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
+            FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
+            FieldDescriptor::new("Min index".to_string(), Field::IndexMin),
+            FieldDescriptor::new("Max index".to_string(), Field::IndexMax),
+            FieldDescriptor::new(
+                format!("Max outer diameter ({len}, optional)"),
+                Field::MaxOuterDia,
+            ),
+            FieldDescriptor::new(
+                format!("Candidate diameters ({len}, comma-separated)"),
+                Field::CandidateDiameters,
+            ),
         ],
     }
 }

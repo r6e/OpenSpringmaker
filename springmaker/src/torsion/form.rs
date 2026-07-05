@@ -2,9 +2,9 @@
 use crate::form_helpers::{
     ang_rate_nmm_per_deg, angle_deg, finite_or_err, fmt_ang_rate_nmm_per_deg, fmt_angle_deg,
     fmt_len, fmt_moment, fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm,
-    positive_force_n, positive_num,
+    num, positive_force_n, positive_num,
 };
-use springcore::torsion::{FrictionModel, PowerUser, Scenario, TorsionDesign};
+use springcore::torsion::{DiaPolicy, FrictionModel, PowerUser, Scenario, TorsionDesign};
 use springcore::units::{Angle, AngularRate, Force, Length, Moment};
 use springcore::{Material, MaterialStore, Result, TorsionSpec, UnitSystem};
 
@@ -17,6 +17,7 @@ pub enum TorScenarioKind {
     RateBased,
     Dimensional,
     TwoLoad,
+    MinWeight,
 }
 
 /// All `TorScenarioKind` variants in display order.
@@ -25,6 +26,7 @@ pub const ALL_TOR_SCENARIOS: &[TorScenarioKind] = &[
     TorScenarioKind::RateBased,
     TorScenarioKind::Dimensional,
     TorScenarioKind::TwoLoad,
+    TorScenarioKind::MinWeight,
 ];
 
 impl std::fmt::Display for TorScenarioKind {
@@ -34,6 +36,7 @@ impl std::fmt::Display for TorScenarioKind {
             TorScenarioKind::RateBased => "Rate Based",
             TorScenarioKind::Dimensional => "Dimensional",
             TorScenarioKind::TwoLoad => "Two Load",
+            TorScenarioKind::MinWeight => "Min Weight",
         })
     }
 }
@@ -83,10 +86,20 @@ pub enum Field {
     Forces,
     /// Load radius (F@r mode only).
     LoadRadius,
+    /// Maximum applied moment (MinWeight mode).
+    MaxMoment,
+    /// Minimum spring index bound (MinWeight mode).
+    IndexMin,
+    /// Maximum spring index bound (MinWeight mode).
+    IndexMax,
+    /// Optional outer-diameter cap (MinWeight mode).
+    MaxOuterDia,
+    /// Comma-separated candidate wire diameters (MinWeight mode).
+    CandidateDiameters,
 }
 
 /// Torsion form inputs as raw strings, plus the friction-model selector.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TorFormState {
     pub scenario: TorScenarioKind,
     /// Whether moments are entered directly or derived from F·r. NOT persisted.
@@ -113,7 +126,53 @@ pub struct TorFormState {
     pub moment2: String,
     /// Second operating-point angle in degrees (TwoLoad mode).
     pub angle2: String,
+    /// Maximum applied moment (MinWeight mode).
+    pub max_moment: String,
+    /// Minimum spring index bound (MinWeight mode). Pre-filled to "4".
+    pub index_min: String,
+    /// Maximum spring index bound (MinWeight mode). Pre-filled to "12".
+    pub index_max: String,
+    /// Optional outer-diameter cap, empty string means None (MinWeight mode).
+    pub max_outer_dia: String,
+    /// Comma-separated candidate wire diameters (MinWeight mode).
+    pub candidate_diameters: String,
+    /// Mean-diameter selection policy (MinWeight mode).
+    pub dia_policy: DiaPolicy,
     pub friction_model: FrictionModel,
+}
+
+impl Default for TorFormState {
+    fn default() -> Self {
+        Self {
+            scenario: TorScenarioKind::default(),
+            moment_entry: MomentEntry::default(),
+            wire_dia: String::new(),
+            mean_dia: String::new(),
+            outer_dia: String::new(),
+            body_coils: String::new(),
+            rate: String::new(),
+            leg1: String::new(),
+            leg2: String::new(),
+            arbor_dia: String::new(),
+            moments: String::new(),
+            forces: String::new(),
+            load_radius: String::new(),
+            moment1: String::new(),
+            angle1: String::new(),
+            moment2: String::new(),
+            angle2: String::new(),
+            max_moment: String::new(),
+            // Pre-filled sensible defaults (extension's exact values and the engine's
+            // caution range). is_blank EXCLUDES these two — a pre-filled field cannot
+            // distinguish an untouched form (extension's documented rule).
+            index_min: "4".into(),
+            index_max: "12".into(),
+            max_outer_dia: String::new(),
+            candidate_diameters: String::new(),
+            dia_policy: DiaPolicy::default(),
+            friction_model: FrictionModel::default(),
+        }
+    }
 }
 
 impl TorFormState {
@@ -177,8 +236,29 @@ impl TorFormState {
                 &self.moment2,
                 &self.angle2,
             ]),
+            // index_min and index_max are EXCLUDED: they are pre-filled defaults
+            // ("4"/"12") so they cannot distinguish an untouched form from one the
+            // user has begun editing (extension's documented rule for pre-filled fields).
+            TorScenarioKind::MinWeight => all_empty(&[
+                &self.rate,
+                &self.max_moment,
+                &self.leg1,
+                &self.leg2,
+                &self.arbor_dia,
+                &self.max_outer_dia,
+                &self.candidate_diameters,
+            ]),
         }
     }
+}
+
+/// Min-weight optimisation extras when the active outcome is a MinWeight solve
+/// (extension's plain-Option precedent: no other extra section exists yet, so an
+/// enum would be speculative).
+#[derive(Debug, Clone)]
+pub(crate) struct TorMinWeightExtra {
+    pub binding: springcore::torsion::TorBindingConstraint,
+    pub mass_kg: f64,
 }
 
 /// A solved torsion form: the design (which carries engine-computed status).
@@ -188,6 +268,8 @@ pub struct TorFormOutcome {
     // the `#[cfg_attr]` guard is no longer needed because `tor_status_view` references
     // `out.design` in non-test builds via `calculator::status_panel`.
     pub design: TorsionDesign,
+    /// `Some` only for MinWeight solves.
+    pub(crate) min_weight: Option<TorMinWeightExtra>,
 }
 
 /// Parse the comma-separated moment list into SI newton-millimetres, rejecting an
@@ -275,6 +357,25 @@ fn parse_arbor_mm(form: &TorFormState, us: UnitSystem) -> Result<Option<f64>> {
     }
 }
 
+/// Parse the comma-separated candidate-diameter list into SI millimetres, rejecting
+/// an empty list at the form boundary. Shared by the MinWeight `parse_and_solve` and
+/// `build_spec` arms (extension's `parse_candidate_diameters_mm` precedent).
+fn parse_candidate_diameters_mm(form: &TorFormState, us: UnitSystem) -> Result<Vec<f64>> {
+    let candidates: Vec<f64> = form
+        .candidate_diameters
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| length_mm("candidate diameter", s, us))
+        .collect::<Result<_>>()?;
+    if candidates.is_empty() {
+        return Err(springcore::SpringError::InconsistentInputs(
+            "provide at least one candidate diameter".into(),
+        ));
+    }
+    Ok(candidates)
+}
+
 /// Parse the form, build the active scenario, and solve. The engine's own
 /// input guards remain the defense-in-depth backstop.
 pub fn parse_and_solve(
@@ -300,6 +401,7 @@ pub fn parse_and_solve(
             };
             Ok(TorFormOutcome {
                 design: scenario.solve(material, form.friction_model)?,
+                min_weight: None,
             })
         }
         TorScenarioKind::RateBased => {
@@ -319,6 +421,7 @@ pub fn parse_and_solve(
             };
             Ok(TorFormOutcome {
                 design: scenario.solve(material, form.friction_model)?,
+                min_weight: None,
             })
         }
         TorScenarioKind::Dimensional => {
@@ -339,6 +442,7 @@ pub fn parse_and_solve(
             };
             Ok(TorFormOutcome {
                 design: scenario.solve(material, form.friction_model)?,
+                min_weight: None,
             })
         }
         TorScenarioKind::TwoLoad => {
@@ -359,6 +463,51 @@ pub fn parse_and_solve(
             };
             Ok(TorFormOutcome {
                 design: scenario.solve(material, form.friction_model)?,
+                min_weight: None,
+            })
+        }
+        TorScenarioKind::MinWeight => {
+            let req = springcore::torsion::TorMinWeightRequest {
+                required_rate: springcore::units::AngularRate::from_newton_meters_per_degree(
+                    ang_rate_nmm_per_deg("rate", &form.rate, us)? / 1000.0,
+                ),
+                max_moment: springcore::units::Moment::from_newton_millimeters(moment_nmm(
+                    "max moment",
+                    &form.max_moment,
+                    us,
+                )?),
+                leg1: Length::from_millimeters(non_negative_length_mm("leg 1", &form.leg1, us)?),
+                leg2: Length::from_millimeters(non_negative_length_mm("leg 2", &form.leg2, us)?),
+                friction_model: form.friction_model,
+                dia_policy: form.dia_policy,
+                // Plain finite parses: the ENGINE's `1 < c_min < c_max` guard is the
+                // validator and its message names the bounds — no duplicated form guard.
+                index_bounds: (
+                    num("index min", &form.index_min)?,
+                    num("index max", &form.index_max)?,
+                ),
+                max_outer_dia: if form.max_outer_dia.trim().is_empty() {
+                    None
+                } else {
+                    Some(Length::from_millimeters(length_mm(
+                        "max outer diameter",
+                        &form.max_outer_dia,
+                        us,
+                    )?))
+                },
+                arbor_dia: parse_arbor(form, us)?,
+                candidate_diameters: parse_candidate_diameters_mm(form, us)?
+                    .into_iter()
+                    .map(Length::from_millimeters)
+                    .collect(),
+            };
+            let sol = springcore::torsion::solve_min_weight(material, &req)?;
+            Ok(TorFormOutcome {
+                design: sol.design,
+                min_weight: Some(TorMinWeightExtra {
+                    binding: sol.binding,
+                    mass_kg: sol.mass_kg,
+                }),
             })
         }
     }
@@ -414,6 +563,23 @@ pub fn build_spec(form: &TorFormState, us: UnitSystem) -> Result<TorsionSpec> {
             angle1_deg: angle_deg("angle 1", &form.angle1)?,
             moment2_nmm: moment_nmm("moment 2", &form.moment2, us)?,
             angle2_deg: angle_deg("angle 2", &form.angle2)?,
+        }),
+        TorScenarioKind::MinWeight => Ok(TorsionSpec::MinWeight {
+            rate_nmm_per_deg: ang_rate_nmm_per_deg("rate", &form.rate, us)?,
+            max_moment_nmm: moment_nmm("max moment", &form.max_moment, us)?,
+            leg1_mm: non_negative_length_mm("leg 1", &form.leg1, us)?,
+            leg2_mm: non_negative_length_mm("leg 2", &form.leg2, us)?,
+            arbor_dia_mm: parse_arbor_mm(form, us)?,
+            friction_model: form.friction_model,
+            dia_policy: form.dia_policy,
+            index_min: num("index min", &form.index_min)?,
+            index_max: num("index max", &form.index_max)?,
+            max_outer_dia_mm: if form.max_outer_dia.trim().is_empty() {
+                None
+            } else {
+                Some(length_mm("max outer diameter", &form.max_outer_dia, us)?)
+            },
+            candidate_diameters_mm: parse_candidate_diameters_mm(form, us)?,
         }),
     }
 }
@@ -530,17 +696,25 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             form.moment2 = fmt_moment(*moment2_nmm, us);
             form.angle2 = fmt_angle_deg(*angle2_deg);
         }
-        // Task 2 replaces this arm with full MinWeight population (scenario kind,
-        // optimizer fields, both selectors). Until then nothing writes this tag.
         TorsionSpec::MinWeight {
             rate_nmm_per_deg,
+            max_moment_nmm,
             leg1_mm,
             leg2_mm,
             arbor_dia_mm,
             friction_model,
-            ..
+            dia_policy,
+            index_min,
+            index_max,
+            max_outer_dia_mm,
+            candidate_diameters_mm,
         } => {
+            form.scenario = TorScenarioKind::MinWeight;
+            form.moment_entry = MomentEntry::Direct;
+            form.forces = String::new();
+            form.load_radius = String::new();
             form.rate = fmt_ang_rate_nmm_per_deg(*rate_nmm_per_deg, us);
+            form.max_moment = fmt_moment(*max_moment_nmm, us);
             form.leg1 = fmt_len(*leg1_mm, us);
             form.leg2 = fmt_len(*leg2_mm, us);
             form.arbor_dia = match arbor_dia_mm {
@@ -548,9 +722,18 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
                 None => String::new(),
             };
             form.friction_model = *friction_model;
-            form.moment_entry = MomentEntry::Direct;
-            form.forces = String::new();
-            form.load_radius = String::new();
+            form.dia_policy = *dia_policy;
+            form.index_min = format!("{index_min}");
+            form.index_max = format!("{index_max}");
+            form.max_outer_dia = match max_outer_dia_mm {
+                Some(v) => fmt_len(*v, us),
+                None => String::new(),
+            };
+            form.candidate_diameters = candidate_diameters_mm
+                .iter()
+                .map(|&d| fmt_len(d, us))
+                .collect::<Vec<_>>()
+                .join(", ");
         }
     }
 }
@@ -982,6 +1165,149 @@ mod tests {
             err.to_string().contains("different angles"),
             "engine degenerate-point message must surface; got: {err}"
         );
+    }
+
+    fn min_weight_metric_form() -> TorFormState {
+        TorFormState {
+            scenario: TorScenarioKind::MinWeight,
+            // Oracle rule: PureBending EXPLICITLY (default Shigley changes the mass).
+            friction_model: FrictionModel::PureBending,
+            rate: format!("{}", 0.5085_f64 * 1000.0 * std::f64::consts::PI / 180.0),
+            max_moment: "100".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            candidate_diameters: "1.5, 2, 2.5".into(),
+            ..TorFormState::default()
+        }
+    }
+
+    #[test]
+    fn min_weight_solves_smallest_candidate_with_mass_extra() {
+        let out = parse_and_solve(
+            &min_weight_metric_form(),
+            "Music Wire",
+            UnitSystem::Metric,
+            &store(),
+        )
+        .expect("MinWeight should solve");
+        assert_relative_eq!(
+            out.design.inputs.wire_dia.meters(),
+            0.0015,
+            max_relative = 1e-12
+        );
+        assert_eq!(out.design.load_points.len(), 1);
+        let mw = out.min_weight.expect("MinWeight fills the extra");
+        // Closed-form mass (no legs): ρ·(π/4)d²·(π·E·d⁴/(64·k′)), constants read
+        // from the material so the oracle is exact without hardcoding them.
+        let m = store();
+        let mat = m.get("Music Wire").unwrap();
+        let d = 0.0015_f64;
+        let len = std::f64::consts::PI * mat.youngs_modulus.pascals() * d.powi(4) / (64.0 * 0.5085);
+        let expected = mat.density.kg_per_m3() * (std::f64::consts::PI / 4.0) * d * d * len;
+        assert_relative_eq!(mw.mass_kg, expected, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn min_weight_policies_agree_on_mass_and_other_scenarios_have_no_extra() {
+        let base = min_weight_metric_form();
+        let compact = TorFormState {
+            dia_policy: springcore::torsion::DiaPolicy::Compact,
+            ..base.clone()
+        };
+        let a = parse_and_solve(&base, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        let b = parse_and_solve(&compact, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        let (ma, mb) = (a.min_weight.unwrap(), b.min_weight.unwrap());
+        assert_relative_eq!(ma.mass_kg, mb.mass_kg, max_relative = 1e-9);
+        assert!(
+            b.design.inputs.mean_dia.meters() <= a.design.inputs.mean_dia.meters(),
+            "Compact D ≤ MaxMargin D"
+        );
+        // The other scenarios never fill the extra.
+        let pu =
+            parse_and_solve(&metric_form(), "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        assert!(pu.min_weight.is_none());
+    }
+
+    #[test]
+    fn min_weight_infeasible_and_empty_candidates_error() {
+        let infeasible = TorFormState {
+            max_moment: "1e9".into(),
+            ..min_weight_metric_form()
+        };
+        let err = parse_and_solve(&infeasible, "Music Wire", UnitSystem::Metric, &store())
+            .expect_err("hugely overstressed request is infeasible");
+        assert!(
+            err.to_string().contains("no feasible design"),
+            "engine Infeasible must surface; got: {err}"
+        );
+        let empty = TorFormState {
+            candidate_diameters: "  ,  ".into(),
+            ..min_weight_metric_form()
+        };
+        let err = parse_and_solve(&empty, "Music Wire", UnitSystem::Metric, &store())
+            .expect_err("empty candidate list rejected at the form boundary");
+        assert!(
+            err.to_string()
+                .contains("provide at least one candidate diameter"),
+            "form guard message expected; got: {err}"
+        );
+    }
+
+    #[test]
+    fn min_weight_build_spec_populate_round_trips() {
+        for us in [UnitSystem::Metric, UnitSystem::Us] {
+            let form = TorFormState {
+                arbor_dia: "10".into(),
+                max_outer_dia: "30".into(),
+                dia_policy: springcore::torsion::DiaPolicy::Compact,
+                ..min_weight_metric_form()
+            };
+            let spec = build_spec(&form, us).unwrap();
+            let mut form2 = TorFormState::default();
+            populate_from_spec(&mut form2, &spec, us);
+            assert_eq!(form2.scenario, TorScenarioKind::MinWeight);
+            assert_eq!(form2.dia_policy, springcore::torsion::DiaPolicy::Compact);
+            assert_eq!(build_spec(&form2, us).unwrap(), spec);
+        }
+    }
+
+    #[test]
+    fn min_weight_is_blank_excludes_prefilled_bounds() {
+        let fresh = TorFormState {
+            scenario: TorScenarioKind::MinWeight,
+            ..TorFormState::default()
+        };
+        assert!(
+            fresh.is_blank(),
+            "pre-filled index bounds cannot signal intent"
+        );
+        let edited_bound = TorFormState {
+            scenario: TorScenarioKind::MinWeight,
+            index_min: "5".into(),
+            ..TorFormState::default()
+        };
+        assert!(
+            edited_bound.is_blank(),
+            "bounds are excluded from is_blank entirely (extension's rule)"
+        );
+        for (field, value) in [
+            ("rate", "8.9"),
+            ("max_moment", "100"),
+            ("candidate_diameters", "2"),
+            ("max_outer_dia", "30"),
+        ] {
+            let mut f = TorFormState {
+                scenario: TorScenarioKind::MinWeight,
+                ..TorFormState::default()
+            };
+            match field {
+                "rate" => f.rate = value.into(),
+                "max_moment" => f.max_moment = value.into(),
+                "candidate_diameters" => f.candidate_diameters = value.into(),
+                _ => f.max_outer_dia = value.into(),
+            }
+            assert!(!f.is_blank(), "typing {field} clears blank");
+        }
     }
 
     #[test]
