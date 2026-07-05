@@ -38,7 +38,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let mut setup_group =
         column![section_heading("Setup"), material_picker(app), scenario_col].spacing(10);
 
-    if app.torsion.scenario != TorScenarioKind::TwoLoad {
+    if app.torsion.scenario != TorScenarioKind::TwoLoad
+        && app.torsion.scenario != TorScenarioKind::MinWeight
+    {
         setup_group = setup_group.push(
             column![
                 field_label("Moment entry"),
@@ -46,6 +48,20 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                     ALL_MOMENT_ENTRIES,
                     Some(app.torsion.moment_entry),
                     Message::TorMomentEntry,
+                ),
+            ]
+            .spacing(4),
+        );
+    }
+
+    if app.torsion.scenario == TorScenarioKind::MinWeight {
+        setup_group = setup_group.push(
+            column![
+                field_label("Diameter policy"),
+                styled_pick_list(
+                    springcore::torsion::ALL_DIA_POLICIES,
+                    Some(app.torsion.dia_policy),
+                    Message::TorDiaPolicy,
                 ),
             ]
             .spacing(4),
@@ -238,7 +254,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
             rate_col = rate_col.push(render_result_row(&p.rate_per_turn));
 
-            column![
+            let mut col = column![
                 section_heading("Results"),
                 section_divider(),
                 rate_col,
@@ -247,8 +263,14 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 section_divider(),
                 render_tor_load_table(&p.load_table),
             ]
-            .spacing(6)
-            .into()
+            .spacing(6);
+
+            if let Some(rows) = &p.min_weight {
+                col = col.push(section_divider());
+                col = col.push(rows_section("Optimization", rows));
+            }
+
+            col.into()
         }
     };
 

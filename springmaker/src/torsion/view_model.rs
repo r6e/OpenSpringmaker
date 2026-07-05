@@ -12,7 +12,7 @@ use crate::presenter::{
     FieldDescriptor, ResultRow, StatusLine,
 };
 use crate::torsion::form::{Field, MomentEntry, TorFormOutcome, TorScenarioKind};
-use springcore::torsion::TorsionDesign;
+use springcore::torsion::{TorBindingConstraint, TorsionDesign};
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
 
@@ -108,9 +108,8 @@ pub struct TorPopulatedResults {
     pub geometry: Vec<ResultRow>,
     /// Per-moment load-point table.
     pub load_table: TorLoadTable,
-    /// Min-weight optimisation summary (Hidden for non-MinWeight solves).
-    /// Task 3 expands `TorMinWeightView` with mass and binding rows.
-    pub(crate) min_weight: TorMinWeightView,
+    /// Min-weight optimisation rows (MinWeight solves only).
+    pub min_weight: Option<Vec<ResultRow>>,
 }
 
 /// Geometry summary rows: spring index and effective active coils.
@@ -152,7 +151,7 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
                 rate_per_turn: rate_per_turn_row(&out.design, us),
                 geometry: geometry_rows(&out.design),
                 load_table: tor_load_table(&out.design, us),
-                min_weight: tor_min_weight_view(out),
+                min_weight: tor_min_weight_rows(out),
             }))
         }
         None => match &app.error {
@@ -162,29 +161,22 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
     }
 }
 
-// ── Min-weight section (stub for Task 3) ──────────────────────────────────────
+// ── Min-weight section ────────────────────────────────────────────────────────
 
-/// Min-weight optimisation summary for the torsion results panel.
-///
-/// Task 3 expands this into `Hidden | Shown(Vec<ResultRow>)` with mass and
-/// binding-constraint rows, mirroring `compression::view_model::MinWeightView`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TorMinWeightView {
-    /// No MinWeight solve is active.
-    Hidden,
-}
-
-/// Build the torsion min-weight view section from a solved outcome.
-///
-/// Task 3 replaces the stub body with formatted mass and binding rows,
-/// mirroring `compression::view_model::min_weight_view`.
-fn tor_min_weight_view(out: &TorFormOutcome) -> TorMinWeightView {
-    if let Some(mw) = &out.min_weight {
-        // Both fields are read here so the dead-code gate stays green while
-        // Task 3 fills in the ResultRow formatting (mass kg + binding label).
-        let _ = (mw.mass_kg, mw.binding);
-    }
-    TorMinWeightView::Hidden
+/// Min-weight optimisation rows when the active outcome is a MinWeight solve.
+fn tor_min_weight_rows(out: &TorFormOutcome) -> Option<Vec<ResultRow>> {
+    let mw = out.min_weight.as_ref()?;
+    let binding = match mw.binding {
+        TorBindingConstraint::BendingStress => "bending stress",
+        TorBindingConstraint::Index => "index",
+        TorBindingConstraint::OuterDiameter => "outer diameter",
+        // `TorBindingConstraint` is `#[non_exhaustive]`; a future variant falls here.
+        _ => "other",
+    };
+    Some(vec![
+        ResultRow::new("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
+        ResultRow::new("Binding constraint", binding, ""),
+    ])
 }
 
 // ── Status panel ──────────────────────────────────────────────────────────────
@@ -288,8 +280,8 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             FieldDescriptor::new(format!("Leg 1 ({len})"), Field::Leg1),
             FieldDescriptor::new(format!("Leg 2 ({len})"), Field::Leg2),
             FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
-            FieldDescriptor::new("Min index".to_string(), Field::IndexMin),
-            FieldDescriptor::new("Max index".to_string(), Field::IndexMax),
+            FieldDescriptor::new("Index min".to_string(), Field::IndexMin),
+            FieldDescriptor::new("Index max".to_string(), Field::IndexMax),
             FieldDescriptor::new(
                 format!("Max outer diameter ({len}, optional)"),
                 Field::MaxOuterDia,
@@ -866,5 +858,59 @@ mod tests {
             app2.tor_outcome.is_none(),
             "tor_outcome must be None after switching to Extension"
         );
+    }
+
+    fn min_weight_form_fixture() -> TorFormState {
+        TorFormState {
+            scenario: crate::torsion::form::TorScenarioKind::MinWeight,
+            friction_model: springcore::torsion::FrictionModel::PureBending,
+            rate: format!("{}", 0.5085_f64 * 1000.0 * std::f64::consts::PI / 180.0),
+            max_moment: "100".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            candidate_diameters: "1.5, 2, 2.5".into(),
+            ..TorFormState::default()
+        }
+    }
+
+    #[test]
+    fn min_weight_rows_render_mass_and_binding_and_none_elsewhere() {
+        let m = store();
+        let out = crate::torsion::form::parse_and_solve(
+            &min_weight_form_fixture(),
+            "Music Wire",
+            UnitSystem::Metric,
+            &m,
+        )
+        .unwrap();
+        let rows = tor_min_weight_rows(&out).expect("MinWeight outcome has the section");
+        assert!(rows
+            .iter()
+            .any(|r| r.label == "Wire mass" && r.unit == "kg"));
+        assert!(rows
+            .iter()
+            .any(|r| r.label == "Binding constraint" && r.value == "index"));
+        // Non-MinWeight outcome → None.
+        let pu = crate::torsion::form::parse_and_solve(
+            &metric_form(),
+            "Music Wire",
+            UnitSystem::Metric,
+            &m,
+        )
+        .unwrap();
+        assert!(tor_min_weight_rows(&pu).is_none());
+    }
+
+    #[test]
+    fn min_weight_inputs_view_lists_nine_descriptors() {
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = crate::torsion::form::TorScenarioKind::MinWeight;
+        let fields = tor_inputs_view(&app);
+        assert_eq!(fields.len(), 9);
+        assert!(fields
+            .iter()
+            .any(|f| f.label.contains("Candidate diameters")));
+        assert!(fields.iter().any(|f| f.label == "Index min"));
+        assert!(!fields.iter().any(|f| f.label.contains("Moments")));
     }
 }
