@@ -168,12 +168,18 @@ fn validate_request(req: &TorMinWeightRequest) -> Result<()> {
 /// t ≤ 1 CANNOT reach this function: K_bi > 1 for every finite C, so the
 /// ceiling-stress feasibility check already skipped such candidates — callers
 /// guarantee t > 1, no special-case branch exists (spec: documented, not branched).
+/// (One triply-pathological corner — a synthetic material plus c_max large enough
+/// to overflow dm_hi to +Inf — can bypass the NaN-comparing ceiling check and reach
+/// here with t ≤ 1; the resulting non-positive or non-finite mean is rejected by
+/// solve_forward's geometry guard, so the contract is about the reachable domain,
+/// not a safety boundary.)
 fn compact_index_for_stress(t: f64) -> f64 {
     let a = 4.0 - 4.0 * t; // < 0 for t > 1
     let b = 4.0 * t - 1.0;
     let disc = b * b + 4.0 * a; // b² − 4ac with constant term c = −1
-                                // Of the two real roots, the one in C > 1 is (−b − √disc)/(2a) with a < 0
-                                // (the "−" branch divided by a negative leading coefficient).
+
+    // Of the two real roots, the one in C > 1 is (−b − √disc)/(2a) with a < 0
+    // (the "−" branch divided by a negative leading coefficient).
     (-b - disc.sqrt()) / (2.0 * a)
 }
 
@@ -283,8 +289,8 @@ pub fn solve_min_weight(
         );
         // body_coils = 0 extracts JUST the leg coil-equivalent (L₁+L₂)/(3πD)
         // (Shigley Eq. 10-50 is linear in N_b), single-sourcing the leg formula.
-        let leg_na = active_coils_with_legs(0.0, req.leg1, req.leg2, mean);
-        let body_coils = na - leg_na;
+        let leg_term = active_coils_with_legs(0.0, req.leg1, req.leg2, mean);
+        let body_coils = na - leg_term;
 
         // Full engine backstop; arbor advisories ride along in the design status.
         let Ok(design) = solve_forward(
@@ -785,8 +791,12 @@ mod tests {
     fn stress_exactly_at_allowable_still_proceeds() {
         // d = 1/512 m = 2^{-9} m (exact). c_max = 2 → kbi(2) = 13/8 = 1.625 (exact).
         // M = allow·π·d³/(32·kbi): at d³ = 2^{-27} the π/π and kbi/kbi factors cancel
-        // bit-exactly (verified empirically with a standalone round-trip check), so
-        // bending_stress_inner(...).pascals() == allow in IEEE 754.
+        // bit-exactly, so bending_stress_inner(...).pascals() == allow in IEEE 754.
+        // This test is the proof; it is DETERMINISTIC but EMPIRICALLY TUNED to the
+        // current music-wire MTS/allowable constants (unlike the OD-cap dyadic tests,
+        // which are exact by construction). If those material constants ever drift by
+        // a ULP, this test may silently stop killing the `> → >=` ceiling mutant —
+        // re-tune the moment to restore bit-exactness at the boundary.
         // Guard `stress_at_hi > allow`: allow > allow → false → proceeds → Ok.
         // The `>→>=` mutant: allow >= allow → true → skips → Infeasible — this test
         // kills the `stress_at_hi > allow` mutant.
