@@ -157,6 +157,8 @@ pub enum Message {
     // Calculator screen — torsion
     TorField(crate::torsion::form::Field, String),
     TorFriction(springcore::torsion::FrictionModel),
+    TorScenario(crate::torsion::form::TorScenarioKind),
+    TorMomentEntry(crate::torsion::form::MomentEntry),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -407,6 +409,14 @@ impl App {
             }
             Message::TorFriction(m) => {
                 self.torsion.friction_model = m;
+                true
+            }
+            Message::TorScenario(s) => {
+                self.torsion.scenario = s;
+                true
+            }
+            Message::TorMomentEntry(m) => {
+                self.torsion.moment_entry = m;
                 true
             }
             Message::Material(m) => {
@@ -697,11 +707,19 @@ impl App {
         match field {
             TF::WireDia => f.wire_dia = value,
             TF::MeanDia => f.mean_dia = value,
+            TF::OuterDia => f.outer_dia = value,
             TF::BodyCoils => f.body_coils = value,
+            TF::Rate => f.rate = value,
             TF::Leg1 => f.leg1 = value,
             TF::Leg2 => f.leg2 = value,
             TF::ArborDia => f.arbor_dia = value,
             TF::Moments => f.moments = value,
+            TF::Moment1 => f.moment1 = value,
+            TF::Angle1 => f.angle1 = value,
+            TF::Moment2 => f.moment2 = value,
+            TF::Angle2 => f.angle2 = value,
+            TF::Forces => f.forces = value,
+            TF::LoadRadius => f.load_radius = value,
         }
     }
 

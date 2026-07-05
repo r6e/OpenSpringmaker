@@ -9,7 +9,8 @@ use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::presenter::Emphasis;
-use crate::torsion::form::{Field, TorFormState};
+use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
+use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
     field_label, labeled_input, material_picker, panel_container, render_result_row, results_empty,
@@ -22,10 +23,36 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
-    // Setup group — material selector and friction model pick-list.
-    let setup_group = column![
-        section_heading("Setup"),
-        material_picker(app),
+    // Setup group — material selector, scenario pick-list, optional moment-entry
+    // pick-list (hidden for TwoLoad), and friction model pick-list.
+    let scenario_col = column![
+        field_label("Input mode"),
+        styled_pick_list(
+            ALL_TOR_SCENARIOS,
+            Some(app.torsion.scenario),
+            Message::TorScenario,
+        ),
+    ]
+    .spacing(4);
+
+    let mut setup_group =
+        column![section_heading("Setup"), material_picker(app), scenario_col].spacing(10);
+
+    if app.torsion.scenario != TorScenarioKind::TwoLoad {
+        setup_group = setup_group.push(
+            column![
+                field_label("Moment entry"),
+                styled_pick_list(
+                    ALL_MOMENT_ENTRIES,
+                    Some(app.torsion.moment_entry),
+                    Message::TorMomentEntry,
+                ),
+            ]
+            .spacing(4),
+        );
+    }
+
+    setup_group = setup_group.push(
         column![
             field_label("Friction model"),
             styled_pick_list(
@@ -35,8 +62,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
             ),
         ]
         .spacing(4),
-    ]
-    .spacing(10);
+    );
 
     // Inputs group — driven by the presenter's field list.
     let inputs = tor_inputs_view(app);
@@ -63,27 +89,43 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
     match field {
         Field::WireDia => &form.wire_dia,
         Field::MeanDia => &form.mean_dia,
+        Field::OuterDia => &form.outer_dia,
         Field::BodyCoils => &form.body_coils,
+        Field::Rate => &form.rate,
         Field::Leg1 => &form.leg1,
         Field::Leg2 => &form.leg2,
         Field::ArborDia => &form.arbor_dia,
         Field::Moments => &form.moments,
+        Field::Moment1 => &form.moment1,
+        Field::Angle1 => &form.angle1,
+        Field::Moment2 => &form.moment2,
+        Field::Angle2 => &form.angle2,
+        Field::Forces => &form.forces,
+        Field::LoadRadius => &form.load_radius,
     }
 }
 
 /// Stable widget ID for a torsion field's text input. Single source of truth shared
-/// by the view and tests (Task 6 Simulator resolves widget ids through this fn).
+/// by the view and Simulator tests, which resolve widget ids through this fn.
 /// An explicit, exhaustive match avoids `Debug`-derived strings and forces a
 /// deliberate choice when a `Field` variant is added.
 pub(crate) fn tor_field_id(field: Field) -> &'static str {
     match field {
         Field::WireDia => "tor-wire-dia",
         Field::MeanDia => "tor-mean-dia",
+        Field::OuterDia => "tor-outer-dia",
         Field::BodyCoils => "tor-body-coils",
+        Field::Rate => "tor-rate",
         Field::Leg1 => "tor-leg1",
         Field::Leg2 => "tor-leg2",
         Field::ArborDia => "tor-arbor-dia",
         Field::Moments => "tor-moments",
+        Field::Moment1 => "tor-moment1",
+        Field::Angle1 => "tor-angle1",
+        Field::Moment2 => "tor-moment2",
+        Field::Angle2 => "tor-angle2",
+        Field::Forces => "tor-forces",
+        Field::LoadRadius => "tor-load-radius",
     }
 }
 

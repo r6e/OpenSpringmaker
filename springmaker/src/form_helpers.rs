@@ -69,19 +69,21 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
     Ok(v)
 }
 
-/// Return `v_si` if finite, else a field-named error. Centralizes the post-conversion
-/// finiteness guard shared by the unit-converting helpers: a finite display value can
-/// overflow to ±Inf after the US/metric scale factor, so each helper re-checks its
-/// converted SI result here.
-fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
+/// Return `v_si` if finite, else a field-named error. Centralizes the finiteness
+/// guard shared by the unit-converting helpers AND derived-computation call sites
+/// (e.g. the torsion force-at-radius moment, F·r): a finite display value can
+/// overflow to ±Inf after the US/metric scale factor or a derived computation, so
+/// each caller re-checks the value it computed here.
+pub(crate) fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
     if v_si.is_finite() {
         Ok(v_si)
     } else {
-        // The display value already passed num's finiteness check, so the only way to
-        // reach here is the unit conversion overflowing to ±Inf — report that, not a
-        // misleading "not a finite number" (the user's input was finite).
+        // The display value already passed num's finiteness check, so the only way
+        // to reach here is the computed value (a unit conversion or a derivation
+        // like F·r) overflowing to ±Inf — report that, not a misleading "not a
+        // finite number" (the user's input was finite).
         Err(SpringError::InconsistentInputs(format!(
-            "{field} is too large: '{value}' overflows after unit conversion"
+            "{field} is too large: '{value}' overflows the computed value"
         )))
     }
 }
@@ -148,6 +150,28 @@ pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> 
         UnitSystem::Metric => v * MM_PER_M,
     };
     finite_or_err(field, value, v_si)
+}
+
+/// Parse a strictly-positive angular rate, returning N·mm per degree (canonical):
+/// metric input is already N·mm/°; US input is lbf·in/°, converted via `Moment`.
+pub(crate) fn ang_rate_nmm_per_deg(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    let v = positive_num(field, value)?;
+    let v_si = match us {
+        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
+/// Convert N·mm/° (canonical) → display string (metric N·mm/°, US lbf·in/°).
+pub(crate) fn fmt_ang_rate_nmm_per_deg(nmm_per_deg: f64, us: UnitSystem) -> String {
+    match us {
+        UnitSystem::Metric => format!("{nmm_per_deg}"),
+        UnitSystem::Us => format!(
+            "{}",
+            Moment::from_newton_millimeters(nmm_per_deg).pound_force_inches()
+        ),
+    }
 }
 
 pub(crate) fn loads_n(value: &str, us: UnitSystem) -> Result<Vec<f64>> {
@@ -238,6 +262,17 @@ pub(crate) fn fmt_moments(moments: &[f64], us: UnitSystem) -> String {
         .join(", ")
 }
 
+/// Parse an angle in degrees: any FINITE number (TwoLoad is offset-tolerant, so
+/// negative and zero angles are legal). Degrees in both unit systems — no conversion.
+pub(crate) fn angle_deg(field: &str, value: &str) -> Result<f64> {
+    num(field, value)
+}
+
+/// Format an angle in degrees for form population.
+pub(crate) fn fmt_angle_deg(deg: f64) -> String {
+    format!("{deg}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +354,56 @@ mod tests {
     fn rate_npm_normal_inputs_are_accepted() {
         assert!(rate_npm("rate", "2.0", UnitSystem::Us).is_ok());
         assert!(rate_npm("rate", "2.0", UnitSystem::Metric).is_ok());
+    }
+
+    #[test]
+    fn ang_rate_nmm_per_deg_metric_passthrough_and_positive() {
+        assert_eq!(
+            ang_rate_nmm_per_deg("rate", "100", UnitSystem::Metric).unwrap(),
+            100.0
+        );
+        assert!(ang_rate_nmm_per_deg("rate", "0", UnitSystem::Metric).is_err());
+        assert!(ang_rate_nmm_per_deg("rate", "-1", UnitSystem::Metric).is_err());
+    }
+
+    #[test]
+    fn ang_rate_nmm_per_deg_us_converts_lbf_in_per_deg_to_nmm_per_deg() {
+        // 1 lbf·in/° = Moment::from_pound_force_inches(1).newton_millimeters()
+        //             = 4.4482216152605 N × 0.0254 m × 1000 = 112.984...N·mm/°
+        let v = ang_rate_nmm_per_deg("rate", "1", UnitSystem::Us).unwrap();
+        approx::assert_relative_eq!(v, 4.4482216152605 * 0.0254 * 1000.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn fmt_ang_rate_nmm_per_deg_metric_round_trips() {
+        let nmm = 50.0;
+        let s = fmt_ang_rate_nmm_per_deg(nmm, UnitSystem::Metric);
+        let back = ang_rate_nmm_per_deg("rate", &s, UnitSystem::Metric).unwrap();
+        approx::assert_relative_eq!(back, nmm, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn fmt_ang_rate_nmm_per_deg_us_round_trips() {
+        // Pick a canonical N·mm/° value, format as US, parse back — must recover original.
+        let nmm = 4.4482216152605 * 0.0254 * 1000.0; // ≈ 1 lbf·in/°
+        let s = fmt_ang_rate_nmm_per_deg(nmm, UnitSystem::Us);
+        let back = ang_rate_nmm_per_deg("rate", &s, UnitSystem::Us).unwrap();
+        approx::assert_relative_eq!(back, nmm, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn angle_deg_accepts_any_finite_including_negative() {
+        assert_eq!(angle_deg("angle", "-10").unwrap(), -10.0);
+        assert_eq!(angle_deg("angle", "0").unwrap(), 0.0);
+        assert_eq!(angle_deg("angle", "90").unwrap(), 90.0);
+        assert!(angle_deg("angle", "nan").is_err());
+        assert!(angle_deg("angle", "inf").is_err());
+        assert!(angle_deg("angle", "abc").is_err());
+    }
+
+    #[test]
+    fn fmt_angle_deg_round_trips() {
+        let v = -42.5_f64;
+        assert_eq!(angle_deg("angle", &fmt_angle_deg(v)).unwrap(), v);
     }
 }
