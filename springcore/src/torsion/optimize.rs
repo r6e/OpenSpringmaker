@@ -34,6 +34,9 @@ pub enum DiaPolicy {
     #[default]
     MaxMargin,
     /// Smallest D that satisfies the stress allowable: the most compact coil.
+    /// Never reports [`TorBindingConstraint::OuterDiameter`]: an OD cap only
+    /// narrows the feasible ceiling, while Compact's D lands on the stress bound
+    /// or the index floor.
     Compact,
 }
 
@@ -48,7 +51,8 @@ pub enum TorBindingConstraint {
     /// A spring-index bound set D (the c_max ceiling under MaxMargin; the c_min
     /// floor under Compact when stress is already satisfied there).
     Index,
-    /// The outer-diameter cap set D (MaxMargin with OD − d < c_max·d).
+    /// The outer-diameter cap set D (MaxMargin with OD − d < c_max·d; never
+    /// reported under Compact — see [`DiaPolicy::Compact`]).
     OuterDiameter,
 }
 
@@ -173,7 +177,7 @@ fn validate_request(req: &TorMinWeightRequest) -> Result<()> {
 fn compact_index_for_stress(t: f64) -> f64 {
     let a = 4.0 - 4.0 * t; // < 0 for t > 1
     let b = 4.0 * t - 1.0;
-    let disc = b * b + 4.0 * a; // b² − 4·a·(−1)
+    let disc = b * b + 4.0 * a; // b² − 4ac with constant term c = −1
                                 // Of the two real roots, the one in C > 1 is (−b − √disc)/(2a) with a < 0
                                 // (the "−" branch divided by a negative leading coefficient).
     (-b - disc.sqrt()) / (2.0 * a)
@@ -738,7 +742,7 @@ mod tests {
         // Guard `capped < dm_hi`: 12/512 < 12/512 → false → hi_is_od_capped stays false
         // → MaxMargin reports binding = Index.
         // The `<→<=` mutant flips the guard true → hi_is_od_capped = true →
-        // binding = OuterDiameter, killing survivor at line 214.
+        // binding = OuterDiameter — this test kills the `capped < dm_hi` mutant.
         let m = music_wire();
         let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
         let c_max = 12.0_f64;
@@ -764,7 +768,8 @@ mod tests {
         // dm_lo = 4/512 (exact). Initial dm_hi = 12/512 (exact).
         // OD = 5/512 m → capped = 4/512 = dm_lo, so dm_hi is capped to dm_lo.
         // Guard `dm_hi < dm_lo`: 4/512 < 4/512 → false → proceeds with C = c_min.
-        // The `<→<=` mutant makes the guard true → skips → Infeasible, killing survivor 219.
+        // The `<→<=` mutant makes the guard true → skips → Infeasible — this test
+        // kills the `dm_hi < dm_lo` mutant.
         let m = music_wire();
         let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
         let c_min = 4.0_f64;
@@ -786,11 +791,12 @@ mod tests {
     #[test]
     fn stress_exactly_at_allowable_still_proceeds() {
         // d = 1/512 m = 2^{-9} m (exact). c_max = 2 → kbi(2) = 13/8 = 1.625 (exact).
-        // M = allow·π·d³/(32·kbi): at d³ = 2^{-27} the π/π and 52/52 terms cancel
-        // bit-exactly (verified empirically — see scratchpad/check_228b), so
+        // M = allow·π·d³/(32·kbi): at d³ = 2^{-27} the π/π and kbi/kbi factors cancel
+        // bit-exactly (verified empirically with a standalone round-trip check), so
         // bending_stress_inner(...).pascals() == allow in IEEE 754.
         // Guard `stress_at_hi > allow`: allow > allow → false → proceeds → Ok.
-        // The `>→>=` mutant: allow >= allow → true → skips → Infeasible, killing survivor 228.
+        // The `>→>=` mutant: allow >= allow → true → skips → Infeasible — this test
+        // kills the `stress_at_hi > allow` mutant.
         let m = music_wire();
         let d_val = 1.0_f64 / 512.0; // 2^{-9}: exactly representable
         let d = Length::from_meters(d_val);
