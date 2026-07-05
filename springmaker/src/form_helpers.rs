@@ -69,19 +69,21 @@ pub(crate) fn positive_num(field: &str, value: &str) -> Result<f64> {
     Ok(v)
 }
 
-/// Return `v_si` if finite, else a field-named error. Centralizes the post-conversion
-/// finiteness guard shared by the unit-converting helpers: a finite display value can
-/// overflow to ±Inf after the US/metric scale factor, so each helper re-checks its
-/// converted SI result here.
+/// Return `v_si` if finite, else a field-named error. Centralizes the finiteness
+/// guard shared by the unit-converting helpers AND derived-computation call sites
+/// (e.g. the torsion force-at-radius moment, F·r): a finite display value can
+/// overflow to ±Inf after the US/metric scale factor or a derived computation, so
+/// each caller re-checks the value it computed here.
 pub(crate) fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> {
     if v_si.is_finite() {
         Ok(v_si)
     } else {
-        // The display value already passed num's finiteness check, so the only way to
-        // reach here is the unit conversion overflowing to ±Inf — report that, not a
-        // misleading "not a finite number" (the user's input was finite).
+        // The display value already passed num's finiteness check, so the only way
+        // to reach here is the computed value (a unit conversion or a derivation
+        // like F·r) overflowing to ±Inf — report that, not a misleading "not a
+        // finite number" (the user's input was finite).
         Err(SpringError::InconsistentInputs(format!(
-            "{field} is too large: '{value}' overflows after unit conversion"
+            "{field} is too large: '{value}' overflows the computed value"
         )))
     }
 }
