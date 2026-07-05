@@ -9,6 +9,8 @@
 //! chosen by policy ([`DiaPolicy`]). Formulas: Shigley Ch. 10 (Eq. 10-43 K_bi,
 //! Eq. 10-44 σᵢ, Eq. 10-50/10-51 rate); EN 13906-3.
 
+use std::f64::consts::PI;
+
 use crate::material::Material;
 use crate::torsion::design::{solve_forward, TorsionDesign, TorsionInputs};
 use crate::torsion::mechanics::{
@@ -20,7 +22,11 @@ use crate::{Result, SpringError};
 /// How the winning candidate's mean diameter is chosen — torsion mass is
 /// D-independent at fixed rate and wire (module doc), so D is policy, not
 /// optimization.
-#[non_exhaustive] // sibling parity (HookSpec precedent): variants may be added
+///
+/// Deliberately NOT `#[non_exhaustive]` (same rationale as [`FrictionModel`]):
+/// `springcore` is an unpublished workspace crate and the GUI will match this
+/// enum, where a future variant should force a compile error rather than a
+/// silent wildcard fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiaPolicy {
     /// Largest allowed D: minimum bending stress (K_bi falls with index), maximum
@@ -32,7 +38,9 @@ pub enum DiaPolicy {
 }
 
 /// Which constraint bound the chosen design.
-#[non_exhaustive]
+///
+/// Deliberately NOT `#[non_exhaustive]` — see [`DiaPolicy`]'s rationale (and the
+/// compression `BindingConstraint` analog, likewise exhaustive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TorBindingConstraint {
     /// σᵢ reached the bending allowable (Compact policy, stress-governed D).
@@ -83,8 +91,11 @@ pub struct TorMinWeightRequest {
 /// The chosen design, why it is limited, and its wire mass.
 #[derive(Debug, Clone)]
 pub struct TorMinWeightSolution {
+    /// The fully solved torsion design at the winning wire diameter.
     pub design: TorsionDesign,
+    /// Which constraint bound the chosen mean diameter (see [`TorBindingConstraint`]).
     pub binding: TorBindingConstraint,
+    /// Total wire mass in kilograms (body helix plus both straight legs).
     pub mass_kg: f64,
 }
 
@@ -181,9 +192,8 @@ fn wire_mass(
     leg2: Length,
 ) -> f64 {
     let d = wire_dia.meters();
-    let l_wire =
-        std::f64::consts::PI * mean_dia.meters() * body_coils + leg1.meters() + leg2.meters();
-    material.density.kg_per_m3() * (std::f64::consts::PI / 4.0) * d * d * l_wire
+    let l_wire = PI * mean_dia.meters() * body_coils + leg1.meters() + leg2.meters();
+    material.density.kg_per_m3() * (PI / 4.0) * d * d * l_wire
 }
 
 /// Pick the lightest feasible torsion design over the candidate wire diameters.
@@ -203,14 +213,16 @@ pub fn solve_min_weight(
             continue;
         };
         let allow = material.allowable_pct_bending * mts.pascals();
-        let dm = d.meters();
+        // `dw` is the WIRE diameter in meters; dm_lo/dm_hi below are the derived
+        // MEAN-diameter bounds (C·d), matching the dm = mean-dia convention.
+        let dw = d.meters();
 
         // Allowed mean-diameter interval; an OD cap below the index floor skips.
-        let dm_lo = c_min * dm;
-        let mut dm_hi = c_max * dm;
+        let dm_lo = c_min * dw;
+        let mut dm_hi = c_max * dw;
         let mut hi_is_od_capped = false;
         if let Some(od) = req.max_outer_dia {
-            let capped = od.meters() - dm;
+            let capped = od.meters() - dw;
             if capped < dm_hi {
                 dm_hi = capped;
                 hi_is_od_capped = true;
@@ -241,8 +253,7 @@ pub fn solve_min_weight(
             ),
             DiaPolicy::Compact => {
                 // t = allow·π·d³/(32·M): the K_bi value at which σᵢ == allowable.
-                let t = allow * std::f64::consts::PI * dm.powi(3)
-                    / (32.0 * req.max_moment.newton_meters());
+                let t = allow * PI * dw.powi(3) / (32.0 * req.max_moment.newton_meters());
                 if kbi_factor(c_min) <= t {
                     // Stress already satisfied at the index floor (K_bi decreasing):
                     // the floor is the most compact allowed coil.
@@ -250,9 +261,9 @@ pub fn solve_min_weight(
                 } else {
                     // Stress governs: the ceiling check above guarantees t > K_bi at
                     // dm_hi ≥ … > 1, so compact_index_for_stress's t > 1 contract
-                    // holds and C_stress lies in (c_min, dm_hi/dm].
+                    // holds and C_stress lies in (c_min, dm_hi/dw].
                     (
-                        compact_index_for_stress(t) * dm,
+                        compact_index_for_stress(t) * dw,
                         TorBindingConstraint::BendingStress,
                     )
                 }
@@ -270,7 +281,10 @@ pub fn solve_min_weight(
             req.required_rate,
             req.friction_model,
         );
-        let body_coils = na - active_coils_with_legs(0.0, req.leg1, req.leg2, mean);
+        // body_coils = 0 extracts JUST the leg coil-equivalent (L₁+L₂)/(3πD)
+        // (Shigley Eq. 10-50 is linear in N_b), single-sourcing the leg formula.
+        let leg_na = active_coils_with_legs(0.0, req.leg1, req.leg2, mean);
+        let body_coils = na - leg_na;
         if !(body_coils.is_finite() && body_coils > 0.0) {
             continue;
         }
