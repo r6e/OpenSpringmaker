@@ -22,11 +22,7 @@ use crate::{Result, SpringError};
 /// How the winning candidate's mean diameter is chosen — torsion mass is
 /// D-independent at fixed rate and wire (module doc), so D is policy, not
 /// optimization.
-///
-/// Deliberately NOT `#[non_exhaustive]` (same rationale as [`FrictionModel`]):
-/// `springcore` is an unpublished workspace crate and the GUI will match this
-/// enum, where a future variant should force a compile error rather than a
-/// silent wildcard fallback.
+#[non_exhaustive] // sibling parity (HookSpec precedent): variants may be added
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiaPolicy {
     /// Largest allowed D: minimum bending stress (K_bi falls with index), maximum
@@ -41,9 +37,7 @@ pub enum DiaPolicy {
 }
 
 /// Which constraint bound the chosen design.
-///
-/// Deliberately NOT `#[non_exhaustive]` — see [`DiaPolicy`]'s rationale (and the
-/// compression `BindingConstraint` analog, likewise exhaustive).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TorBindingConstraint {
     /// σᵢ reached the bending allowable (Compact policy, stress-governed D).
@@ -275,9 +269,11 @@ pub fn solve_min_weight(
         };
         let mean = Length::from_meters(mean_m);
 
-        // Body coils from the rate inversion minus the leg term. N_b ≤ 0 (or
-        // non-finite) is D-independent (module doc) — the candidate cannot meet the
-        // rate with these legs at any D; skip.
+        // N_b ≤ 0 or non-finite (legs consume every coil the rate allows — a
+        // D-independent condition) is rejected by solve_forward's body-coils
+        // guard below; the Err → continue skip is the single path, deliberately
+        // NOT pre-guarded here (a redundant pre-check is mutation-equivalent
+        // to the backstop and ungateable).
         let na = active_coils_for_rate(
             material.youngs_modulus,
             d,
@@ -289,9 +285,6 @@ pub fn solve_min_weight(
         // (Shigley Eq. 10-50 is linear in N_b), single-sourcing the leg formula.
         let leg_na = active_coils_with_legs(0.0, req.leg1, req.leg2, mean);
         let body_coils = na - leg_na;
-        if !(body_coils.is_finite() && body_coils > 0.0) {
-            continue;
-        }
 
         // Full engine backstop; arbor advisories ride along in the design status.
         let Ok(design) = solve_forward(

@@ -95,6 +95,23 @@ exclude_re = [
   #   unreachable or output-indistinguishable — no distinguishing test can exist.
   "extension/optimize\\.rs:347:.*replace < with <=",
 
+  # ---------------------------------------------------------------------------
+  # Mutation-equivalent exclusions for springcore/src/torsion/optimize.rs.
+  #
+  # Line 307: `if best.as_ref().is_none_or(|b| mass_kg < b.mass_kg)`
+  #
+  # Mutant "< → <=":
+  #   Only differs when two candidates produce exactly equal mass_kg.
+  #   Original: equal mass → false → keeps the previously recorded best.
+  #   Mutant:   equal mass → true → replaces best with the new candidate.
+  #   Torsion wire mass = rho*(pi/4)*d^2 * (pi*D*N_b + L1 + L2) with N_b from
+  #   the rate inversion — a strictly increasing function of d for a fixed request,
+  #   so distinct candidates cannot tie in mass. A *duplicate* candidate diameter
+  #   (e.g. [2.0, 2.0]) yields a bit-identical design and mass, making `<` vs `<=`
+  #   output-indistinguishable. The tie is either unreachable or
+  #   output-indistinguishable — no distinguishing test can exist.
+  "torsion/optimize\\.rs:307:.*replace < with <=",
+
   # material_persist.rs:40 — default_schema_version -> CURRENT_SCHEMA_VERSION (=1).
   # Mutants returning 0 or 1 are equivalent: any value <= CURRENT_SCHEMA_VERSION (1)
   # produces identical no-warning behavior in parse_user_overlay. Equivalent.
