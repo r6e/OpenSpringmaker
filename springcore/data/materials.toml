@@ -31,6 +31,12 @@ allowable_pct_set = 0.60
 ssa_mpa = 241.0
 ssm_mpa = 379.0
 peened = false
+# Shigley Table 10-10 (Associated Spring): R = 0 repeated-bending strength as a
+# fraction of Sut, not-shot-peened column ("ASTM A228 and Type 302").
+[material.bending_fatigue]
+sr_pct_1e5 = 0.53
+sr_pct_1e6 = 0.50
+peened = false
 
 [[material]]
 name = "Oil-Tempered Wire"
@@ -52,6 +58,9 @@ allowable_pct_set = 0.49
 ssa_mpa = 241.0
 ssm_mpa = 379.0
 peened = false
+# NO bending_fatigue: this wire is ASTM A229; Shigley Table 10-10's column is
+# "ASTM A230 and A232" — a different grade. Deliberately data-less (torsion
+# fatigue degrades to NoFatigueData), not an omission.
 
 [[material]]
 name = "Stainless 302"
@@ -69,6 +78,12 @@ allowable_pct_torsion = 0.35
 allowable_pct_end_torsion = 0.30
 allowable_pct_bending = 0.55
 allowable_pct_set = 0.35
+# Shigley Table 10-10 (Associated Spring): R = 0 repeated-bending strength as a
+# fraction of Sut, not-shot-peened column ("ASTM A228 and Type 302").
+[material.bending_fatigue]
+sr_pct_1e5 = 0.53
+sr_pct_1e6 = 0.50
+peened = false
 
 [[material]]
 name = "Chrome-Silicon"
@@ -129,6 +144,13 @@ allowable_pct_end_torsion = 0.40
 allowable_pct_bending = 0.45
 allowable_pct_set = 0.45
 max_service_temp_c = 218.3
+# Shigley Table 10-10 "ASTM A230 and A232" column. Our entry's citations place it
+# in the A231/A232 range with A232 the valve-spring-quality variant — recorded
+# provenance judgment.
+[material.bending_fatigue]
+sr_pct_1e5 = 0.55
+sr_pct_1e6 = 0.53
+peened = false
 
 [[material]]
 name = "Phosphor Bronze"

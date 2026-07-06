@@ -128,6 +128,19 @@ pub struct Endurance {
     pub peened: bool,
 }
 
+/// Cited repeated-bending fatigue data for torsion springs (Shigley Table 10-10,
+/// Associated Spring; R = 0, KB-corrected, no surging, as-stress-relieved).
+/// Values are FRACTIONS of Sut (the `allowable_pct_bending` convention).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendingFatigue {
+    /// Sr/Sut at 10⁵ cycles.
+    pub sr_pct_1e5: f64,
+    /// Sr/Sut at 10⁶ cycles.
+    pub sr_pct_1e6: f64,
+    /// Whether the values are the shot-peened column (bundled data: false).
+    pub peened: bool,
+}
+
 /// A mutable editing DTO for constructing or modifying a [`Material`].
 ///
 /// Mirrors the internal raw material record but exposes typed enums for
@@ -169,6 +182,8 @@ pub struct MaterialDraft {
     pub allowable_pct_set: f64,
     /// Optional cited endurance data.
     pub endurance: Option<EnduranceDraft>,
+    /// Optional cited bending-fatigue data.
+    pub bending_fatigue: Option<BendingFatigueDraft>,
     /// Optional maximum service temperature, in °C (informational).
     pub max_service_temp_c: Option<f64>,
 }
@@ -181,6 +196,14 @@ pub struct EnduranceDraft {
     /// Mean shear endurance strength, in MPa.
     pub ssm_mpa: f64,
     /// Whether the data is for shot-peened wire.
+    pub peened: bool,
+}
+
+/// Editable bending-fatigue data within a [`MaterialDraft`]. Fractions of Sut.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendingFatigueDraft {
+    pub sr_pct_1e5: f64,
+    pub sr_pct_1e6: f64,
     pub peened: bool,
 }
 
@@ -211,6 +234,11 @@ impl MaterialDraft {
                 ssm_mpa: e.ssm_mpa,
                 peened: e.peened,
             }),
+            bending_fatigue: self.bending_fatigue.map(|b| RawBendingFatigue {
+                sr_pct_1e5: b.sr_pct_1e5,
+                sr_pct_1e6: b.sr_pct_1e6,
+                peened: b.peened,
+            }),
             max_service_temp_c: self.max_service_temp_c,
         };
         Material::try_from_raw(raw)
@@ -240,6 +268,8 @@ pub struct Material {
     /// Allowable stress before permanent set, as a fraction of MTS.
     pub allowable_pct_set: f64,
     pub endurance: Option<Endurance>,
+    /// Optional cited bending-fatigue data (torsion springs).
+    pub bending_fatigue: Option<BendingFatigue>,
     pub citations: String,
     /// Maximum service temperature, if specified. Informational only — NOT used
     /// in any calculation (no derating). Displayed with its citation.
@@ -283,6 +313,11 @@ impl Material {
                 ssa_mpa: e.ssa_mpa,
                 ssm_mpa: e.ssm_mpa,
                 peened: e.peened,
+            }),
+            bending_fatigue: raw.bending_fatigue.map(|b| BendingFatigueDraft {
+                sr_pct_1e5: b.sr_pct_1e5,
+                sr_pct_1e6: b.sr_pct_1e6,
+                peened: b.peened,
             }),
             max_service_temp_c: raw.max_service_temp_c,
         }
@@ -362,6 +397,8 @@ pub(crate) struct RawMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) endurance: Option<RawEndurance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) bending_fatigue: Option<RawBendingFatigue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) max_service_temp_c: Option<f64>,
 }
 
@@ -381,6 +418,15 @@ fn default_allowable_pct_end_torsion() -> f64 {
 pub(crate) struct RawEndurance {
     pub(crate) ssa_mpa: f64,
     pub(crate) ssm_mpa: f64,
+    pub(crate) peened: bool,
+}
+
+/// Raw bending-fatigue sub-table. Field names are the TOML keys — no `_mpa`
+/// suffix: these are dimensionless fractions of Sut (Shigley Table 10-10).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct RawBendingFatigue {
+    pub(crate) sr_pct_1e5: f64,
+    pub(crate) sr_pct_1e6: f64,
     pub(crate) peened: bool,
 }
 
@@ -477,7 +523,12 @@ impl Material {
         let optional_finite = r
             .max_service_temp_c
             .into_iter()
-            .chain(r.endurance.iter().flat_map(|e| [e.ssa_mpa, e.ssm_mpa]));
+            .chain(r.endurance.iter().flat_map(|e| [e.ssa_mpa, e.ssm_mpa]))
+            .chain(
+                r.bending_fatigue
+                    .iter()
+                    .flat_map(|b| [b.sr_pct_1e5, b.sr_pct_1e6]),
+            );
         if finite_fields
             .into_iter()
             .chain(coeff_finite)
@@ -554,6 +605,11 @@ impl Material {
                 ssm: Stress::from_megapascals(e.ssm_mpa),
                 peened: e.peened,
             }),
+            bending_fatigue: r.bending_fatigue.map(|b| BendingFatigue {
+                sr_pct_1e5: b.sr_pct_1e5,
+                sr_pct_1e6: b.sr_pct_1e6,
+                peened: b.peened,
+            }),
             max_service_temperature: r.max_service_temp_c.map(Temperature::from_celsius),
             citations: r.citations,
         })
@@ -581,6 +637,11 @@ impl Material {
                 ssa_mpa: e.ssa.megapascals(),
                 ssm_mpa: e.ssm.megapascals(),
                 peened: e.peened,
+            }),
+            bending_fatigue: self.bending_fatigue.map(|b| RawBendingFatigue {
+                sr_pct_1e5: b.sr_pct_1e5,
+                sr_pct_1e6: b.sr_pct_1e6,
+                peened: b.peened,
             }),
             max_service_temp_c: self.max_service_temperature.map(|t| t.celsius()),
         }
@@ -1033,6 +1094,7 @@ allowable_pct_set = 0.60
                 ssm_mpa: 379.0,
                 peened: false,
             }),
+            bending_fatigue: None,
             max_service_temp_c: Some(120.0),
         }
     }
@@ -1323,6 +1385,7 @@ allowable_pct_set = 0.60
             allowable_pct_bending: 0.75,
             allowable_pct_set: 0.60,
             endurance: None,
+            bending_fatigue: None,
             max_service_temp_c: Some(120.0),
         }
     }
@@ -1433,6 +1496,71 @@ allowable_pct_set = 0.60
         assert!(e.peened);
         // And it survives a full to_draft round-trip.
         assert_eq!(m.to_draft().endurance, d.endurance);
+    }
+
+    #[test]
+    fn bundled_bending_fatigue_matches_table_10_10() {
+        let set = MaterialSet::load_default();
+        let cases = [
+            ("Music Wire", 0.53, 0.50),
+            ("Stainless 302", 0.53, 0.50),
+            ("Chrome-Vanadium", 0.55, 0.53),
+        ];
+        for (name, p5, p6) in cases {
+            let m = set.get(name).expect(name);
+            let bf = m
+                .bending_fatigue
+                .unwrap_or_else(|| panic!("{name} carries Table 10-10 data"));
+            assert_eq!(bf.sr_pct_1e5, p5, "{name} 10^5 column");
+            assert_eq!(bf.sr_pct_1e6, p6, "{name} 10^6 column");
+            assert!(!bf.peened, "bundled data is the not-shot-peened column");
+        }
+        // Grade honesty: Oil-Tempered is ASTM A229 — NOT Table 10-10's A230 column.
+        for name in [
+            "Oil-Tempered Wire",
+            "Chrome-Silicon",
+            "Hard-Drawn MB",
+            "Phosphor Bronze",
+        ] {
+            assert!(
+                set.get(name).unwrap().bending_fatigue.is_none(),
+                "{name} has no matching Table 10-10 grade"
+            );
+        }
+    }
+
+    #[test]
+    fn draft_round_trips_bending_fatigue_present_and_absent() {
+        // Draft -> Material -> draft-visible fields, both states. Bind the set
+        // first: `get` borrows from it (Result<&Material>), so a temporary set
+        // would not live long enough.
+        let set = MaterialSet::load_default();
+        let mut d = set.get("Music Wire").unwrap().to_draft();
+        assert!(
+            d.bending_fatigue.is_some(),
+            "draft carries the bundled data"
+        );
+        let m = d.build().unwrap();
+        let bf = m.bending_fatigue.unwrap();
+        assert_eq!(
+            (bf.sr_pct_1e5, bf.sr_pct_1e6, bf.peened),
+            (0.53, 0.50, false)
+        );
+        d.bending_fatigue = None;
+        assert!(d.build().unwrap().bending_fatigue.is_none());
+    }
+
+    #[test]
+    fn non_finite_bending_fatigue_fraction_rejected() {
+        // The raw finiteness chain must cover the two new fractions.
+        let set = MaterialSet::load_default();
+        let mut d = set.get("Music Wire").unwrap().to_draft();
+        d.bending_fatigue = Some(BendingFatigueDraft {
+            sr_pct_1e5: f64::NAN,
+            sr_pct_1e6: 0.50,
+            peened: false,
+        });
+        assert!(d.build().is_err(), "NaN fraction must fail the build");
     }
 
     #[test]
