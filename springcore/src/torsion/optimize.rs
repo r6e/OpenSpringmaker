@@ -49,7 +49,10 @@ impl std::fmt::Display for DiaPolicy {
 pub const ALL_DIA_POLICIES: &[DiaPolicy] = &[DiaPolicy::MaxMargin, DiaPolicy::Compact];
 
 /// Which constraint bound the chosen design.
-#[non_exhaustive]
+///
+/// Deliberately NOT `#[non_exhaustive]`: the GUI matches this exhaustively,
+/// so adding a binding limit is a loud compile-time break at every match
+/// site (ADR 0013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TorBindingConstraint {
     /// σᵢ reached the bending allowable (Compact policy, stress-governed D).
