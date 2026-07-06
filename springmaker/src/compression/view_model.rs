@@ -663,20 +663,13 @@ mod tests {
 
     #[test]
     fn huge_finite_stress_renders_scientific_not_digit_wall() {
-        // Mirror the load-table test fixture (rate_based_metric) but use PowerUser
-        // with loads = "1e9" N. The Wahl formula for d=2mm, C=10, F=1e9 N yields
-        // τ ≈ 6e9 MPa — far above SCI_THRESHOLD (1e6), so fmt_row_value must
+        // Mirror the existing load-table test fixture (rate_based_metric) exactly,
+        // changing only the loads field to "1e9" N. Wahl: d=2mm, C=10, F=1e9 N
+        // → τ ≈ 6e9 MPa — far above SCI_THRESHOLD (1e6), so fmt_row_value must
         // switch to scientific notation.
         let form = FormState {
-            scenario: ScenarioKind::PowerUser,
-            end_type: "squared_ground".into(),
-            fixity: "fixed_fixed".into(),
-            wire_dia: "2".into(),
-            mean_dia: "20".into(),
-            active: "5".into(),
-            free_length: "60".into(),
             loads: "1e9".into(),
-            ..Default::default()
+            ..rate_based_metric()
         };
         let app = app_with(form);
         let p = populated(&app);
