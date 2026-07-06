@@ -20,6 +20,8 @@ use springcore::torsion::{TorBindingConstraint, TorsionDesign};
 /// (Task 2 wires the full row set and the CycleLife picker into the view layer.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TorFatigueView {
+    /// MinWeight solve — the section is suppressed entirely (no cycle moments apply).
+    Hidden,
     /// User left the cycle-moment fields blank.
     Skipped,
     /// Moments supplied but material has no bending-fatigue data.
@@ -31,6 +33,9 @@ pub(crate) enum TorFatigueView {
 
 /// Map a solved outcome's fatigue status to the presenter type.
 fn tor_fatigue_view(out: &TorFormOutcome, us: springcore::UnitSystem) -> TorFatigueView {
+    if out.min_weight.is_some() {
+        return TorFatigueView::Hidden;
+    }
     match &out.fatigue {
         TorFatigueStatus::Skipped => TorFatigueView::Skipped,
         TorFatigueStatus::NoData => TorFatigueView::NoData,
@@ -1004,5 +1009,54 @@ mod tests {
             .any(|f| f.label == "Candidate wire diameters (mm), comma-separated"));
         assert!(fields.iter().any(|f| f.label == "Index min"));
         assert!(!fields.iter().any(|f| f.label.contains("Moments")));
+    }
+
+    // ── fatigue presenter ────────────────────────────────────────────────────
+
+    /// Helper: a solved torsion outcome with fatigue cycle moments filled.
+    fn app_with_tor_fatigue(fatigue_min: &str, fatigue_max: &str) -> App {
+        app_with_tor(TorFormState {
+            fatigue_min: fatigue_min.into(),
+            fatigue_max: fatigue_max.into(),
+            ..metric_form()
+        })
+    }
+
+    #[test]
+    fn fatigue_view_skipped_when_cycle_moments_blank() {
+        // Blank fatigue fields → Skipped (not even attempted).
+        let p = tor_populated(&app_with_tor(metric_form()));
+        assert_eq!(p.fatigue, TorFatigueView::Skipped);
+    }
+
+    #[test]
+    fn fatigue_view_computed_for_music_wire_with_cycle_moments() {
+        // Music Wire has Table 10-10 data → Computed row set.
+        let p = tor_populated(&app_with_tor_fatigue("100", "500"));
+        assert!(
+            matches!(p.fatigue, TorFatigueView::Computed(_)),
+            "expected Computed, got {:?}",
+            p.fatigue
+        );
+        if let TorFatigueView::Computed(rows) = &p.fatigue {
+            assert!(!rows.is_empty(), "Computed must have at least one row");
+        }
+    }
+
+    #[test]
+    fn fatigue_view_no_data_for_material_without_bending_fatigue() {
+        // Oil-Tempered Wire has no Table 10-10 bending data → NoData.
+        let mut app = app_with_tor_fatigue("100", "500");
+        app.material = "Oil-Tempered Wire".into();
+        app.recompute();
+        let p = tor_populated(&app);
+        assert_eq!(p.fatigue, TorFatigueView::NoData);
+    }
+
+    #[test]
+    fn fatigue_view_hidden_for_min_weight_run() {
+        // MinWeight solves suppress the fatigue section entirely.
+        let p = tor_populated(&app_with_tor(min_weight_form_fixture()));
+        assert_eq!(p.fatigue, TorFatigueView::Hidden);
     }
 }
