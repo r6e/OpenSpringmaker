@@ -311,8 +311,10 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     col = col.push(divided_result_section("Fatigue analysis", rows));
                 }
                 TorFatigueView::Note(msg) => {
-                    col = col.push(section_divider());
-                    col = col.push(text(*msg).size(SZ_LABEL).color(C::MUTED));
+                    col = col.push(
+                        column![section_divider(), text(*msg).size(SZ_LABEL).color(C::MUTED),]
+                            .spacing(8),
+                    );
                 }
             }
 

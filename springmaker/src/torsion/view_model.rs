@@ -17,7 +17,6 @@ use springcore::torsion::{TorBindingConstraint, TorsionDesign};
 // ── Fatigue section ───────────────────────────────────────────────────────────
 
 /// Fatigue section state (compression's shape).
-/// (Task 2 wires the CycleLife picker and the rendering into the view layer.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TorFatigueView {
     /// Suppressed: a min-weight result occupies the panel instead.

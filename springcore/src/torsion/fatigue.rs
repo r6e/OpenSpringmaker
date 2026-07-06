@@ -228,6 +228,32 @@ mod tests {
     }
 
     #[test]
+    fn r_zero_alternating_equals_mean_stress() {
+        // R = 0 (moment_min = 0): the exact case Table 10-10's data is defined for.
+        // When lo = 0, ma = (hi − 0)/2 and mm = (hi + 0)/2 — IEEE-exact equal —
+        // so alternating_stress must equal mean_stress to the bit.
+        let r = analyze_torsion_fatigue(
+            &music_wire(),
+            Length::from_inches(0.072),
+            Length::from_inches(0.5218),
+            Moment::from_pound_force_inches(0.0),
+            Moment::from_pound_force_inches(5.0),
+            CycleLife::Million,
+        )
+        .expect("R = 0 is feasible (lo = 0 is non-negative, hi > lo)");
+        assert_eq!(
+            r.alternating_stress.pascals(),
+            r.mean_stress.pascals(),
+            "when min = 0, Ma = Mm = hi/2 → alternating stress must equal mean stress"
+        );
+        assert!(
+            r.gerber_factor_of_safety.is_finite() && r.gerber_factor_of_safety > 0.0,
+            "R = 0 must yield a positive finite Gerber FOS; got {}",
+            r.gerber_factor_of_safety
+        );
+    }
+
+    #[test]
     fn hundred_thousand_life_gives_strictly_higher_margin() {
         // Sr fraction 0.53 vs 0.50 (Music Wire) → higher Se, Sa, nf at 10⁵. The
         // ratio Se(1e5)-vs-Se(1e6) pins BOTH columns (kills a column-swap mutant:

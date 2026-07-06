@@ -207,13 +207,13 @@ impl TorFormState {
                 self.forces.trim().is_empty() && self.load_radius.trim().is_empty()
             }
         };
+        // Fatigue cycle fields count toward "blank" in the four scenarios that
+        // display them (displayed-inputs rule). MinWeight hides them (its section
+        // yields to the optimizer readout), so the MinWeight arm excludes them.
+        // Deliberate divergence from compression, which excludes fatigue fields
+        // from is_blank everywhere — a pre-fatigue legacy there.
         match self.scenario {
             TorScenarioKind::PowerUser => {
-                // The fatigue cycle fields count in the four scenarios that DISPLAY
-                // them (displayed-inputs rule); MinWeight hides them (its section
-                // yields to the optimizer readout) so its arm excludes them.
-                // Deliberate divergence from compression, which excludes fatigue
-                // fields from is_blank everywhere — a pre-fatigue legacy there.
                 moment_entry_blank
                     && all_empty(&[
                         &self.wire_dia,
@@ -227,11 +227,6 @@ impl TorFormState {
                     ])
             }
             TorScenarioKind::RateBased => {
-                // The fatigue cycle fields count in the four scenarios that DISPLAY
-                // them (displayed-inputs rule); MinWeight hides them (its section
-                // yields to the optimizer readout) so its arm excludes them.
-                // Deliberate divergence from compression, which excludes fatigue
-                // fields from is_blank everywhere — a pre-fatigue legacy there.
                 moment_entry_blank
                     && all_empty(&[
                         &self.wire_dia,
@@ -245,11 +240,6 @@ impl TorFormState {
                     ])
             }
             TorScenarioKind::Dimensional => {
-                // The fatigue cycle fields count in the four scenarios that DISPLAY
-                // them (displayed-inputs rule); MinWeight hides them (its section
-                // yields to the optimizer readout) so its arm excludes them.
-                // Deliberate divergence from compression, which excludes fatigue
-                // fields from is_blank everywhere — a pre-fatigue legacy there.
                 moment_entry_blank
                     && all_empty(&[
                         &self.wire_dia,
@@ -262,26 +252,19 @@ impl TorFormState {
                         &self.fatigue_max,
                     ])
             }
-            TorScenarioKind::TwoLoad => {
-                // The fatigue cycle fields count in the four scenarios that DISPLAY
-                // them (displayed-inputs rule); MinWeight hides them (its section
-                // yields to the optimizer readout) so its arm excludes them.
-                // Deliberate divergence from compression, which excludes fatigue
-                // fields from is_blank everywhere — a pre-fatigue legacy there.
-                all_empty(&[
-                    &self.wire_dia,
-                    &self.mean_dia,
-                    &self.leg1,
-                    &self.leg2,
-                    &self.arbor_dia,
-                    &self.moment1,
-                    &self.angle1,
-                    &self.moment2,
-                    &self.angle2,
-                    &self.fatigue_min,
-                    &self.fatigue_max,
-                ])
-            }
+            TorScenarioKind::TwoLoad => all_empty(&[
+                &self.wire_dia,
+                &self.mean_dia,
+                &self.leg1,
+                &self.leg2,
+                &self.arbor_dia,
+                &self.moment1,
+                &self.angle1,
+                &self.moment2,
+                &self.angle2,
+                &self.fatigue_min,
+                &self.fatigue_max,
+            ]),
             // index_min and index_max are EXCLUDED: they are pre-filled defaults
             // ("4"/"12") so they cannot distinguish an untouched form from one the
             // user has begun editing (extension's documented rule for pre-filled fields).
@@ -1507,6 +1490,31 @@ mod tests {
     }
 
     #[test]
+    fn fatigue_r_zero_computes_with_finite_positive_fos() {
+        // R = 0 (fatigue_min = "0"): the flagship case Table 10-10's data is
+        // defined for.  Behavior is already correct; this test pins it so a
+        // regression in the non_negative_moment_nmm guard or the engine's
+        // lo-zero path is caught immediately.
+        let form = TorFormState {
+            fatigue_min: "0".into(),
+            fatigue_max: "5".into(),
+            ..shigley_10_8_us_form()
+        };
+        let out = parse_and_solve(&form, "Music Wire", UnitSystem::Us, &store())
+            .expect("R = 0 is feasible");
+        match &out.fatigue {
+            TorFatigueStatus::Computed(f) => {
+                assert!(
+                    f.gerber_factor_of_safety.is_finite() && f.gerber_factor_of_safety > 0.0,
+                    "R = 0 must yield a positive finite Gerber FOS; got {}",
+                    f.gerber_factor_of_safety
+                );
+            }
+            other => panic!("expected Computed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn fatigue_skipped_when_either_field_blank() {
         // Both blank (the default), and BOTH one-sided cases: compression's `||`
         // check treats any blank side as not-attempted.
@@ -1624,16 +1632,45 @@ mod tests {
 
     #[test]
     fn populate_clears_fatigue_fields_and_resets_life() {
-        let form = TorFormState {
-            fatigue_min: "1".into(),
-            fatigue_max: "5".into(),
-            cycle_life: springcore::torsion::CycleLife::HundredThousand,
-            ..metric_form()
+        // Every populate_from_spec arm must clear the fatigue cycle fields and
+        // reset cycle_life to default regardless of which scenario the spec
+        // carries. A dropped clear in any one arm is caught independently here;
+        // the previous PowerUser-only version left four arms uncovered.
+        let us = UnitSystem::Metric;
+        let dimensional_form = TorFormState {
+            scenario: TorScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
         };
-        let spec = build_spec(&form, UnitSystem::Metric).unwrap();
-        let mut form2 = form.clone();
-        populate_from_spec(&mut form2, &spec, UnitSystem::Metric);
-        assert!(form2.fatigue_min.is_empty() && form2.fatigue_max.is_empty());
-        assert_eq!(form2.cycle_life, springcore::torsion::CycleLife::Million);
+        let specs = [
+            build_spec(&metric_form(), us).unwrap(),
+            build_spec(&ratebased_metric_form(), us).unwrap(),
+            build_spec(&dimensional_form, us).unwrap(),
+            build_spec(&twoload_metric_form(), us).unwrap(),
+            build_spec(&min_weight_metric_form(), us).unwrap(),
+        ];
+        for spec in &specs {
+            let mut form = TorFormState {
+                fatigue_min: "1".into(),
+                fatigue_max: "5".into(),
+                cycle_life: springcore::torsion::CycleLife::HundredThousand,
+                ..TorFormState::default()
+            };
+            populate_from_spec(&mut form, spec, us);
+            assert!(
+                form.fatigue_min.is_empty() && form.fatigue_max.is_empty(),
+                "populate_from_spec must clear both fatigue cycle fields"
+            );
+            assert_eq!(
+                form.cycle_life,
+                springcore::torsion::CycleLife::Million,
+                "populate_from_spec must reset cycle_life to the default (Million)"
+            );
+        }
     }
 }
