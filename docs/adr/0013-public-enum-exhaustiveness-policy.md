@@ -1,10 +1,6 @@
-# 13. Public-enum exhaustiveness policy
+# ADR 0013: Public-enum exhaustiveness policy
 
-Date: 2026-07-06
-
-## Status
-
-Accepted
+**Status:** Accepted
 
 ## Context
 

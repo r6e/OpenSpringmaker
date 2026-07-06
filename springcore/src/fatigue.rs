@@ -337,7 +337,7 @@ mod tests {
             result.is_ok(),
             "equal forces should be accepted: {result:?}"
         );
-        // Alternating stress is zero → safety factor is infinite (or very large).
+        // Alternating stress is zero → τa = 0, nf = Ssu/τm (finite, not infinite).
         let r = result.unwrap();
         assert_relative_eq!(
             r.alternating_stress.pascals(),
