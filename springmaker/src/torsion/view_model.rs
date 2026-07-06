@@ -1074,13 +1074,8 @@ mod tests {
         // σᵢ far above SCI_THRESHOLD (1e6 MPa), so fmt_row_value must switch to
         // scientific notation in the load-table stress cell.
         let form = TorFormState {
-            wire_dia: "2".into(),
-            mean_dia: "20".into(),
-            body_coils: "5".into(),
-            leg1: "0".into(),
-            leg2: "0".into(),
             moments: "1e9".into(),
-            ..TorFormState::default()
+            ..metric_form()
         };
         let app = app_with_tor(form);
         let p = tor_populated(&app);

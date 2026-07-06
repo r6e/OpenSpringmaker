@@ -665,13 +665,8 @@ mod tests {
         // far above SCI_THRESHOLD (1e6 MPa), so fmt_row_value must switch to
         // scientific notation.
         let form = ExtFormState {
-            wire_dia: "2".to_string(),
-            mean_dia: "20".to_string(),
-            active: "10".to_string(),
-            free_length: "100".to_string(),
-            initial_tension: "5".to_string(),
             loads: "1e9".to_string(),
-            ..ExtFormState::default()
+            ..power_user_metric()
         };
         let app = app_with_ext(form);
         let p = ext_populated(&app);
