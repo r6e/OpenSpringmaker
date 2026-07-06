@@ -11,7 +11,9 @@ use crate::app::{App, Message, C};
 use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
-use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
+use crate::torsion::view_model::{
+    tor_fatigue_inputs_view, tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView,
+};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
     render_result_row, results_empty, results_error, rows_section, section_divider,
@@ -93,6 +95,23 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         ));
     }
 
+    // Fatigue cycle group — a separate presenter list, empty for MinWeight.
+    let fatigue_inputs = tor_fatigue_inputs_view(app);
+    if !fatigue_inputs.is_empty() {
+        inputs_col = inputs_col
+            .push(section_divider())
+            .push(section_heading("Fatigue cycle (leave blank to skip)"));
+        for fd in &fatigue_inputs {
+            let field = fd.field;
+            inputs_col = inputs_col.push(labeled_input(
+                &fd.label,
+                tor_field_value(&app.torsion, field),
+                tor_field_id(field),
+                move |s| Message::TorField(field, s),
+            ));
+        }
+    }
+
     let inner = column![setup_group, section_divider(), inputs_col].spacing(16);
 
     container(panel_container(inner))
@@ -123,7 +142,6 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::IndexMax => &form.index_max,
         Field::MaxOuterDia => &form.max_outer_dia,
         Field::CandidateDiameters => &form.candidate_diameters,
-        // Task 1: compile-spillover arms — presenter/rendering wired in Task 2.
         Field::FatigueMin => &form.fatigue_min,
         Field::FatigueMax => &form.fatigue_max,
     }
@@ -155,7 +173,6 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::IndexMax => "tor-index-max",
         Field::MaxOuterDia => "tor-max-outer-dia",
         Field::CandidateDiameters => "tor-candidate-diameters",
-        // Task 1: compile-spillover arms — presenter/rendering wired in Task 2.
         Field::FatigueMin => "tor-fatigue-min",
         Field::FatigueMax => "tor-fatigue-max",
     }

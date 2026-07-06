@@ -730,7 +730,6 @@ impl App {
             TF::IndexMax => f.index_max = value,
             TF::MaxOuterDia => f.max_outer_dia = value,
             TF::CandidateDiameters => f.candidate_diameters = value,
-            // Task 1: compile-spillover arms — presenter/rendering wired in Task 2.
             TF::FatigueMin => f.fatigue_min = value,
             TF::FatigueMax => f.fatigue_max = value,
         }
