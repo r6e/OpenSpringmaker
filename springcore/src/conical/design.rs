@@ -707,4 +707,183 @@ mod tests {
         let status = evaluate_status(&flat, &m);
         assert!(!has_message(&status, "coils telescope"));
     }
+
+    // ── Mutation-gate killers: boundary cases for guards ─────────────────────
+
+    /// small_mean_dia = 0 → rejected ("must be a positive finite number").
+    /// Kills: `ds > 0.0` → `>= 0.0` (would accept zero) and
+    ///        `&& →  ||` in the compound guard (would skip the finite check).
+    #[test]
+    fn small_dia_zero_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut i = inputs(20.0, 12.0);
+        i.small_mean_dia = Length::from_millimeters(0.0);
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert_eq!(
+            msg(result),
+            "small-end mean diameter must be a positive finite number"
+        );
+    }
+
+    /// small_mean_dia exactly equal to wire_dia → rejected ("must exceed wire diameter").
+    /// Kills: `ds <= d` → `ds < d` (would accept equal).
+    #[test]
+    fn small_dia_equal_to_wire_rejected() {
+        let m = crate::test_support::music_wire();
+        let mut i = inputs(20.0, 12.0);
+        i.small_mean_dia = Length::from_millimeters(2.0); // == wire_dia
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert_eq!(
+            msg(result),
+            "small-end mean diameter must exceed wire diameter (spring index must exceed 1)"
+        );
+    }
+
+    /// large_mean_dia = 0 → rejected ("must be a positive finite number").
+    /// Kills: `dl > 0.0` → `>= 0.0` (would accept zero).
+    #[test]
+    fn large_dia_zero_rejected() {
+        let m = crate::test_support::music_wire();
+        // Set small_mean_dia to something valid and larger so the small check passes first.
+        // But we need large to fail its own guard, not the ordering guard.
+        // Provide small=12mm (valid) and large=0 (zero).
+        let mut i = inputs(20.0, 12.0);
+        i.large_mean_dia = Length::from_millimeters(0.0);
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert_eq!(
+            msg(result),
+            "large-end mean diameter must be a positive finite number"
+        );
+    }
+
+    /// large_mean_dia exactly equal to wire_dia → rejected ("must exceed wire diameter").
+    /// Kills: `dl <= d` → `dl < d` (would accept equal).
+    ///
+    /// Reachability: small(3mm) > wire(2mm) passes the small guard; large(2mm) == wire(2mm)
+    /// reaches the `dl <= d` guard before the ordering check, which fires next.
+    #[test]
+    fn large_dia_equal_to_wire_rejected() {
+        let m = crate::test_support::music_wire();
+        // wire=2mm, small=3mm (passes: finite, >0, >wire), large=2mm (==wire → rejected).
+        // Note: large(2mm) < small(3mm) so if `dl <= d` were changed to `dl < d`,
+        // the ordering guard would fire instead — proving the `<=` is load-bearing.
+        let i = ConicalInputs {
+            wire_dia: Length::from_millimeters(2.0),
+            large_mean_dia: Length::from_millimeters(2.0), // == wire_dia → rejected
+            small_mean_dia: Length::from_millimeters(3.0), // valid (> wire)
+            active_coils: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        // The `dl <= d` guard at line 118 fires before the ordering guard at line 124.
+        // With `dl < d` mutation: 2.0 < 2.0 is false → guard skipped → ordering fires.
+        // So this test KILLS the `<=` → `<` mutation.
+        assert_eq!(
+            msg(result),
+            "large-end mean diameter must exceed wire diameter (spring index must exceed 1)"
+        );
+    }
+
+    /// Zero load is accepted (free-state reference point).
+    /// Kills: `f.newtons() < 0.0` → `<= 0.0` (would reject zero load).
+    #[test]
+    fn zero_load_is_accepted() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            &inputs(20.0, 12.0),
+            &[Force::from_newtons(0.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_relative_eq!(design.load_points[0].deflection.millimeters(), 0.0);
+        assert_relative_eq!(design.load_points[0].shear_stress.pascals(), 0.0);
+    }
+
+    /// free_length == solid_length is accepted (degenerate zero-travel design).
+    /// Kills: `l0 < solid_length.meters()` → `<=` (would reject equal).
+    /// SquaredGround, d=2mm, Na=10 → Ls = d(Na+2) = 24mm.
+    #[test]
+    fn free_length_equal_solid_length_accepted() {
+        let m = crate::test_support::music_wire();
+        let i = ConicalInputs {
+            wire_dia: Length::from_millimeters(2.0),
+            large_mean_dia: Length::from_millimeters(20.0),
+            small_mean_dia: Length::from_millimeters(12.0),
+            active_coils: 10.0,
+            free_length: Length::from_millimeters(24.0), // == Ls = d(Na+2) = 24mm
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            result.is_ok(),
+            "free == solid must be accepted, got {result:?}"
+        );
+        let design = result.unwrap();
+        assert_relative_eq!(design.at_solid.force.newtons(), 0.0);
+    }
+
+    /// Stress exactly at the allowable fraction raises NO warning.
+    /// Kills: `lp.pct_mts > allowable` → `>= allowable` (would warn at exact equality).
+    #[test]
+    fn load_stress_exactly_at_allowable_no_warning() {
+        let m = crate::test_support::music_wire();
+        let mut design = solve(20.0, 12.0).unwrap();
+        let mut m2 = m.clone();
+        m2.allowable_pct_torsion = 0.50;
+        design.load_points[0].pct_mts = 0.50; // exactly equal
+        let status = evaluate_status(&design, &m2);
+        assert!(
+            !status
+                .messages
+                .iter()
+                .any(|msg| msg.message.contains("load point")),
+            "stress exactly at allowable must not trigger warning"
+        );
+    }
+
+    /// At-solid stress exactly at the set allowable raises NO warning.
+    /// Kills: `at_solid.pct_mts > allowable_pct_set` → `>=` (would warn at exact equality).
+    #[test]
+    fn at_solid_stress_exactly_at_set_allowable_no_warning() {
+        let m = crate::test_support::music_wire();
+        let mut design = solve(20.0, 12.0).unwrap();
+        let mut m2 = m.clone();
+        m2.allowable_pct_set = 0.60;
+        design.at_solid.pct_mts = 0.60; // exactly equal
+        let status = evaluate_status(&design, &m2);
+        assert!(
+            !status
+                .messages
+                .iter()
+                .any(|msg| msg.message.contains("stress at solid")),
+            "at-solid stress exactly at set allowable must not trigger warning"
+        );
+    }
 }
