@@ -11,8 +11,51 @@ use crate::presenter::{
     unit_force_label, unit_length_label, unit_moment_label, unit_stress_label, Emphasis,
     FieldDescriptor, ResultRow, StatusLine,
 };
-use crate::torsion::form::{Field, MomentEntry, TorFormOutcome, TorScenarioKind};
+use crate::torsion::form::{Field, MomentEntry, TorFatigueStatus, TorFormOutcome, TorScenarioKind};
 use springcore::torsion::{TorBindingConstraint, TorsionDesign};
+
+// ── Fatigue section ───────────────────────────────────────────────────────────
+
+/// Fatigue section state, mirroring compression's `FatigueView`.
+/// (Task 2 wires the full row set and the CycleLife picker into the view layer.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TorFatigueView {
+    /// User left the cycle-moment fields blank.
+    Skipped,
+    /// Moments supplied but material has no bending-fatigue data.
+    NoData,
+    /// Fatigue analysis succeeded; at least the FOS row is present.
+    /// Task 2 expands to the full set of rows.
+    Computed(Vec<ResultRow>),
+}
+
+/// Map a solved outcome's fatigue status to the presenter type.
+fn tor_fatigue_view(out: &TorFormOutcome, us: springcore::UnitSystem) -> TorFatigueView {
+    match &out.fatigue {
+        TorFatigueStatus::Skipped => TorFatigueView::Skipped,
+        TorFatigueStatus::NoData => TorFatigueView::NoData,
+        TorFatigueStatus::Computed(r) => {
+            // Task 2 expands this to the full stress / endurance row set.
+            let (alt_val, alt_lbl) = display_stress(r.alternating_stress, us);
+            let (mean_val, mean_lbl) = display_stress(r.mean_stress, us);
+            let (se_val, se_lbl) = display_stress(r.fully_reversed_endurance, us);
+            let (sut_val, sut_lbl) = display_stress(r.ultimate_tensile, us);
+            let (sa_val, sa_lbl) = display_stress(r.strength_amplitude, us);
+            TorFatigueView::Computed(vec![
+                ResultRow::new("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
+                ResultRow::new("Mean stress", format!("{mean_val:.2}"), mean_lbl),
+                ResultRow::new("Endurance (Se)", format!("{se_val:.2}"), se_lbl),
+                ResultRow::new("Ultimate tensile (Sut)", format!("{sut_val:.2}"), sut_lbl),
+                ResultRow::new("Gerber Sa", format!("{sa_val:.2}"), sa_lbl),
+                ResultRow::new(
+                    "Gerber FOS (nf)",
+                    format!("{:.3}", r.gerber_factor_of_safety),
+                    "",
+                ),
+            ])
+        }
+    }
+}
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
 
@@ -110,6 +153,8 @@ pub struct TorPopulatedResults {
     pub load_table: TorLoadTable,
     /// Min-weight optimisation rows (MinWeight solves only).
     pub min_weight: Option<Vec<ResultRow>>,
+    /// Fatigue section (Skipped / NoData / Computed rows).
+    pub(crate) fatigue: TorFatigueView,
 }
 
 /// Geometry summary rows: spring index and effective active coils.
@@ -152,6 +197,7 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
                 geometry: geometry_rows(&out.design),
                 load_table: tor_load_table(&out.design, us),
                 min_weight: tor_min_weight_rows(out),
+                fatigue: tor_fatigue_view(out, us),
             }))
         }
         None => match &app.error {
@@ -237,6 +283,16 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
                 FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
             ];
             fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields.extend([
+                FieldDescriptor::new(
+                    format!("Min cycle moment ({moment}, optional)"),
+                    Field::FatigueMin,
+                ),
+                FieldDescriptor::new(
+                    format!("Max cycle moment ({moment}, optional)"),
+                    Field::FatigueMax,
+                ),
+            ]);
             fields
         }
         TorScenarioKind::PowerUser => {
@@ -249,6 +305,16 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
                 FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
             ];
             fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields.extend([
+                FieldDescriptor::new(
+                    format!("Min cycle moment ({moment}, optional)"),
+                    Field::FatigueMin,
+                ),
+                FieldDescriptor::new(
+                    format!("Max cycle moment ({moment}, optional)"),
+                    Field::FatigueMax,
+                ),
+            ]);
             fields
         }
         TorScenarioKind::Dimensional => {
@@ -261,6 +327,16 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
                 FieldDescriptor::new(format!("Arbor diameter ({len}, optional)"), Field::ArborDia),
             ];
             fields.extend(moment_entry_fields(entry, moment, force, len));
+            fields.extend([
+                FieldDescriptor::new(
+                    format!("Min cycle moment ({moment}, optional)"),
+                    Field::FatigueMin,
+                ),
+                FieldDescriptor::new(
+                    format!("Max cycle moment ({moment}, optional)"),
+                    Field::FatigueMax,
+                ),
+            ]);
             fields
         }
         TorScenarioKind::TwoLoad => vec![
@@ -273,6 +349,14 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             FieldDescriptor::new("Angle 1 (°)".to_string(), Field::Angle1),
             FieldDescriptor::new(format!("Moment 2 ({moment})"), Field::Moment2),
             FieldDescriptor::new("Angle 2 (°)".to_string(), Field::Angle2),
+            FieldDescriptor::new(
+                format!("Min cycle moment ({moment}, optional)"),
+                Field::FatigueMin,
+            ),
+            FieldDescriptor::new(
+                format!("Max cycle moment ({moment}, optional)"),
+                Field::FatigueMax,
+            ),
         ],
         TorScenarioKind::MinWeight => vec![
             FieldDescriptor::new(format!("Rate ({moment}/°)"), Field::Rate),
@@ -584,10 +668,11 @@ mod tests {
     // ── inputs panel ─────────────────────────────────────────────────────────
 
     #[test]
-    fn inputs_view_has_seven_unit_aware_fields() {
+    fn inputs_view_has_nine_unit_aware_fields() {
+        // PowerUser (default): 6 geometry + 1 moments + 2 fatigue cycle = 9.
         let app = fresh_app_torsion();
         let fields = tor_inputs_view(&app);
-        assert_eq!(fields.len(), 7);
+        assert_eq!(fields.len(), 9);
         assert_eq!(fields[0].field, Field::WireDia);
         assert!(
             fields[0].label.contains("mm"),
@@ -615,6 +700,8 @@ mod tests {
                 Field::Leg2,
                 Field::ArborDia,
                 Field::Moments,
+                Field::FatigueMin,
+                Field::FatigueMax,
             ]
         );
     }
@@ -636,10 +723,11 @@ mod tests {
     }
 
     #[test]
-    fn inputs_view_last_field_is_moments() {
+    fn inputs_view_last_field_is_fatigue_max() {
+        // FatigueMax is the last field for all non-MinWeight scenarios.
         let app = fresh_app_torsion();
         let fields = tor_inputs_view(&app);
-        assert_eq!(fields.last().expect("non-empty").field, Field::Moments);
+        assert_eq!(fields.last().expect("non-empty").field, Field::FatigueMax);
     }
 
     #[test]
@@ -685,8 +773,8 @@ mod tests {
         let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
         assert_eq!(
             fields.len(),
-            7,
-            "Dimensional must have 7 fields; got {kinds:?}"
+            9,
+            "Dimensional must have 9 fields (7 + 2 fatigue); got {kinds:?}"
         );
         assert!(
             kinds.contains(&Field::OuterDia),
@@ -705,7 +793,11 @@ mod tests {
         app.torsion.scenario = TorScenarioKind::TwoLoad;
         let fields = tor_inputs_view(&app);
         let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
-        assert_eq!(fields.len(), 9, "TwoLoad must have 9 fields; got {kinds:?}");
+        assert_eq!(
+            fields.len(),
+            11,
+            "TwoLoad must have 11 fields (9 + 2 fatigue); got {kinds:?}"
+        );
         for required in [Field::Moment1, Field::Angle1, Field::Moment2, Field::Angle2] {
             assert!(
                 kinds.contains(&required),
@@ -738,8 +830,8 @@ mod tests {
         let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
         assert_eq!(
             fields.len(),
-            8,
-            "F@r PowerUser must have 8 fields; got {kinds:?}"
+            10,
+            "F@r PowerUser must have 10 fields (8 + 2 fatigue); got {kinds:?}"
         );
         assert!(
             kinds.contains(&Field::Forces),

@@ -123,6 +123,9 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::IndexMax => &form.index_max,
         Field::MaxOuterDia => &form.max_outer_dia,
         Field::CandidateDiameters => &form.candidate_diameters,
+        // Task 1: compile-spillover arms — presenter/rendering wired in Task 2.
+        Field::FatigueMin => &form.fatigue_min,
+        Field::FatigueMax => &form.fatigue_max,
     }
 }
 
@@ -152,6 +155,9 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::IndexMax => "tor-index-max",
         Field::MaxOuterDia => "tor-max-outer-dia",
         Field::CandidateDiameters => "tor-candidate-diameters",
+        // Task 1: compile-spillover arms — presenter/rendering wired in Task 2.
+        Field::FatigueMin => "tor-fatigue-min",
+        Field::FatigueMax => "tor-fatigue-max",
     }
 }
 

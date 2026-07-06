@@ -22,6 +22,18 @@ pub enum CycleLife {
     Million,
 }
 
+impl std::fmt::Display for CycleLife {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            CycleLife::HundredThousand => "10\u{2075} cycles",
+            CycleLife::Million => "10\u{2076} cycles",
+        })
+    }
+}
+
+/// All `CycleLife` variants in display order (pick-list source).
+pub const ALL_CYCLE_LIVES: &[CycleLife] = &[CycleLife::HundredThousand, CycleLife::Million];
+
 /// Torsion-spring fatigue analysis result (Shigley §10-12, Gerber).
 #[derive(Debug, Clone, Copy)]
 pub struct TorFatigueResult {
@@ -163,6 +175,16 @@ mod tests {
             life,
         )
         .expect("the worked example is feasible")
+    }
+
+    #[test]
+    fn cycle_life_display_and_all_const() {
+        assert_eq!(CycleLife::HundredThousand.to_string(), "10\u{2075} cycles");
+        assert_eq!(CycleLife::Million.to_string(), "10\u{2076} cycles");
+        assert_eq!(
+            ALL_CYCLE_LIVES,
+            &[CycleLife::HundredThousand, CycleLife::Million]
+        );
     }
 
     #[test]
