@@ -12,7 +12,8 @@ use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{
-    tor_fatigue_inputs_view, tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView,
+    tor_fatigue_inputs_view, tor_inputs_view, tor_results_view, TorFatigueView, TorLoadTable,
+    TorResultsView,
 };
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
@@ -77,6 +78,18 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 springcore::torsion::ALL_FRICTION_MODELS,
                 Some(app.torsion.friction_model),
                 Message::TorFriction,
+            ),
+        ]
+        .spacing(4),
+    );
+
+    setup_group = setup_group.push(
+        column![
+            field_label("Cycle life"),
+            styled_pick_list(
+                springcore::torsion::ALL_CYCLE_LIVES,
+                Some(app.torsion.cycle_life),
+                Message::TorCycleLife,
             ),
         ]
         .spacing(4),
@@ -290,6 +303,17 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 
             if let Some(rows) = &p.min_weight {
                 col = col.push(divided_result_section("Min-weight optimisation", rows));
+            }
+
+            match &p.fatigue {
+                TorFatigueView::Hidden => {}
+                TorFatigueView::Computed(rows) => {
+                    col = col.push(divided_result_section("Fatigue analysis", rows));
+                }
+                TorFatigueView::Note(msg) => {
+                    col = col.push(section_divider());
+                    col = col.push(text(*msg).size(SZ_LABEL).color(C::MUTED));
+                }
             }
 
             col.into()

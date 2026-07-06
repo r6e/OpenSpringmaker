@@ -742,6 +742,42 @@ fn torsion_min_weight_e2e_and_save_load() {
 }
 
 #[test]
+fn torsion_fatigue_e2e_rows_nodata_and_minweight_suppression() {
+    use crate::torsion::form::{Field as TF, TorScenarioKind};
+    // Rows render for a computed analysis.
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+    type_into_tor(&mut app, TF::FatigueMin, "100");
+    type_into_tor(&mut app, TF::FatigueMax, "500");
+    let out = app.tor_outcome.as_ref().expect("solves");
+    assert!(matches!(
+        out.fatigue,
+        crate::torsion::form::TorFatigueStatus::Computed(_)
+    ));
+    assert!(shows(&app, "Gerber FOS"), "the fatigue rows render");
+
+    // NoData note for a material without Table 10-10 data.
+    app.update(Message::Material("Oil-Tempered Wire".into()));
+    assert!(
+        shows(&app, "No fatigue data for this material."),
+        "the NoData note renders"
+    );
+
+    // MinWeight suppression: switching scenario hides both inputs and section.
+    app.update(Message::TorScenario(TorScenarioKind::MinWeight));
+    assert!(
+        !shows(&app, "Fatigue cycle (leave blank to skip)"),
+        "fatigue inputs hide under MinWeight"
+    );
+}
+
+#[test]
 fn ext_scenario_switch_solves_each_mode() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));
