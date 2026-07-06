@@ -106,20 +106,20 @@ fn tor_load_table(d: &TorsionDesign, us: springcore::UnitSystem) -> TorLoadTable
             TorLoadRow {
                 point: format!("{}", i + 1),
                 moment: format!(
-                    "{:.3} {}",
-                    display_moment(lp.moment, us),
+                    "{} {}",
+                    fmt_row_value(display_moment(lp.moment, us), 3),
                     unit_moment_label(us)
                 ),
                 deflection: format!(
-                    "{:.2}° ({:.4} rev)",
-                    display_angle_degrees(lp.deflection),
-                    display_angle_turns(lp.deflection)
+                    "{}° ({} rev)",
+                    fmt_row_value(display_angle_degrees(lp.deflection), 2),
+                    fmt_row_value(display_angle_turns(lp.deflection), 4)
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_allow: format!("{}%", fmt_row_value(lp.pct_bending_allow * 100.0, 1)),
                 wound_inner: format!(
-                    "{:.4} {}",
-                    display_len(lp.wound_inner_dia, us),
+                    "{} {}",
+                    fmt_row_value(display_len(lp.wound_inner_dia, us), 4),
                     unit_length_label(us)
                 ),
                 stress_emphasis,
@@ -1081,6 +1081,12 @@ mod tests {
         assert!(
             cell.contains('e') && cell.len() < 12,
             "expected scientific notation, got '{cell}'"
+        );
+        // Sweep coverage: moment cell must also render scientific for a huge moment.
+        let moment = &p.load_table.rows[0].moment;
+        assert!(
+            moment.split(' ').next().unwrap().contains('e'),
+            "moment cell must render scientific mantissa for huge moment, got '{moment}'"
         );
     }
 }

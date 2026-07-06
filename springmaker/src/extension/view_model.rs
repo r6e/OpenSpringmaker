@@ -54,18 +54,18 @@ fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTab
             ExtLoadRow {
                 point: format!("{}", i + 1),
                 force: format!(
-                    "{:.3} {}",
-                    display_force(lp.force, us),
+                    "{} {}",
+                    fmt_row_value(display_force(lp.force, us), 3),
                     unit_force_label(us)
                 ),
                 deflection: format!(
-                    "{:.4} {}",
-                    display_len(lp.deflection, us),
+                    "{} {}",
+                    fmt_row_value(display_len(lp.deflection, us), 4),
                     unit_length_label(us)
                 ),
                 length: format!(
-                    "{:.4} {}",
-                    display_len(lp.length, us),
+                    "{} {}",
+                    fmt_row_value(display_len(lp.length, us), 4),
                     unit_length_label(us)
                 ),
                 body_shear: fmt_row_value(body_val, 3),
@@ -674,6 +674,12 @@ mod tests {
         assert!(
             cell.contains('e') && cell.len() < 12,
             "expected scientific notation, got '{cell}'"
+        );
+        // Sweep coverage: deflection cell must also render scientific for huge loads.
+        let deflection = &p.load_table.rows[0].deflection;
+        assert!(
+            deflection.split(' ').next().unwrap().contains('e'),
+            "deflection cell must render scientific mantissa for huge load, got '{deflection}'"
         );
     }
 }
