@@ -347,10 +347,12 @@ mod tests {
     #[test]
     fn roundtrip_preserves_cr_v_service_temp_and_bending_fatigue() {
         // Chrome-Vanadium carries BOTH a scalar optional (max_service_temp_c)
-        // AND a sub-table (bending_fatigue). TOML requires scalars before
-        // tables within an entry; this locks the serializer's field ordering
-        // (scalar-after-subtable) against future toml-crate changes — both
-        // fields must survive a serialize → reparse round-trip.
+        // AND a sub-table (bending_fatigue). RawMaterial DECLARES the scalar
+        // field after the sub-table field, but valid TOML requires scalars to
+        // be emitted before tables within an entry — the toml crate's
+        // serializer reorders to satisfy that. This test locks that reordering
+        // against future toml-crate changes: both fields must survive a
+        // serialize → reparse round-trip.
         let orig = MaterialSet::load_default()
             .get("Chrome-Vanadium")
             .unwrap()
