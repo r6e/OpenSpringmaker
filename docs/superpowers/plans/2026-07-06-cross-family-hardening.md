@@ -13,7 +13,10 @@
 - springcore is mutation-gated: `cargo mutants --in-diff` vs origin/main must end with literal 0 missed (survivors = failure). springmaker is NOT gated.
 - Strict TDD: write the failing test, watch it fail, implement, watch it pass.
 - Every existing error message and every message quoted in this plan is VERBATIM — do not reword.
-- NO references to any commercial product or vendor in any file.
+- NO references to the commercial spring-design product this project serves as
+  an alternative to, nor to its vendor, in any file. (Tooling attribution —
+  e.g. the required co-author commit trailer below — is not covered by this
+  rule and is mandatory.)
 - MSRV 1.88; `cargo fmt` zero deviation; `cargo clippy --workspace --all-targets -- -D warnings` clean.
 - Commit DIRECTLY on `feat/cross-family-hardening`. NEVER push, NEVER create/edit PRs, NEVER run review panels or dispatch subagents, NEVER touch any file under `.git/` (e.g. REVIEW_CONVERGED_OK).
 - Conventional commits; every commit message ends with the trailer:

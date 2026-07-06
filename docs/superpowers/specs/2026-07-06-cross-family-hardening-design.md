@@ -5,7 +5,8 @@
 extension/torsion increments: compression fatigue guards (springcore,
 mutation-gated), extension enum loudness + ADR 0013, a scientific-notation
 display fallback for result rows, and the form_helpers extraction advisory.
-Zero persistence surface (the only doc artifact is an ADR). One branch, one PR.
+Zero persistence surface; the only new repository documentation beyond this
+spec/plan pair is an ADR. One branch, one PR.
 
 ## Decisions (settled during brainstorming)
 
