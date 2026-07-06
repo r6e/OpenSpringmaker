@@ -6,7 +6,7 @@
 //! along the load line r = Ma/Mm, and nf = Sa/σa (Eq. 10-60).
 
 use crate::material::Material;
-use crate::torsion::design::validate_wire_mean_geometry;
+use crate::design::validate_wire_mean_geometry;
 use crate::torsion::mechanics::bending_stress_inner;
 use crate::units::{Length, Moment, Stress};
 use crate::{Result, SpringError};
