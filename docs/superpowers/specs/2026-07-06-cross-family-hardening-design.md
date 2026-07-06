@@ -63,8 +63,17 @@ New order:
    Zimmerli data per Shigley §10-9 is unidirectional).
 4. Existing ordering guard (`max ≥ min`), message unchanged. NO equal-forces
    rejection (Decision 3).
-5. Existing Ssm ≥ Ssu trap, message unchanged.
-6. NEW output guard before `Ok` — torsion's 5-element finiteness check
+5. NEW both-zero guard (plan-time discovery): after the ≥ 0 and ordering
+   guards, `force_max == 0` implies both forces are zero — today that returns
+   `Ok` with nf = ∞, the exact masquerade class this increment kills. Reject
+   with a precise message rather than letting the generic output guard
+   mislabel zeros as "exceeding the representable range":
+   `"cycle forces must not both be zero (no load cycle to analyze)"`.
+   Equal NONZERO forces stay accepted (Decision 3; nf = Ssu-bounded, finite).
+   Torsion needs no twin: its equal-moments guard already excludes the
+   both-zero pair.
+6. Existing Ssm ≥ Ssu trap, message unchanged.
+7. NEW output guard before `Ok` — torsion's 5-element finiteness check
    (`springcore/src/torsion/fatigue.rs:135-144`) transplanted:
 
 ```rust
@@ -178,11 +187,12 @@ rather than force-fit.)
 ## E. Testing & gates
 
 - **springcore (TDD, mutation-gated 0 in-diff survivors):** each new guard
-  message pinned exactly; precedence tests (zero wire beats bad forces beats
-  no-data — geometry first); equal-forces-still-Ok test (Decision 3, pins the
-  divergence); huge-but-finite forces → the output guard's message; the moved
-  `validate_wire_mean_geometry` covered via both torsion (existing tests keep
-  passing) and the new compression callers.
+  message pinned exactly; precedence tests (zero wire beats bad forces;
+  no-data beats bad forces — torsion's geometry → data → inputs order);
+  equal-NONZERO-forces-still-Ok test (Decision 3, pins the divergence);
+  both-zero forces → the new guard's message; huge-but-finite forces → the
+  output guard's message; the moved `validate_wire_mean_geometry` covered via
+  both torsion (existing tests keep passing) and the new compression callers.
 - **Presenter:** boundary tests for `fmt_row_value` — just-below stays
   fixed-point (`999_999.99`), `1e6` and `1e300` go scientific, negative huge
   goes scientific, zero/normal values unchanged; one per-family row test with
