@@ -28,3 +28,10 @@ updates:
     labels:
       - dependencies
       - ci
+    groups:
+      # The codeql-action sub-actions (init/analyze/upload-sarif) hard-fail on
+      # mixed versions ("Loaded a configuration file for version X, but running
+      # version Y"), so their bumps must travel in one PR.
+      codeql-action:
+        patterns:
+          - github/codeql-action/*
