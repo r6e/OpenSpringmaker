@@ -6,7 +6,8 @@
 
 use crate::form_helpers::num;
 use springcore::{
-    EnduranceDraft, Material, MaterialDraft, MtsForm, Result, SpringError, StrengthUnits,
+    BendingFatigueDraft, EnduranceDraft, Material, MaterialDraft, MtsForm, Result, SpringError,
+    StrengthUnits,
 };
 
 // ── Form state ────────────────────────────────────────────────────────────────
@@ -60,6 +61,10 @@ pub struct MaterialsFormState {
     pub has_max_temp: bool,
     /// Maximum service temperature, in °C.
     pub max_temp_c: String,
+    /// Cited bending-fatigue data (Shigley Table 10-10) carried through the
+    /// editor round-trip. Not yet exposed as form fields: preserved verbatim so
+    /// editing a material that carries the data does not silently strip it.
+    pub bending_fatigue: Option<BendingFatigueDraft>,
 }
 
 impl Default for MaterialsFormState {
@@ -86,6 +91,7 @@ impl Default for MaterialsFormState {
             endurance_peened: false,
             has_max_temp: false,
             max_temp_c: String::new(),
+            bending_fatigue: None,
         }
     }
 }
@@ -156,6 +162,7 @@ pub fn build_draft(form: &MaterialsFormState) -> Result<MaterialDraft> {
         allowable_pct_bending: num("Allowable bending", &form.allowable_bending)?,
         allowable_pct_set: num("Allowable set", &form.allowable_set)?,
         endurance,
+        bending_fatigue: form.bending_fatigue,
         max_service_temp_c,
     })
 }
@@ -214,6 +221,10 @@ pub fn populate_from_material(form: &mut MaterialsFormState, m: &Material) {
             form.max_temp_c = String::new();
         }
     }
+
+    // Pass-through (no form fields yet): both Some and None must land verbatim
+    // so a populate → build_draft round-trip neither strips nor invents data.
+    form.bending_fatigue = d.bending_fatigue;
 }
 
 /// Advisory hint labels for the comma-separated `coefficients` input of the
@@ -327,6 +338,31 @@ mod tests {
         populate_from_material(&mut f, stainless);
         let rebuilt = build_draft(&f).unwrap().build().unwrap();
         assert_eq!(rebuilt.allowable_pct_end_torsion, 0.30);
+    }
+
+    // Bending-fatigue data has no form fields yet; it must pass through the
+    // Material → form → Draft → build round-trip verbatim (Some preserved with
+    // exact column values, None stays None), never silently stripped.
+    #[test]
+    fn populate_round_trips_bending_fatigue_pass_through() {
+        let set = MaterialSet::load_default();
+        let mut f = MaterialsFormState::default();
+        populate_from_material(&mut f, set.get("Music Wire").unwrap());
+        let rebuilt = build_draft(&f).unwrap().build().unwrap();
+        let bf = rebuilt.bending_fatigue.expect("Table 10-10 data preserved");
+        assert_eq!(
+            (bf.sr_pct_1e5, bf.sr_pct_1e6, bf.peened),
+            (0.53, 0.50, false)
+        );
+        // A data-less material must not inherit stale data from the prior form.
+        populate_from_material(&mut f, set.get("Oil-Tempered Wire").unwrap());
+        assert!(f.bending_fatigue.is_none());
+        assert!(build_draft(&f)
+            .unwrap()
+            .build()
+            .unwrap()
+            .bending_fatigue
+            .is_none());
     }
 
     #[test]

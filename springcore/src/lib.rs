@@ -38,7 +38,8 @@ pub use error::{Result, SpringError};
 pub use family::{Family, ALL_FAMILIES};
 pub use fatigue::{analyze_fatigue, FatigueResult};
 pub use material::{
-    Endurance, EnduranceDraft, Material, MaterialDraft, MaterialSet, MtsForm, StrengthUnits,
+    BendingFatigue, BendingFatigueDraft, Endurance, EnduranceDraft, Material, MaterialDraft,
+    MaterialSet, MtsForm, StrengthUnits,
 };
 pub use material_persist::{user_overlay_path, LoadWarning};
 pub use material_store::MaterialStore;
