@@ -43,7 +43,7 @@ pub struct SpringDesign {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_point(
+pub(crate) fn load_point(
     force: Force,
     rate: SpringRate,
     free_length: Length,
@@ -277,19 +277,25 @@ pub(crate) fn validate_wire_mean_geometry(wire_dia: Length, mean_dia: Length) ->
     Ok(())
 }
 
-/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2).
-/// Shared by every spring family's status check.
-pub(crate) fn index_caution(index: f64) -> Option<StatusMessage> {
+/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2),
+/// with a caller-supplied label ("spring index", "small-end spring index", …).
+pub(crate) fn index_caution_labeled(label: &str, index: f64) -> Option<StatusMessage> {
     if !(INDEX_MIN..=INDEX_MAX).contains(&index) {
         Some(StatusMessage {
             severity: Severity::Caution,
             message: format!(
-                "spring index {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
+                "{label} {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
             ),
         })
     } else {
         None
     }
+}
+
+/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2).
+/// Shared by every spring family's status check.
+pub(crate) fn index_caution(index: f64) -> Option<StatusMessage> {
+    index_caution_labeled("spring index", index)
 }
 
 /// Apply engineering checks to a computed design.
