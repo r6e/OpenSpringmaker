@@ -221,8 +221,6 @@ fn tor_min_weight_rows(out: &TorFormOutcome) -> Option<Vec<ResultRow>> {
         TorBindingConstraint::BendingStress => "bending stress",
         TorBindingConstraint::Index => "index",
         TorBindingConstraint::OuterDiameter => "outer diameter",
-        // `TorBindingConstraint` is `#[non_exhaustive]`; a future variant falls here.
-        _ => "other",
     };
     Some(vec![
         ResultRow::new("Wire mass", fmt_row_value(mw.mass_kg, 4), "kg"),

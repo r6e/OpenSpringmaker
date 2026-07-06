@@ -33,7 +33,9 @@ Zero persistence surface (the only doc artifact is an ADR). One branch, one PR.
 - No form-level magnitude limits (rejected in brainstorming: arbitrary caps).
 - No `HookSpec` change — it is constructed, never matched, so its
   `#[non_exhaustive]` is harmless and consistent with ADR 0013's rule.
-- No torsion/extension engine changes beyond the shared-guard promotion.
+- No torsion/extension engine changes beyond the shared-guard promotion (the
+  `TorBindingConstraint` attribute removal is compile-surface only — no
+  behavior change).
 
 ## A. Compression fatigue guards (`springcore` — mutation-gated)
 
@@ -102,14 +104,23 @@ so no downstream breakage. The GUI's `compute_fatigue` already feeds
   MUST land in the same commit as the attribute removal (an exhaustive enum
   makes the wildcard an `unreachable_patterns` warning → `-D warnings` fails).
 - `docs/adr/0013-public-enum-exhaustiveness-policy.md`: enums a downstream
-  layer must exhaustively `match` (binding constraints, `FrictionModel`) carry
-  NO `#[non_exhaustive]` — a new variant is a loud compile error at every
-  match site. Display/iterate-only enums (`CycleLife`, `DiaPolicy`,
-  `HookSpec`) keep `#[non_exhaustive]` + `ALL_*` consts. Context: the silent
-  `_ => "other"` arm found in the extension GUI; alternatives considered
-  (keep attribute + visible "unknown" label) and why loud won (PR #32
-  precedent; springcore is workspace-internal and unpublished, so the
-  technically-semver-major removal is free — noted in the ADR).
+  layer must exhaustively `match` (binding constraints) carry NO
+  `#[non_exhaustive]` — a new variant is a loud compile error at every match
+  site. `FrictionModel` also omits the attribute for deliberate compile-surface
+  exposure (PR #32), but for the distinct reason of auditing every construction
+  and reference site rather than exhaustive GUI matching. Display/iterate-only
+  enums (`CycleLife`, `DiaPolicy`, `HookSpec`) keep `#[non_exhaustive]` +
+  `ALL_*` consts. Context: the silent `_ => "other"` arm found in the
+  extension GUI; alternatives considered (keep attribute + visible "unknown"
+  label) and why loud won (PR #32 precedent; springcore is workspace-internal
+  and unpublished, so the technically-semver-major removal is free — noted in
+  the ADR).
+
+  The final review panel found the identical torsion twin: `TorBindingConstraint`
+  in `springcore/src/torsion/optimize.rs` also carried `#[non_exhaustive]`,
+  and the torsion GUI had an identical `_ => "other"` wildcard arm. Both
+  received the same treatment in the same commit: attribute removed, wildcard
+  arm deleted, ADR updated to reflect both families.
 
 ## C. Scientific display fallback (`springmaker` presenter)
 
