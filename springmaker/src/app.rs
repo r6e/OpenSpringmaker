@@ -844,6 +844,19 @@ impl App {
     }
 
     fn apply_saved(&mut self, saved: SavedDesign) {
+        // Reject unsupported families wholesale BEFORE any state mutation so
+        // that a failed load leaves the app in its prior state.
+        if matches!(saved.design, springcore::DesignSpec::Conical(_)) {
+            // Placeholder until the conical GUI increment: reject the load
+            // wholesale — nothing (material, units, family, form) is applied.
+            self.action_error = Some(
+                "conical designs are not supported by this build yet (the conical GUI \
+                 ships in the next increment)"
+                    .into(),
+            );
+            return;
+        }
+
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -872,13 +885,7 @@ impl App {
                 );
             }
             springcore::DesignSpec::Conical(_) => {
-                // Placeholder until the conical GUI increment: surface a clean
-                // action error instead of a partially-applied load.
-                self.action_error = Some(
-                    "conical designs are not supported by this build yet (the conical GUI \
-                     ships in the next increment)"
-                        .into(),
-                );
+                unreachable!("Conical is handled by the early-return above")
             }
         }
     }
@@ -1399,11 +1406,17 @@ mod tests {
     #[test]
     fn loading_a_conical_design_surfaces_a_clean_action_error() {
         let mut app = test_app();
+        // Set a known material and unit system BEFORE loading; the conical load
+        // must leave both unchanged (no partial application) while setting action_error.
+        // The saved design carries a DIFFERENT material ("Chrome Vanadium") to prove
+        // the early-return prevents the mutation.
+        app.material = "Chrome Vanadium".to_string();
+        app.unit_system = springcore::UnitSystem::Us;
         app.apply_saved(springcore::SavedDesign {
             material: "Music Wire".to_string(),
             unit_system: springcore::UnitSystem::Metric,
             design: springcore::DesignSpec::Conical(springcore::ConicalSpec::PowerUser {
-                end_type: "SquaredGround".to_string(),
+                end_type: "squared_ground".to_string(),
                 wire_dia_mm: 2.0,
                 large_mean_dia_mm: 20.0,
                 small_mean_dia_mm: 12.0,
@@ -1416,6 +1429,16 @@ mod tests {
         assert!(
             err.contains("conical designs are not supported"),
             "got: {err}"
+        );
+        // Wholesale rejection: material and unit_system must be unchanged.
+        assert_eq!(
+            app.material, "Chrome Vanadium",
+            "conical load must not mutate material"
+        );
+        assert_eq!(
+            app.unit_system,
+            springcore::UnitSystem::Us,
+            "conical load must not mutate unit_system"
         );
     }
 }
