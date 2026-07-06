@@ -88,76 +88,78 @@ pub(crate) fn finite_or_err(field: &str, value: &str, v_si: f64) -> Result<f64> 
     }
 }
 
+/// Shared core: parse a strictly-positive value, convert to SI via
+/// `convert_us` (US) or pass through unchanged (metric), then
+/// finiteness-check the converted result.
+fn positive_to_si(
+    field: &str,
+    value: &str,
+    us: UnitSystem,
+    convert_us: impl Fn(f64) -> f64,
+) -> Result<f64> {
+    let v = positive_num(field, value)?;
+    let v_si = match us {
+        UnitSystem::Us => convert_us(v),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
+/// Shared core: like `positive_to_si` but allows zero, rejecting negatives
+/// with the "zero or greater" message.
+fn non_negative_to_si(
+    field: &str,
+    value: &str,
+    us: UnitSystem,
+    convert_us: impl Fn(f64) -> f64,
+) -> Result<f64> {
+    let v = num(field, value)?;
+    if v < 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be zero or greater"
+        )));
+    }
+    let v_si = match us {
+        UnitSystem::Us => convert_us(v),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
 /// Parse a strictly-positive length, returning millimetres (SI internal):
 /// US inputs are converted from inches, metric inputs are already mm.
 pub(crate) fn length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // Lengths must be strictly positive — a zero-length dimension is unphysical.
-    let v = positive_num(field, value)?;
-    let v_si = match us {
-        UnitSystem::Us => Length::from_inches(v).millimeters(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    positive_to_si(field, value, us, |v| Length::from_inches(v).millimeters())
 }
 
 /// Like `length_mm` but allows zero (e.g. torsion spring legs that may be absent).
 pub(crate) fn non_negative_length_mm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = num(field, value)?;
-    if v < 0.0 {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be zero or greater"
-        )));
-    }
-    let v_si = match us {
-        UnitSystem::Us => Length::from_inches(v).millimeters(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    non_negative_to_si(field, value, us, |v| Length::from_inches(v).millimeters())
 }
 
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
 pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = num(field, value)?;
-    if v < 0.0 {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be zero or greater"
-        )));
-    }
-    let v_si = match us {
-        UnitSystem::Us => Force::from_pounds_force(v).newtons(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    non_negative_to_si(field, value, us, |v| Force::from_pounds_force(v).newtons())
 }
 
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected),
 /// returning SI newton-millimetres. Zero is legal for cycle-moment minimums — the
 /// exact R = 0 repeated-bending case the fatigue data is defined for.
 pub(crate) fn non_negative_moment_nmm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = num(field, value)?;
-    if v < 0.0 {
-        return Err(SpringError::InconsistentInputs(format!(
-            "{field} must be zero or greater"
-        )));
-    }
-    let v_si = match us {
-        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    non_negative_to_si(field, value, us, |v| {
+        Moment::from_pound_force_inches(v).newton_millimeters()
+    })
 }
 
 /// Like `non_negative_force_n` but requires the value to be strictly positive
 /// (e.g. max force, which must be greater than zero).
 pub(crate) fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = positive_num(field, value)?;
-    let v_si = match us {
-        UnitSystem::Us => Force::from_pounds_force(v).newtons(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    positive_to_si(field, value, us, |v| Force::from_pounds_force(v).newtons())
 }
 
+// NOTE: deliberately not on `positive_to_si` — the metric arm scales
+// (N/mm display → N/m stored); it is not an identity pass-through.
 pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     // A spring rate must be strictly positive.
     // Metric input is in N/mm (display unit); convert to N/m for internal storage.
@@ -172,12 +174,9 @@ pub(crate) fn rate_npm(field: &str, value: &str, us: UnitSystem) -> Result<f64> 
 /// Parse a strictly-positive angular rate, returning N·mm per degree (canonical):
 /// metric input is already N·mm/°; US input is lbf·in/°, converted via `Moment`.
 pub(crate) fn ang_rate_nmm_per_deg(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = positive_num(field, value)?;
-    let v_si = match us {
-        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    positive_to_si(field, value, us, |v| {
+        Moment::from_pound_force_inches(v).newton_millimeters()
+    })
 }
 
 /// Convert N·mm/° (canonical) → display string (metric N·mm/°, US lbf·in/°).
@@ -241,12 +240,9 @@ pub(crate) fn fmt_loads(loads: &[f64], us: UnitSystem) -> String {
 /// US inputs are lbf·in, metric inputs are already N·mm. Moments must be > 0
 /// (a torsion load winds the coils tighter).
 pub(crate) fn moment_nmm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
-    let v = positive_num(field, value)?;
-    let v_si = match us {
-        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
-        UnitSystem::Metric => v,
-    };
-    finite_or_err(field, value, v_si)
+    positive_to_si(field, value, us, |v| {
+        Moment::from_pound_force_inches(v).newton_millimeters()
+    })
 }
 
 /// Parse a comma-separated moment list into SI newton-millimetres.

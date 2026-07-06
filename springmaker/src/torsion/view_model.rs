@@ -8,8 +8,8 @@ use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_ang_rate_per_deg, display_ang_rate_per_turn,
     display_angle_degrees, display_angle_turns, display_len, display_moment, display_stress,
-    unit_force_label, unit_length_label, unit_moment_label, unit_stress_label, Emphasis,
-    FieldDescriptor, ResultRow, StatusLine,
+    fmt_row_value, unit_force_label, unit_length_label, unit_moment_label, unit_stress_label,
+    Emphasis, FieldDescriptor, ResultRow, StatusLine,
 };
 use crate::torsion::form::{Field, MomentEntry, TorFatigueStatus, TorFormOutcome, TorScenarioKind};
 use springcore::torsion::{TorBindingConstraint, TorsionDesign};
@@ -47,14 +47,14 @@ fn tor_fatigue_view(out: &TorFormOutcome, us: springcore::UnitSystem) -> TorFati
             let (sut_val, sut_lbl) = display_stress(r.ultimate_tensile, us);
             let (sa_val, sa_lbl) = display_stress(r.strength_amplitude, us);
             TorFatigueView::Computed(vec![
-                ResultRow::new("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
-                ResultRow::new("Mean stress", format!("{mean_val:.2}"), mean_lbl),
-                ResultRow::new("Endurance (Se)", format!("{se_val:.2}"), se_lbl),
-                ResultRow::new("Ultimate tensile (Sut)", format!("{sut_val:.2}"), sut_lbl),
-                ResultRow::new("Strength amplitude (Sa)", format!("{sa_val:.2}"), sa_lbl),
+                ResultRow::new("Alternating stress", fmt_row_value(alt_val, 2), alt_lbl),
+                ResultRow::new("Mean stress", fmt_row_value(mean_val, 2), mean_lbl),
+                ResultRow::new("Endurance (Se)", fmt_row_value(se_val, 2), se_lbl),
+                ResultRow::new("Ultimate tensile (Sut)", fmt_row_value(sut_val, 2), sut_lbl),
+                ResultRow::new("Strength amplitude (Sa)", fmt_row_value(sa_val, 2), sa_lbl),
                 ResultRow::new(
                     "Gerber FOS",
-                    format!("{:.3}", r.gerber_factor_of_safety),
+                    fmt_row_value(r.gerber_factor_of_safety, 3),
                     "",
                 ),
             ])
@@ -106,20 +106,20 @@ fn tor_load_table(d: &TorsionDesign, us: springcore::UnitSystem) -> TorLoadTable
             TorLoadRow {
                 point: format!("{}", i + 1),
                 moment: format!(
-                    "{:.3} {}",
-                    display_moment(lp.moment, us),
+                    "{} {}",
+                    fmt_row_value(display_moment(lp.moment, us), 3),
                     unit_moment_label(us)
                 ),
                 deflection: format!(
-                    "{:.2}° ({:.4} rev)",
-                    display_angle_degrees(lp.deflection),
-                    display_angle_turns(lp.deflection)
+                    "{}° ({} rev)",
+                    fmt_row_value(display_angle_degrees(lp.deflection), 2),
+                    fmt_row_value(display_angle_turns(lp.deflection), 4)
                 ),
-                stress: format!("{stress_val:.3}"),
-                pct_allow: format!("{:.1}%", lp.pct_bending_allow * 100.0),
+                stress: fmt_row_value(stress_val, 3),
+                pct_allow: format!("{}%", fmt_row_value(lp.pct_bending_allow * 100.0, 1)),
                 wound_inner: format!(
-                    "{:.4} {}",
-                    display_len(lp.wound_inner_dia, us),
+                    "{} {}",
+                    fmt_row_value(display_len(lp.wound_inner_dia, us), 4),
                     unit_length_label(us)
                 ),
                 stress_emphasis,
@@ -165,8 +165,8 @@ pub struct TorPopulatedResults {
 /// Geometry summary rows: spring index and effective active coils.
 fn geometry_rows(d: &TorsionDesign) -> Vec<ResultRow> {
     vec![
-        ResultRow::new("Spring index", format!("{:.3}", d.index), ""),
-        ResultRow::new("Active coils", format!("{:.3}", d.active_coils), ""),
+        ResultRow::new("Spring index", fmt_row_value(d.index, 3), ""),
+        ResultRow::new("Active coils", fmt_row_value(d.active_coils, 3), ""),
     ]
 }
 
@@ -174,7 +174,7 @@ fn geometry_rows(d: &TorsionDesign) -> Vec<ResultRow> {
 fn rate_per_deg_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow {
     ResultRow::new(
         "Angular rate",
-        format!("{:.4}", display_ang_rate_per_deg(d.rate, us)),
+        fmt_row_value(display_ang_rate_per_deg(d.rate, us), 4),
         format!("{}/°", unit_moment_label(us)),
     )
 }
@@ -183,7 +183,7 @@ fn rate_per_deg_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow 
 fn rate_per_turn_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow {
     ResultRow::new(
         "Angular rate",
-        format!("{:.4}", display_ang_rate_per_turn(d.rate, us)),
+        fmt_row_value(display_ang_rate_per_turn(d.rate, us), 4),
         format!("{}/rev", unit_moment_label(us)),
     )
 }
@@ -221,11 +221,9 @@ fn tor_min_weight_rows(out: &TorFormOutcome) -> Option<Vec<ResultRow>> {
         TorBindingConstraint::BendingStress => "bending stress",
         TorBindingConstraint::Index => "index",
         TorBindingConstraint::OuterDiameter => "outer diameter",
-        // `TorBindingConstraint` is `#[non_exhaustive]`; a future variant falls here.
-        _ => "other",
     };
     Some(vec![
-        ResultRow::new("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
+        ResultRow::new("Wire mass", fmt_row_value(mw.mass_kg, 4), "kg"),
         ResultRow::new("Binding constraint", binding, ""),
     ])
 }
@@ -1065,5 +1063,74 @@ mod tests {
         // MinWeight solves suppress the fatigue section entirely.
         let p = tor_populated(&app_with_tor(min_weight_form_fixture()));
         assert_eq!(p.fatigue, TorFatigueView::Hidden);
+    }
+
+    #[test]
+    fn huge_finite_stress_renders_scientific_not_digit_wall() {
+        // Mirror the metric_form fixture but set moments = "1e9" N·mm.
+        // The torsion bending-stress formula for d=2mm, C=10, M=1e9 N·mm yields
+        // σᵢ far above SCI_THRESHOLD (1e6 MPa), so fmt_row_value must switch to
+        // scientific notation in the load-table stress cell.
+        let form = TorFormState {
+            moments: "1e9".into(),
+            ..metric_form()
+        };
+        let app = app_with_tor(form);
+        let p = tor_populated(&app);
+        let row = &p.load_table.rows[0];
+        let cell = &row.stress;
+        assert!(
+            cell.contains('e') && cell.len() < 12,
+            "expected scientific notation, got '{cell}'"
+        );
+        // Sweep coverage: moment cell must also render scientific for a huge moment.
+        let moment = &row.moment;
+        assert!(
+            moment.split(' ').next().unwrap().contains('e'),
+            "moment cell must render scientific mantissa for huge moment, got '{moment}'"
+        );
+        // wound_inner is asymptotically bounded near (-d, D-d] regardless of moment
+        // (Eq. 10-49 saturation: the coil winds tighter but the formula saturates);
+        // it never reaches SCI_THRESHOLD and asserting scientific there would always fail.
+        // Sweep coverage: deflection degrees sub-field must render scientific for a huge moment.
+        // Format is "{}° ({} rev)" — split on '°' to isolate the degrees numeric part.
+        // The rev sub-field is below SCI_THRESHOLD at this fixture's 1e9 N·mm input by design
+        // (empirical: ≈331858 rev, well under 1e6) and renders fixed-point; only the degrees
+        // portion needs pinning here.
+        let deflection = &row.deflection;
+        assert!(
+            deflection.split('°').next().unwrap().contains('e'),
+            "deflection degrees sub-field must render scientific mantissa for huge moment, got '{deflection}'"
+        );
+        // Sweep coverage: pct_allow is formatted as "{fmt_row_value(…)}%"; at the 1e9 N·mm
+        // fixture pct_allow ≈ 9.174e7% — strip the trailing '%' and assert scientific.
+        // Probe (empirical): "9.174e7%"
+        let pct_allow = &row.pct_allow;
+        assert!(
+            pct_allow.trim_end_matches('%').contains('e'),
+            "pct_allow must render scientific for huge moment, got '{pct_allow}'"
+        );
+
+        // ── rev sub-field at 1e12 N·mm ─────────────────────────────────────────
+        // At 1e9 N·mm the rev value is ≈331858 (below SCI_THRESHOLD of 1e6), so
+        // rev renders fixed-point there. Use 1e12 N·mm where rev ≈ 3.319e8 (above
+        // threshold) to pin that fmt_row_value also guards the rev sub-field.
+        // Format is "{}° ({} rev)": the part between '(' and " rev" is the rev value.
+        let form12 = TorFormState {
+            moments: "1e12".into(),
+            ..metric_form()
+        };
+        let app12 = app_with_tor(form12);
+        let p12 = tor_populated(&app12);
+        let deflection12 = &p12.load_table.rows[0].deflection;
+        let rev_part = deflection12
+            .split('(')
+            .nth(1)
+            .and_then(|s| s.split(" rev").next())
+            .unwrap_or("");
+        assert!(
+            rev_part.contains('e'),
+            "rev sub-field must render scientific at 1e12 N·mm fixture (probe ≈ 3.319e8), got '{deflection12}'"
+        );
     }
 }

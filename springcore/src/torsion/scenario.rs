@@ -1,10 +1,9 @@
 //! Determined solve scenarios for torsion springs. Each scenario is a fixed assignment
 //! of which quantities are inputs; it delegates to `design::solve_forward`.
 
+use crate::design::validate_wire_mean_geometry;
 use crate::material::Material;
-use crate::torsion::design::{
-    solve_forward, validate_wire_mean_geometry, TorsionDesign, TorsionInputs,
-};
+use crate::torsion::design::{solve_forward, TorsionDesign, TorsionInputs};
 use crate::torsion::mechanics::{active_coils_for_rate, active_coils_with_legs, FrictionModel};
 use crate::units::{Angle, AngularRate, Length, Moment};
 use crate::{Result, SpringError};

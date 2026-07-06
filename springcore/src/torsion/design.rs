@@ -2,7 +2,7 @@
 //! angular rate, per-moment load points (deflection, bending stress, wound geometry),
 //! and an engineering status. Formulas cited via `super::mechanics`.
 
-use crate::design::{DesignStatus, Severity, StatusMessage};
+use crate::design::{validate_wire_mean_geometry, DesignStatus, Severity, StatusMessage};
 use crate::material::Material;
 use crate::torsion::mechanics::{
     active_coils_with_legs, angular_rate, bending_stress_inner, bending_stress_nominal,
@@ -62,33 +62,6 @@ pub struct TorsionDesign {
     pub load_points: Vec<TorsionLoadPoint>,
     /// Engineering advisories (overstress, arbor binding, index range).
     pub status: DesignStatus,
-}
-
-/// Validate the wire/mean geometry every torsion solve depends on: positive finite
-/// wire and mean diameters, and `mean > wire` (spring index > 1). Single source of
-/// these guards and their messages — called first by [`solve_forward`] and by the
-/// scenario derivations that consume the geometry before delegating (error
-/// precedence: a degenerate wire/mean surfaces the geometry error, not a misleading
-/// derived-quantity error).
-pub(crate) fn validate_wire_mean_geometry(wire_dia: Length, mean_dia: Length) -> Result<()> {
-    let d = wire_dia.meters();
-    if !(d.is_finite() && d > 0.0) {
-        return Err(SpringError::InconsistentInputs(
-            "wire diameter must be a positive finite number".into(),
-        ));
-    }
-    let dm = mean_dia.meters();
-    if !(dm.is_finite() && dm > 0.0) {
-        return Err(SpringError::InconsistentInputs(
-            "mean diameter must be a positive finite number".into(),
-        ));
-    }
-    if dm <= d {
-        return Err(SpringError::InconsistentInputs(
-            "mean diameter must exceed wire diameter (spring index must exceed 1)".into(),
-        ));
-    }
-    Ok(())
 }
 
 /// Solve a torsion spring statically for one or more applied moments.
