@@ -10,9 +10,10 @@ const SHIGLEY_TURN_DENOM: f64 = 10.8;
 /// Which angular-rate model the torsion solver uses. Selectable and (in a later GUI
 /// phase) persisted, mirroring the shear-stress `CurvatureCorrection` precedent.
 ///
-/// Deliberately NOT `#[non_exhaustive]`: `springcore` is an unpublished workspace crate
-/// and the GUI will match this enum (variant → label), where a future variant should
-/// force a compile error rather than a silent fallback (per the PR #32 scope decision).
+/// Deliberately NOT `#[non_exhaustive]` (PR #32): adding a variant must force an audit
+/// of every construction and reference site — the GUI constructs and passes this enum
+/// but does not exhaustively label-match it. The compile-time backstop is springcore's
+/// own exhaustive `Display` impl below, not GUI pattern matching (ADR 0013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum FrictionModel {
     /// Shigley Eq. 10-51 with empirical inter-coil friction (10.8 per turn). Default.

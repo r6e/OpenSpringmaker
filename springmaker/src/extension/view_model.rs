@@ -681,5 +681,17 @@ mod tests {
             deflection.split(' ').next().unwrap().contains('e'),
             "deflection cell must render scientific mantissa for huge load, got '{deflection}'"
         );
+        // Sweep coverage: force cell must also render scientific for huge loads.
+        let force = &p.load_table.rows[0].force;
+        assert!(
+            force.split(' ').next().unwrap().contains('e'),
+            "force cell must render scientific mantissa for huge load, got '{force}'"
+        );
+        // Sweep coverage: length cell must also render scientific for huge loads.
+        let length = &p.load_table.rows[0].length;
+        assert!(
+            length.split(' ').next().unwrap().contains('e'),
+            "length cell must render scientific mantissa for huge load, got '{length}'"
+        );
     }
 }

@@ -1088,5 +1088,17 @@ mod tests {
             moment.split(' ').next().unwrap().contains('e'),
             "moment cell must render scientific mantissa for huge moment, got '{moment}'"
         );
+        // wound_inner is asymptotically bounded near [-d, D-2d] regardless of moment
+        // (the coil winds tighter but the formula saturates); it never reaches SCI_THRESHOLD
+        // and asserting scientific there would always fail.
+        // Sweep coverage: deflection degrees sub-field must render scientific for a huge moment.
+        // Format is "{}° ({} rev)" — split on '°' to isolate the degrees numeric part.
+        // The rev sub-field is below SCI_THRESHOLD at this fixture's 1e9 N·mm input by design
+        // and renders fixed-point; only the degrees portion needs pinning here.
+        let deflection = &p.load_table.rows[0].deflection;
+        assert!(
+            deflection.split('°').next().unwrap().contains('e'),
+            "deflection degrees sub-field must render scientific mantissa for huge moment, got '{deflection}'"
+        );
     }
 }
