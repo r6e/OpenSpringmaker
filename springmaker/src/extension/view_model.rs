@@ -670,28 +670,60 @@ mod tests {
         };
         let app = app_with_ext(form);
         let p = ext_populated(&app);
-        let cell = &p.load_table.rows[0].body_shear;
+        let row = &p.load_table.rows[0];
+        let cell = &row.body_shear;
         assert!(
             cell.contains('e') && cell.len() < 12,
             "expected scientific notation, got '{cell}'"
         );
         // Sweep coverage: deflection cell must also render scientific for huge loads.
-        let deflection = &p.load_table.rows[0].deflection;
+        let deflection = &row.deflection;
         assert!(
             deflection.split(' ').next().unwrap().contains('e'),
             "deflection cell must render scientific mantissa for huge load, got '{deflection}'"
         );
         // Sweep coverage: force cell must also render scientific for huge loads.
-        let force = &p.load_table.rows[0].force;
+        let force = &row.force;
         assert!(
             force.split(' ').next().unwrap().contains('e'),
             "force cell must render scientific mantissa for huge load, got '{force}'"
         );
         // Sweep coverage: length cell must also render scientific for huge loads.
-        let length = &p.load_table.rows[0].length;
+        let length = &row.length;
         assert!(
             length.split(' ').next().unwrap().contains('e'),
             "length cell must render scientific mantissa for huge load, got '{length}'"
+        );
+        // Sweep coverage: hook_bending and hook_torsion are plain numeric cells.
+        // At the 1e9 N fixture: hook_bending ≈ 1.408e10, hook_torsion ≈ 7.560e9.
+        let hook_bending = &row.hook_bending;
+        assert!(
+            hook_bending.contains('e'),
+            "hook_bending must render scientific for huge load, got '{hook_bending}'"
+        );
+        let hook_torsion = &row.hook_torsion;
+        assert!(
+            hook_torsion.contains('e'),
+            "hook_torsion must render scientific for huge load, got '{hook_torsion}'"
+        );
+        // Sweep coverage: pct_body, pct_bending, pct_torsion are formatted as
+        // "{fmt_row_value(…)}%" — strip the trailing '%' and assert scientific.
+        // Probes (empirical): pct_body ≈ 8.031e8%, pct_bending ≈ 9.386e8%,
+        // pct_torsion ≈ 9.452e8%.
+        let pct_body = &row.pct_body;
+        assert!(
+            pct_body.trim_end_matches('%').contains('e'),
+            "pct_body must render scientific for huge load, got '{pct_body}'"
+        );
+        let pct_bending = &row.pct_bending;
+        assert!(
+            pct_bending.trim_end_matches('%').contains('e'),
+            "pct_bending must render scientific for huge load, got '{pct_bending}'"
+        );
+        let pct_torsion = &row.pct_torsion;
+        assert!(
+            pct_torsion.trim_end_matches('%').contains('e'),
+            "pct_torsion must render scientific for huge load, got '{pct_torsion}'"
         );
     }
 }

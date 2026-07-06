@@ -673,28 +673,37 @@ mod tests {
         };
         let app = app_with(form);
         let p = populated(&app);
-        let cell = &p.load_table.rows[0].stress;
+        let row = &p.load_table.rows[0];
+        let cell = &row.stress;
         assert!(
             cell.contains('e') && cell.len() < 12,
             "expected scientific notation, got '{cell}'"
         );
         // Sweep coverage: deflection cell must also render scientific for huge loads.
-        let deflection = &p.load_table.rows[0].deflection;
+        let deflection = &row.deflection;
         assert!(
             deflection.split(' ').next().unwrap().contains('e'),
             "deflection cell must render scientific mantissa for huge load, got '{deflection}'"
         );
         // Sweep coverage: force cell must also render scientific for huge loads.
-        let force = &p.load_table.rows[0].force;
+        let force = &row.force;
         assert!(
             force.split(' ').next().unwrap().contains('e'),
             "force cell must render scientific mantissa for huge load, got '{force}'"
         );
         // Sweep coverage: length cell must also render scientific for huge loads.
-        let length = &p.load_table.rows[0].length;
+        let length = &row.length;
         assert!(
             length.split(' ').next().unwrap().contains('e'),
             "length cell must render scientific mantissa for huge load, got '{length}'"
+        );
+        // Sweep coverage: pct_mts is formatted as "{fmt_row_value(…)}%"; at the 1e9 N
+        // fixture pct_mts ≈ 3.614e8% — strip the trailing '%' and assert scientific.
+        // Probe (empirical): "3.614e8%"
+        let pct_mts = &row.pct_mts;
+        assert!(
+            pct_mts.trim_end_matches('%').contains('e'),
+            "pct_mts must render scientific for huge load, got '{pct_mts}'"
         );
     }
 }

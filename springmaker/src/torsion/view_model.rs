@@ -1077,28 +1077,60 @@ mod tests {
         };
         let app = app_with_tor(form);
         let p = tor_populated(&app);
-        let cell = &p.load_table.rows[0].stress;
+        let row = &p.load_table.rows[0];
+        let cell = &row.stress;
         assert!(
             cell.contains('e') && cell.len() < 12,
             "expected scientific notation, got '{cell}'"
         );
         // Sweep coverage: moment cell must also render scientific for a huge moment.
-        let moment = &p.load_table.rows[0].moment;
+        let moment = &row.moment;
         assert!(
             moment.split(' ').next().unwrap().contains('e'),
             "moment cell must render scientific mantissa for huge moment, got '{moment}'"
         );
-        // wound_inner is asymptotically bounded near [-d, D-2d] regardless of moment
-        // (the coil winds tighter but the formula saturates); it never reaches SCI_THRESHOLD
-        // and asserting scientific there would always fail.
+        // wound_inner is asymptotically bounded near (-d, D-d] regardless of moment
+        // (Eq. 10-49 saturation: the coil winds tighter but the formula saturates);
+        // it never reaches SCI_THRESHOLD and asserting scientific there would always fail.
         // Sweep coverage: deflection degrees sub-field must render scientific for a huge moment.
         // Format is "{}° ({} rev)" — split on '°' to isolate the degrees numeric part.
         // The rev sub-field is below SCI_THRESHOLD at this fixture's 1e9 N·mm input by design
-        // and renders fixed-point; only the degrees portion needs pinning here.
-        let deflection = &p.load_table.rows[0].deflection;
+        // (empirical: ≈331858 rev, well under 1e6) and renders fixed-point; only the degrees
+        // portion needs pinning here.
+        let deflection = &row.deflection;
         assert!(
             deflection.split('°').next().unwrap().contains('e'),
             "deflection degrees sub-field must render scientific mantissa for huge moment, got '{deflection}'"
+        );
+        // Sweep coverage: pct_allow is formatted as "{fmt_row_value(…)}%"; at the 1e9 N·mm
+        // fixture pct_allow ≈ 9.174e7% — strip the trailing '%' and assert scientific.
+        // Probe (empirical): "9.174e7%"
+        let pct_allow = &row.pct_allow;
+        assert!(
+            pct_allow.trim_end_matches('%').contains('e'),
+            "pct_allow must render scientific for huge moment, got '{pct_allow}'"
+        );
+
+        // ── rev sub-field at 1e12 N·mm ─────────────────────────────────────────
+        // At 1e9 N·mm the rev value is ≈331858 (below SCI_THRESHOLD of 1e6), so
+        // rev renders fixed-point there. Use 1e12 N·mm where rev ≈ 3.319e8 (above
+        // threshold) to pin that fmt_row_value also guards the rev sub-field.
+        // Format is "{}° ({} rev)": the part between '(' and " rev" is the rev value.
+        let form12 = TorFormState {
+            moments: "1e12".into(),
+            ..metric_form()
+        };
+        let app12 = app_with_tor(form12);
+        let p12 = tor_populated(&app12);
+        let deflection12 = &p12.load_table.rows[0].deflection;
+        let rev_part = deflection12
+            .split('(')
+            .nth(1)
+            .and_then(|s| s.split(" rev").next())
+            .unwrap_or("");
+        assert!(
+            rev_part.contains('e'),
+            "rev sub-field must render scientific at 1e12 N·mm fixture (probe ≈ 3.319e8), got '{deflection12}'"
         );
     }
 }
