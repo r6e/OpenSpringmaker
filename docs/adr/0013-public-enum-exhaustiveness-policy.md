@@ -1,0 +1,43 @@
+# 13. Public-enum exhaustiveness policy
+
+Date: 2026-07-06
+
+## Status
+
+Accepted
+
+## Context
+
+springcore's public enums were inconsistent: compression's
+`BindingConstraint` and torsion's `FrictionModel` deliberately omit
+`#[non_exhaustive]` (a PR #32 scope decision) so that adding a variant is a
+compile error at every downstream `match`, while extension's
+`ExtBindingConstraint` carried the attribute — forcing the GUI to hold a
+silent `_ => "other"` wildcard arm that would hide any future binding limit
+at runtime instead of surfacing it at compile time.
+
+## Decision
+
+Enums that a downstream layer must exhaustively `match` on (binding
+constraints, friction models) carry NO `#[non_exhaustive]`: a new variant is
+a deliberate, loud compile-time break at every match site, and the wildcard
+arm is forbidden.
+
+Enums that downstream code only displays or iterates (e.g. `CycleLife`,
+`DiaPolicy`, `HookSpec` — constructed or shown via `Display` + an `ALL_*`
+const, never matched in the GUI) keep `#[non_exhaustive]`; extending them is
+additive and silent by design.
+
+`ExtBindingConstraint` loses the attribute and the GUI wildcard arm dies.
+
+## Consequences
+
+- Adding a binding-constraint variant now fails the workspace build until
+  every match site handles it — the failure mode we want.
+- Removing `#[non_exhaustive]` is technically a semver-major change;
+  springcore is workspace-internal and unpublished, so this is free today.
+  If springcore is ever published, match-surface enums are a deliberate
+  major-version commitment.
+- Alternative considered: keep the attribute and render a visible
+  "unknown constraint" label from the wildcard. Rejected — it converts a
+  compile-time signal into a runtime discovery.

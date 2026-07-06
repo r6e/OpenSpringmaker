@@ -57,9 +57,10 @@ impl HookSpec {
 
 /// Which limit determines the chosen extension design.
 ///
-/// Non-exhaustive: future binding limits (e.g. fatigue) may be added.
+/// Deliberately NOT `#[non_exhaustive]`: the GUI matches this exhaustively,
+/// so adding a binding limit is a loud compile-time break at every match
+/// site (ADR 0013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum ExtBindingConstraint {
     /// Body coil shear stress τ reached its allowable (the largest D where the body
     /// shear is within `allowable_pct_torsion · MTS`).

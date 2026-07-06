@@ -118,8 +118,6 @@ fn ext_min_weight_rows(out: &crate::extension::form::ExtFormOutcome) -> Option<V
         ExtBindingConstraint::HookTorsion => "hook torsion",
         ExtBindingConstraint::Index => "index",
         ExtBindingConstraint::OuterDiameter => "outer diameter",
-        // `ExtBindingConstraint` is `#[non_exhaustive]`; a future variant falls here.
-        _ => "other",
     };
     Some(vec![
         ResultRow::new("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
