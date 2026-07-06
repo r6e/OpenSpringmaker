@@ -1,5 +1,5 @@
 //! Fatigue analysis for helical torsion springs (Shigley §10-12): the wire cycles
-//! in BENDING, so the compression module's Sines/Zimmerli shear data does not
+//! in BENDING, so the compression module's Zimmerli/Goodman shear data does not
 //! apply. Uses the Associated Spring R = 0 repeated-bending strengths (Table
 //! 10-10, stored per material as fractions of Sut) with the GERBER criterion the
 //! source prescribes: Se from Eq. 10-58, strength amplitude Sa from Eq. 10-59
@@ -92,13 +92,18 @@ pub fn analyze_torsion_fatigue(
         CycleLife::Million => bf.sr_pct_1e6,
     };
     let sr = pct * sut_pa;
-    // 6. Eq. 10-58's denominator 1 − (Sr/2/Sut)² is ≤ 0 iff Sr ≥ 2·Sut — impossible
-    // for Table 10-10 fractions (≤ 0.64) but REACHABLE through user-overlay
-    // materials with absurd fractions; a silent negative/∞ Se would poison nf.
-    if sr / 2.0 >= sut_pa {
+    // 6. Eq. 10-58 needs 0 < Sr < 2·Sut: the denominator 1 − (Sr/2/Sut)² is ≤ 0
+    // iff Sr ≥ 2·Sut, and a non-positive Sr flips or zeroes Se. Both sides are
+    // unreachable through BUILT materials — MaterialDraft::build gates the
+    // fractions to (0, 1] — but Material's fields are pub, so direct literal
+    // construction can still reach this; the trap stays as the in-crate backstop
+    // (the codebase's direct-boundary-testing pattern). `!(sr > 0.0)` rather
+    // than `sr <= 0.0` so a NaN fraction also trips the trap.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(sr > 0.0) || sr / 2.0 >= sut_pa {
         return Err(SpringError::InconsistentInputs(
-            "bending-fatigue strength must lie below twice the tensile strength \
-             (Eq. 10-58's denominator would be non-positive)"
+            "bending-fatigue strength must be positive and below twice the tensile \
+             strength (Eq. 10-58's denominator would be non-positive)"
                 .into(),
         ));
     }
@@ -109,6 +114,18 @@ pub fn analyze_torsion_fatigue(
     let sa = (r * r * sut_pa * sut_pa) / (2.0 * se)
         * (-1.0 + (1.0 + (2.0 * se / (r * sut_pa)).powi(2)).sqrt());
     let nf = sa / sigma_a.pascals();
+
+    // Inputs at the extremes of f64 can overflow the derived chain (e.g. two
+    // finite moments near f64::MAX overflow their midpoint) even though every
+    // input guard passed; a non-finite result must be a named error, never Ok
+    // (the MtsEquation non-finite-result precedent).
+    if !nf.is_finite() {
+        return Err(SpringError::InconsistentInputs(
+            "fatigue analysis produced a non-finite result (inputs exceed the \
+             representable range)"
+                .into(),
+        ));
+    }
 
     Ok(TorFatigueResult {
         alternating_stress: sigma_a,
@@ -129,10 +146,6 @@ mod tests {
 
     /// Pa per psi (exact: 4.4482216152605 N/lbf ÷ 0.00064516 m²/in²).
     const PSI: f64 = 6894.757293168361;
-
-    fn draft_from_material(m: &crate::material::Material) -> crate::material::MaterialDraft {
-        m.to_draft()
-    }
 
     fn golden(life: CycleLife) -> TorFatigueResult {
         // Shigley Example 10-8(c): music wire, d = 0.072 in, D = 0.5218 in,
@@ -158,6 +171,11 @@ mod tests {
             max_relative = 5e-3
         );
         assert_relative_eq!(r.mean_stress.pascals() / PSI, 91_286.0, max_relative = 5e-3);
+        assert_relative_eq!(
+            r.ultimate_tensile.pascals() / PSI,
+            294_400.0,
+            max_relative = 5e-3
+        );
         assert_relative_eq!(
             r.fully_reversed_endurance.pascals() / PSI,
             78_510.0,
@@ -298,33 +316,72 @@ mod tests {
         }
     }
 
-    #[test]
-    fn absurd_user_material_fraction_trips_the_eq_10_58_trap() {
-        // REACHABLE via user-overlay materials: an Sr fraction ≥ 2 makes Eq. 10-58's
-        // denominator ≤ 0. Build such a material through the draft path and assert
-        // the named trap instead of a silent negative/∞ Se.
-        let set = crate::MaterialSet::load_default();
-        let mut d = draft_from_material(set.get("Music Wire").unwrap());
-        d.name = "Absurd".into();
-        d.bending_fatigue = Some(crate::BendingFatigueDraft {
-            sr_pct_1e5: 2.5,
-            sr_pct_1e6: 2.5,
+    /// Music Wire with its bending-fatigue columns overwritten to `pct` by
+    /// direct field assignment (fields are pub) — the in-crate construction
+    /// path the Eq. 10-58 trap backstops, since `MaterialDraft::build` now
+    /// rejects fractions outside (0, 1].
+    fn music_wire_with_fatigue_pct(pct: f64) -> crate::material::Material {
+        let mut m = music_wire();
+        m.bending_fatigue = Some(crate::material::BendingFatigue {
+            sr_pct_1e5: pct,
+            sr_pct_1e6: pct,
             peened: false,
         });
-        let absurd = d.build().unwrap();
-        let err = analyze_torsion_fatigue(
-            &absurd,
+        m
+    }
+
+    fn analyze_with_fatigue_pct(pct: f64) -> Result<TorFatigueResult> {
+        analyze_torsion_fatigue(
+            &music_wire_with_fatigue_pct(pct),
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             Moment::from_newton_millimeters(100.0),
             Moment::from_newton_millimeters(500.0),
             CycleLife::Million,
         )
+    }
+
+    #[test]
+    fn eq_10_58_trap_rejects_both_sides_via_direct_construction() {
+        // The build gate makes both sides unreachable through BUILT materials,
+        // so construct the material literally. High side: Sr ≥ 2·Sut zeroes or
+        // flips Eq. 10-58's denominator (2.0 pins the exact `>=` boundary).
+        // Low side: a non-positive (or NaN) Sr must trip the same trap.
+        for bad in [2.5, 2.0, 0.0, f64::NAN] {
+            let err = analyze_with_fatigue_pct(bad).unwrap_err();
+            assert!(
+                err.to_string().contains(
+                    "bending-fatigue strength must be positive and below twice the tensile \
+                     strength"
+                ),
+                "{bad}: {err}"
+            );
+        }
+        // Just inside the Eq. 10-58 domain (0 < Sr < 2·Sut) the trap must NOT
+        // fire — physicality (Sr ≤ Sut) is the build gate's job, not this
+        // domain guard's. Pins the trap boundaries from the accepting side.
+        for ok in [1.0, 1.5] {
+            assert!(
+                analyze_with_fatigue_pct(ok).is_ok(),
+                "fraction {ok} lies inside the Eq. 10-58 domain"
+            );
+        }
+    }
+
+    #[test]
+    fn extreme_moments_yield_named_non_finite_error_not_ok_nan() {
+        // Two finite moments near f64::MAX overflow their midpoint (hi + lo → ∞),
+        // driving the derived chain to NaN even though every input guard passes.
+        // The result must be the named non-finite error, never Ok(NaN).
+        let err = analyze_torsion_fatigue(
+            &music_wire(),
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Moment::from_newton_meters(1.0e308),
+            Moment::from_newton_meters(1.5e308),
+            CycleLife::Million,
+        )
         .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("bending-fatigue strength must lie below twice the tensile strength"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("non-finite result"), "{err}");
     }
 }

@@ -345,6 +345,35 @@ mod tests {
     }
 
     #[test]
+    fn roundtrip_preserves_cr_v_service_temp_and_bending_fatigue() {
+        // Chrome-Vanadium carries BOTH a scalar optional (max_service_temp_c)
+        // AND a sub-table (bending_fatigue). TOML requires scalars before
+        // tables within an entry; this locks the serializer's field ordering
+        // (scalar-after-subtable) against future toml-crate changes — both
+        // fields must survive a serialize → reparse round-trip.
+        let orig = MaterialSet::load_default()
+            .get("Chrome-Vanadium")
+            .unwrap()
+            .clone();
+        let toml = serialize_user_materials(std::slice::from_ref(&orig)).unwrap();
+        let (mats, warns) = parse_user_overlay(&toml);
+        assert!(warns.is_empty(), "{warns:?}");
+        assert_eq!(mats.len(), 1);
+        let temp = mats[0]
+            .max_service_temperature
+            .expect("max_service_temp_c survives the round-trip");
+        assert_relative_eq!(
+            temp.celsius(),
+            orig.max_service_temperature.unwrap().celsius(),
+            max_relative = 1e-12
+        );
+        let bf = mats[0]
+            .bending_fatigue
+            .expect("bending_fatigue survives the round-trip");
+        assert_eq!(bf, orig.bending_fatigue.unwrap());
+    }
+
+    #[test]
     fn future_schema_version_yields_warning() {
         let (_, warns) = parse_user_overlay("schema_version = 999\n");
         assert!(!warns.is_empty());

@@ -571,14 +571,26 @@ impl Material {
         // design.rs warns when operating stress exceeds them, and optimize.rs caps
         // feasible stress at allowable_pct_torsion * MTS. An untrusted overlay value
         // outside (0, 1] would silently suppress overstress warnings or let the
-        // optimizer accept designs stressed beyond ultimate, so reject it. (Finiteness
-        // is already established above, so these comparisons cannot see NaN.)
+        // optimizer accept designs stressed beyond ultimate, so reject it. The
+        // bending-fatigue fractions (Sr/Sut, Shigley Table 10-10) share the gate:
+        // Sr > Sut is unphysical (fatigue strength exceeding ultimate) and would
+        // poison Eq. 10-58's denominator downstream. (Finiteness is already
+        // established above, so these comparisons cannot see NaN.)
+        let bending_fatigue_pcts = r.bending_fatigue.iter().flat_map(|b| {
+            [
+                ("bending_fatigue.sr_pct_1e5", b.sr_pct_1e5),
+                ("bending_fatigue.sr_pct_1e6", b.sr_pct_1e6),
+            ]
+        });
         for (label, pct) in [
             ("allowable_pct_torsion", r.allowable_pct_torsion),
             ("allowable_pct_end_torsion", r.allowable_pct_end_torsion),
             ("allowable_pct_bending", r.allowable_pct_bending),
             ("allowable_pct_set", r.allowable_pct_set),
-        ] {
+        ]
+        .into_iter()
+        .chain(bending_fatigue_pcts)
+        {
             if pct <= 0.0 || pct > 1.0 {
                 return Err(SpringError::DataFile(format!(
                     "material '{}': {label} must be in (0, 1]",
@@ -1564,6 +1576,39 @@ allowable_pct_set = 0.60
             peened: false,
         });
         assert!(d.build().is_err(), "NaN fraction must fail the build");
+    }
+
+    #[test]
+    fn non_finite_bending_fatigue_1e6_fraction_rejected() {
+        // Twin of the sr_pct_1e5 case above: the finiteness chain must cover
+        // BOTH Table 10-10 columns, not just the first.
+        let set = MaterialSet::load_default();
+        let mut d = set.get("Music Wire").unwrap().to_draft();
+        d.bending_fatigue = Some(BendingFatigueDraft {
+            sr_pct_1e5: 0.53,
+            sr_pct_1e6: f64::NAN,
+            peened: false,
+        });
+        assert!(d.build().is_err(), "NaN fraction must fail the build");
+    }
+
+    #[test]
+    fn out_of_range_bending_fatigue_fraction_rejected_at_build() {
+        // Sr is a fraction of Sut: Sr > Sut is unphysical (fatigue strength
+        // exceeding ultimate) and a non-positive fraction is nonsensical, so the
+        // (0, 1] gate covers the bending-fatigue columns like every other
+        // stress fraction — rejected at build, before any analysis can run.
+        let set = MaterialSet::load_default();
+        for bad in [0.0, -0.5, 1.5] {
+            let mut d = set.get("Music Wire").unwrap().to_draft();
+            let bf = d.bending_fatigue.as_mut().expect("bundled data present");
+            bf.sr_pct_1e6 = bad;
+            let err = d.build().unwrap_err();
+            assert!(
+                err.to_string().contains("sr_pct_1e6 must be in (0, 1]"),
+                "{bad}: {err}"
+            );
+        }
     }
 
     #[test]
