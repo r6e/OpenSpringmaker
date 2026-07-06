@@ -1609,6 +1609,17 @@ allowable_pct_set = 0.60
                 "{bad}: {err}"
             );
         }
+        // Symmetry: the same gate applies to the sr_pct_1e5 column.
+        {
+            let mut d = set.get("Music Wire").unwrap().to_draft();
+            let bf = d.bending_fatigue.as_mut().expect("bundled data present");
+            bf.sr_pct_1e5 = 1.5;
+            let err = d.build().unwrap_err();
+            assert!(
+                err.to_string().contains("sr_pct_1e5 must be in (0, 1]"),
+                "sr_pct_1e5=1.5: {err}"
+            );
+        }
     }
 
     #[test]

@@ -115,11 +115,15 @@ pub fn analyze_torsion_fatigue(
         * (-1.0 + (1.0 + (2.0 * se / (r * sut_pa)).powi(2)).sqrt());
     let nf = sa / sigma_a.pascals();
 
-    // Inputs at the extremes of f64 can overflow the derived chain (e.g. two
-    // finite moments near f64::MAX overflow their midpoint) even though every
-    // input guard passed; a non-finite result must be a named error, never Ok
-    // (the MtsEquation non-finite-result precedent).
-    if !nf.is_finite() {
+    // Inputs at the extremes of f64 can overflow the derived chain (midpoints,
+    // or the ×32 inside the stress helper) even though every input guard passed;
+    // ANY non-finite returned value must be a named error, never Ok — a finite
+    // nf can coexist with infinite stress fields (σ-overflow drives nf toward
+    // zero, masquerading as a legitimate low factor of safety).
+    if [sigma_a.pascals(), sigma_m.pascals(), se, sa, nf]
+        .into_iter()
+        .any(|v| !v.is_finite())
+    {
         return Err(SpringError::InconsistentInputs(
             "fatigue analysis produced a non-finite result (inputs exceed the \
              representable range)"
@@ -370,18 +374,32 @@ mod tests {
 
     #[test]
     fn extreme_moments_yield_named_non_finite_error_not_ok_nan() {
-        // Two finite moments near f64::MAX overflow their midpoint (hi + lo → ∞),
-        // driving the derived chain to NaN even though every input guard passes.
-        // The result must be the named non-finite error, never Ok(NaN).
-        let err = analyze_torsion_fatigue(
-            &music_wire(),
-            Length::from_millimeters(2.0),
-            Length::from_millimeters(20.0),
-            Moment::from_newton_meters(1.0e308),
-            Moment::from_newton_meters(1.5e308),
-            CycleLife::Million,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("non-finite result"), "{err}");
+        // All three cases must return the named non-finite error, never Ok.
+        //
+        // Case 1: two finite moments near f64::MAX overflow their midpoint
+        // (hi + lo → ∞), driving the derived chain to NaN even though every
+        // input guard passes.
+        //
+        // Case 2: (1e300, 5e300) — σ-overflow drives nf toward zero, producing
+        // Ok { sigma_a: Inf, sigma_m: Inf, nf: 0.0 } if the guard checks only nf.
+        //
+        // Case 3: (1.4e299, 1.5e299) — σm alone overflows to Inf while σa and nf
+        // look plausible; the widened guard must catch σm.
+        let cases = [(1.0e308, 1.5e308), (1.0e300, 5.0e300), (1.4e299, 1.5e299)];
+        for (lo, hi) in cases {
+            let err = analyze_torsion_fatigue(
+                &music_wire(),
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                Moment::from_newton_meters(lo),
+                Moment::from_newton_meters(hi),
+                CycleLife::Million,
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("non-finite result"),
+                "({lo}, {hi}): {err}"
+            );
+        }
     }
 }
