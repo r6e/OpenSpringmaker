@@ -266,9 +266,24 @@ impl GoverningRate {
     /// Build from a `SpringRate`, formatting to 4 decimal places in the active unit system.
     pub(crate) fn from_rate(rate: SpringRate, us: UnitSystem) -> Self {
         Self {
-            value: format!("{:.4}", display_rate(rate, us)),
+            value: fmt_row_value(display_rate(rate, us), 4),
             unit: unit_rate_label(us).to_string(),
         }
+    }
+}
+
+/// Result-row values at/above this magnitude (in display units) render in
+/// scientific notation; fixed-point below. Guards row layout against
+/// huge-but-finite inputs that survive all engine finiteness checks.
+pub(crate) const SCI_THRESHOLD: f64 = 1e6;
+
+/// Format a numeric result-row value: fixed-point with `decimals` places
+/// below [`SCI_THRESHOLD`], scientific (`{:.3e}`) at or above it.
+pub(crate) fn fmt_row_value(v: f64, decimals: usize) -> String {
+    if v.abs() >= SCI_THRESHOLD {
+        format!("{v:.3e}")
+    } else {
+        format!("{v:.decimals$}")
     }
 }
 
@@ -408,5 +423,20 @@ mod tests {
         let (v_us, l_us) = display_stress(Stress::from_psi(2000.0), UnitSystem::Us);
         assert_relative_eq!(v_us, 2.0, epsilon = 1e-9);
         assert_eq!(l_us, "ksi");
+    }
+
+    #[test]
+    fn fmt_row_value_fixed_point_below_threshold() {
+        assert_eq!(fmt_row_value(0.0, 2), "0.00");
+        assert_eq!(fmt_row_value(1234.5678, 2), "1234.57");
+        assert_eq!(fmt_row_value(999_999.99, 2), "999999.99");
+        assert_eq!(fmt_row_value(-4.2, 3), "-4.200");
+    }
+
+    #[test]
+    fn fmt_row_value_scientific_at_and_above_threshold() {
+        assert_eq!(fmt_row_value(1e6, 2), "1.000e6");
+        assert_eq!(fmt_row_value(1e300, 2), "1.000e300");
+        assert_eq!(fmt_row_value(-2.5e9, 2), "-2.500e9");
     }
 }

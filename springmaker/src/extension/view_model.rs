@@ -6,8 +6,8 @@ use crate::app::App;
 use crate::extension::form::{ExtScenarioKind, Field};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
-    unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor,
-    GoverningRate, ResultRow, StatusLine,
+    fmt_row_value, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
+    FieldDescriptor, GoverningRate, ResultRow, StatusLine,
 };
 use springcore::extension::{ExtBindingConstraint, ExtensionDesign};
 
@@ -68,12 +68,12 @@ fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTab
                     display_len(lp.length, us),
                     unit_length_label(us)
                 ),
-                body_shear: format!("{body_val:.3}"),
-                hook_bending: format!("{bending_val:.3}"),
-                hook_torsion: format!("{torsion_val:.3}"),
-                pct_body: format!("{:.1}%", lp.pct_body_allow * 100.0),
-                pct_bending: format!("{:.1}%", lp.pct_hook_bending_allow * 100.0),
-                pct_torsion: format!("{:.1}%", lp.pct_hook_torsion_allow * 100.0),
+                body_shear: fmt_row_value(body_val, 3),
+                hook_bending: fmt_row_value(bending_val, 3),
+                hook_torsion: fmt_row_value(torsion_val, 3),
+                pct_body: format!("{}%", fmt_row_value(lp.pct_body_allow * 100.0, 1)),
+                pct_bending: format!("{}%", fmt_row_value(lp.pct_hook_bending_allow * 100.0, 1)),
+                pct_torsion: format!("{}%", fmt_row_value(lp.pct_hook_torsion_allow * 100.0, 1)),
             }
         })
         .collect();
@@ -120,7 +120,7 @@ fn ext_min_weight_rows(out: &crate::extension::form::ExtFormOutcome) -> Option<V
         ExtBindingConstraint::OuterDiameter => "outer diameter",
     };
     Some(vec![
-        ResultRow::new("Wire mass", format!("{:.4}", mw.mass_kg), "kg"),
+        ResultRow::new("Wire mass", fmt_row_value(mw.mass_kg, 4), "kg"),
         ResultRow::new("Binding constraint", binding, ""),
     ])
 }
@@ -154,27 +154,27 @@ pub(crate) fn geometry_rows(d: &ExtensionDesign, us: springcore::UnitSystem) -> 
     let force = unit_force_label(us);
     let rate = unit_rate_label(us);
     vec![
-        ResultRow::new("Spring index", format!("{:.3}", d.index), ""),
-        ResultRow::new("Active coils", format!("{:.3}", d.active_coils), ""),
-        ResultRow::new("Rate", format!("{:.4}", display_rate(d.rate, us)), rate),
+        ResultRow::new("Spring index", fmt_row_value(d.index, 3), ""),
+        ResultRow::new("Active coils", fmt_row_value(d.active_coils, 3), ""),
+        ResultRow::new("Rate", fmt_row_value(display_rate(d.rate, us), 4), rate),
         ResultRow::new(
             "Free length",
-            format!("{:.4}", display_len(d.free_length, us)),
+            fmt_row_value(display_len(d.free_length, us), 4),
             len,
         ),
         ResultRow::new(
             "Outer diameter",
-            format!("{:.4}", display_len(d.outer_dia, us)),
+            fmt_row_value(display_len(d.outer_dia, us), 4),
             len,
         ),
         ResultRow::new(
             "Inner diameter",
-            format!("{:.4}", display_len(d.inner_dia, us)),
+            fmt_row_value(display_len(d.inner_dia, us), 4),
             len,
         ),
         ResultRow::new(
             "Initial tension",
-            format!("{:.4}", display_force(d.initial_tension, us)),
+            fmt_row_value(display_force(d.initial_tension, us), 4),
             force,
         ),
     ]
@@ -655,6 +655,30 @@ mod tests {
         assert!(
             app.outcome.is_none(),
             "compression outcome must be None after switching to Extension"
+        );
+    }
+
+    #[test]
+    fn huge_finite_stress_renders_scientific_not_digit_wall() {
+        // Mirror the power_user_metric fixture but set loads = "1e9" N.
+        // The Wahl formula for d=2mm, C=10, F=1e9 N yields body shear stress
+        // far above SCI_THRESHOLD (1e6 MPa), so fmt_row_value must switch to
+        // scientific notation.
+        let form = ExtFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            active: "10".to_string(),
+            free_length: "100".to_string(),
+            initial_tension: "5".to_string(),
+            loads: "1e9".to_string(),
+            ..ExtFormState::default()
+        };
+        let app = app_with_ext(form);
+        let p = ext_populated(&app);
+        let cell = &p.load_table.rows[0].body_shear;
+        assert!(
+            cell.contains('e') && cell.len() < 12,
+            "expected scientific notation, got '{cell}'"
         );
     }
 }
