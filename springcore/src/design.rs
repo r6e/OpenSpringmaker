@@ -43,7 +43,7 @@ pub struct SpringDesign {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_point(
+pub(crate) fn load_point(
     force: Force,
     rate: SpringRate,
     free_length: Length,
@@ -164,7 +164,7 @@ pub fn solve_forward(
         fixity,
     );
 
-    let load_points = loads
+    let load_points: Vec<LoadPoint> = loads
         .iter()
         .map(|&f| {
             load_point(
@@ -194,6 +194,26 @@ pub fn solve_forward(
         mts,
         correction,
     );
+
+    // Output-finiteness guard (the cross-family standard): a finite-input
+    // overflow anywhere in the chain must never escape as Ok.
+    if [
+        rate.newtons_per_meter(),
+        at_solid.shear_stress.pascals(),
+        at_solid.deflection.meters(),
+    ]
+    .into_iter()
+    .chain(
+        load_points
+            .iter()
+            .flat_map(|lp| [lp.shear_stress.pascals(), lp.deflection.meters()]),
+    )
+    .any(|v| !v.is_finite())
+    {
+        return Err(SpringError::InconsistentInputs(
+            "solve produced a non-finite result (inputs exceed the representable range)".into(),
+        ));
+    }
 
     Ok(SpringDesign {
         wire_dia,
@@ -277,19 +297,25 @@ pub(crate) fn validate_wire_mean_geometry(wire_dia: Length, mean_dia: Length) ->
     Ok(())
 }
 
-/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2).
-/// Shared by every spring family's status check.
-pub(crate) fn index_caution(index: f64) -> Option<StatusMessage> {
+/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2),
+/// with a caller-supplied label ("spring index", "small-end spring index", …).
+pub(crate) fn index_caution_labeled(label: &str, index: f64) -> Option<StatusMessage> {
     if !(INDEX_MIN..=INDEX_MAX).contains(&index) {
         Some(StatusMessage {
             severity: Severity::Caution,
             message: format!(
-                "spring index {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
+                "{label} {index:.2} is outside the recommended range {INDEX_MIN}–{INDEX_MAX}"
             ),
         })
     } else {
         None
     }
+}
+
+/// Caution if the spring index is outside the recommended 4–12 band (SMI; Shigley §10-2).
+/// Shared by every spring family's status check.
+pub(crate) fn index_caution(index: f64) -> Option<StatusMessage> {
+    index_caution_labeled("spring index", index)
 }
 
 /// Apply engineering checks to a computed design.
@@ -1053,5 +1079,32 @@ mod tests {
         .unwrap();
         let status = evaluate_status(&design, &m);
         assert!(status.has_warnings());
+    }
+
+    #[test]
+    fn empty_loads_with_overflow_mean_dia_trip_the_output_guard() {
+        // mean_dia overflow → rate = 0.0 (finite); no load points → per-load checks
+        // are vacuous; at_solid.deflection = (k*(L0-Ls)) / k = 0/0 = NaN must be
+        // caught by the output-finiteness guard before Ok.
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(1e200), // huge but finite — overflows D³ → rate=0
+            10.0,
+            Length::from_millimeters(60.0),
+            &[],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "solve produced a non-finite result (inputs exceed the representable range)"
+            ),
+            "expected output-guard error, got {result:?}"
+        );
     }
 }

@@ -832,10 +832,7 @@ impl App {
     pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
-            Ok(saved) => {
-                self.apply_saved(saved);
-                true
-            }
+            Ok(saved) => self.apply_saved(saved),
             Err(e) => {
                 self.action_error = Some(e.to_string());
                 false
@@ -843,7 +840,27 @@ impl App {
         }
     }
 
-    fn apply_saved(&mut self, saved: SavedDesign) {
+    /// Apply a successfully-parsed `SavedDesign` to the form.
+    ///
+    /// Returns `true` when the form was mutated (supported family applied) and
+    /// `false` when the design was rejected wholesale (e.g. unsupported family).
+    /// The caller **must not recompute** when this returns `false` — recompute's
+    /// first action is `self.action_error = None`, which would erase the rejection
+    /// error set here. This mirrors the `Message::Save` invariant (see ~line 452).
+    fn apply_saved(&mut self, saved: SavedDesign) -> bool {
+        // Reject unsupported families wholesale BEFORE any state mutation so
+        // that a failed load leaves the app in its prior state.
+        if matches!(saved.design, springcore::DesignSpec::Conical(_)) {
+            // Placeholder until the conical GUI increment: reject the load
+            // wholesale — nothing (material, units, family, form) is applied.
+            self.action_error = Some(
+                "conical designs are not supported by this build yet (the conical GUI \
+                 ships in the next increment)"
+                    .into(),
+            );
+            return false;
+        }
+
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -871,7 +888,11 @@ impl App {
                     self.unit_system,
                 );
             }
+            springcore::DesignSpec::Conical(_) => {
+                unreachable!("Conical is handled by the early-return above")
+            }
         }
+        true
     }
 }
 
@@ -1379,5 +1400,108 @@ mod tests {
             "an extension form with input but missing geometry must show a parse error, not stay Empty"
         );
         assert!(app.ext_outcome.is_none());
+    }
+
+    // ── Task 2 (conical): placeholder arm test ─────────────────────────────
+    //
+    // Adaptation note: `apply_saved` is private but accessible from the child
+    // `tests` module. Uses `test_app()` (the module's hermetic constructor) rather
+    // than `App::default()` to avoid filesystem IO in the test.
+
+    #[test]
+    fn loading_a_conical_design_surfaces_a_clean_action_error() {
+        let mut app = test_app();
+        // Set a known material and unit system BEFORE loading; the conical load
+        // must leave both unchanged (no partial application) while setting action_error.
+        // The saved design carries a DIFFERENT material ("Chrome Vanadium") to prove
+        // the early-return prevents the mutation.
+        app.material = "Chrome Vanadium".to_string();
+        app.unit_system = springcore::UnitSystem::Us;
+        app.apply_saved(springcore::SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: springcore::UnitSystem::Metric,
+            design: springcore::DesignSpec::Conical(springcore::ConicalSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0],
+            }),
+        });
+        let err = app.action_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("conical designs are not supported"),
+            "got: {err}"
+        );
+        // Wholesale rejection: material and unit_system must be unchanged.
+        assert_eq!(
+            app.material, "Chrome Vanadium",
+            "conical load must not mutate material"
+        );
+        assert_eq!(
+            app.unit_system,
+            springcore::UnitSystem::Us,
+            "conical load must not mutate unit_system"
+        );
+    }
+
+    /// Regression test: loading a conical design through the real `load_from` path
+    /// (file on disk) and then calling `recompute()` — exactly what `update` does
+    /// when `Message::Load` returns `true` — must NOT wipe the "not supported" error.
+    ///
+    /// The prior bug: `load_from` returned `true` unconditionally on `Ok`, so
+    /// `should_recompute` fired, and `recompute()`'s first line (`self.action_error =
+    /// None`) silently erased the conical rejection error.
+    #[test]
+    fn conical_load_from_error_survives_post_load_recompute() {
+        const CONICAL_TOML: &str = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Conical"
+type = "PowerUser"
+end_type = "squared_ground"
+wire_dia_mm = 2.0
+large_mean_dia_mm = 20.0
+small_mean_dia_mm = 12.0
+active = 10.0
+free_length_mm = 60.0
+loads_n = [10.0]
+"#;
+        let dir =
+            std::env::temp_dir().join(format!("osm_conical_load_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("conical.toml");
+        std::fs::write(&path, CONICAL_TOML).unwrap();
+
+        let mut app = test_app();
+        app.material = "Chrome Vanadium".to_string();
+        app.unit_system = springcore::UnitSystem::Us;
+
+        // Drive the REAL path: load_from, then if it returns true, recompute —
+        // mirroring what update() does after Message::Load.
+        let should_recompute = app.load_from(&path);
+        if should_recompute {
+            app.recompute();
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let err = app.action_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("conical designs are not supported"),
+            "action_error must survive the post-load recompute; got: {err:?}"
+        );
+        assert_eq!(
+            app.material, "Chrome Vanadium",
+            "conical load must not mutate material"
+        );
+        assert_eq!(
+            app.unit_system,
+            springcore::UnitSystem::Us,
+            "conical load must not mutate unit_system"
+        );
     }
 }

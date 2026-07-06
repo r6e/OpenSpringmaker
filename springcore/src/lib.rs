@@ -10,6 +10,7 @@
 //! base unit kelvin. See the crate `ARCHITECTURE.md` and `docs/adr/` for design
 //! rationale.
 
+pub mod conical;
 pub(crate) mod design;
 pub(crate) mod end_type;
 pub mod error;
@@ -46,8 +47,8 @@ pub use material_store::MaterialStore;
 pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{
-    min_weight_request_from_spec, DesignSpec, ExtScenarioSpec, HookSpecSpec, SavedDesign,
-    ScenarioSpec, TorsionSpec, UnitSystem,
+    min_weight_request_from_spec, ConicalSpec, DesignSpec, ExtScenarioSpec, HookSpecSpec,
+    SavedDesign, ScenarioSpec, TorsionSpec, UnitSystem,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{

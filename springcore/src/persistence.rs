@@ -94,6 +94,7 @@ pub enum DesignSpec {
     Compression(ScenarioSpec),
     Extension(ExtScenarioSpec),
     Torsion(TorsionSpec),
+    Conical(ConicalSpec),
 }
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
@@ -174,6 +175,21 @@ pub enum TorsionSpec {
         /// Optional outer-diameter cap; missing key → None (documented rule).
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
+    },
+}
+
+/// Conical compression scenarios (v1: direct geometry only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ConicalSpec {
+    PowerUser {
+        end_type: String,
+        wire_dia_mm: f64,
+        large_mean_dia_mm: f64,
+        small_mean_dia_mm: f64,
+        active: f64,
+        free_length_mm: f64,
+        loads_n: Vec<f64>,
     },
 }
 
@@ -554,6 +570,11 @@ impl SavedDesign {
             DesignSpec::Torsion(_) => Err(SpringError::InconsistentInputs(
                 "SavedDesign::solve handles compression designs; torsion designs are solved \
                  via the torsion scenario"
+                    .into(),
+            )),
+            DesignSpec::Conical(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; conical designs are solved \
+                 via the conical scenario"
                     .into(),
             )),
         }
@@ -1801,5 +1822,107 @@ moments_nmm = [1000.0]
             msg.contains("max_outer_dia_mm must be a positive finite number"),
             "expected max_outer_dia_mm message, got: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (conical): ConicalSpec persistence tests
+    // -----------------------------------------------------------------------
+
+    // Base TOML for conical raw-string tests — layout verified against actual
+    // `to_toml()` output so the negative tests below can't pass vacuously on
+    // a layout mistake.
+    const VALID_CONICAL_TOML: &str = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Conical"
+type = "PowerUser"
+end_type = "squared_ground"
+wire_dia_mm = 2.0
+large_mean_dia_mm = 20.0
+small_mean_dia_mm = 12.0
+active = 10.0
+free_length_mm = 60.0
+loads_n = [10.0]
+"#;
+
+    #[test]
+    fn conical_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Conical(ConicalSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0, 25.0],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(back, saved);
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_conical_float() {
+        // Anchor: the base TOML must parse Ok, proving the layout is correct and
+        // the Err below is caused by `inf`, not a layout mistake.
+        assert!(
+            SavedDesign::from_toml(VALID_CONICAL_TOML).is_ok(),
+            "base VALID_CONICAL_TOML must parse Ok"
+        );
+        // Mutate one float to `inf` — reject_non_finite must catch it.
+        let toml =
+            VALID_CONICAL_TOML.replace("large_mean_dia_mm = 20.0", "large_mean_dia_mm = inf");
+        assert!(matches!(
+            SavedDesign::from_toml(&toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_unknown_conical_type() {
+        // Anchor: the base TOML must parse Ok, proving the layout is correct and
+        // the Err below is caused by the bad type tag, not a layout mistake.
+        assert!(
+            SavedDesign::from_toml(VALID_CONICAL_TOML).is_ok(),
+            "base VALID_CONICAL_TOML must parse Ok"
+        );
+        // Mutate the type tag — the serde internally-tagged enum must reject unknown variants.
+        let toml = VALID_CONICAL_TOML.replace("type = \"PowerUser\"", "type = \"PowerUsr\"");
+        assert!(matches!(
+            SavedDesign::from_toml(&toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn solve_with_material_rejects_conical_design() {
+        let m = crate::test_support::music_wire();
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Conical(ConicalSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0],
+            }),
+        };
+        let err = saved
+            .solve_with_material(&m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SpringError::InconsistentInputs(ref msg)
+                if msg == "SavedDesign::solve handles compression designs; conical designs are \
+                           solved via the conical scenario"
+        ));
     }
 }
