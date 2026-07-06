@@ -1467,21 +1467,70 @@ mod tests {
     /// other family so the results panel can never show residual data.
     #[test]
     fn switching_to_conical_clears_other_family_outcomes() {
-        use springcore::Family;
+        use crate::extension::form::{parse_and_solve as ext_parse_and_solve, ExtFormState};
+        use crate::torsion::form::{parse_and_solve as tor_parse_and_solve, TorFormState};
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
         let mut app = solved_app();
         assert!(app.outcome.is_some(), "pre-condition: compression solved");
+
+        // Inject a real extension outcome directly (recompute would clobber outcome).
+        let ext_form = ExtFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "50".into(),
+            ..ExtFormState::default()
+        };
+        let ext_out = ext_parse_and_solve(
+            &ext_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.ext_outcome = Some(ext_out);
+        assert!(
+            app.ext_outcome.is_some(),
+            "pre-condition: ext_outcome must be Some before switching"
+        );
+
+        // Inject a real torsion outcome directly.
+        let tor_form = TorFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        let tor_out =
+            tor_parse_and_solve(&tor_form, "Music Wire", UnitSystem::Metric, &app.materials)
+                .unwrap();
+        app.tor_outcome = Some(tor_out);
+        assert!(
+            app.tor_outcome.is_some(),
+            "pre-condition: tor_outcome must be Some before switching"
+        );
+
+        // Switch to Conical — the Conical arm of recompute() clears all three.
         app.update(Message::SelectFamily(Family::Conical));
+
         assert!(
             app.outcome.is_none(),
-            "switching to Conical must clear compression outcome"
+            "compression outcome must be None after switching to Conical"
         );
         assert!(
             app.ext_outcome.is_none(),
-            "switching to Conical must clear extension outcome"
+            "ext_outcome must be None after switching to Conical"
         );
         assert!(
             app.tor_outcome.is_none(),
-            "switching to Conical must clear torsion outcome"
+            "tor_outcome must be None after switching to Conical"
         );
     }
 

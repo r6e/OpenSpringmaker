@@ -40,3 +40,38 @@ pub fn con_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
 pub fn con_status_view(app: &App) -> Vec<StatusLine> {
     crate::presenter::common_status_lines(app)
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use springcore::{CurvatureCorrection, Family, MaterialSet, MaterialStore};
+
+    fn store() -> MaterialStore {
+        MaterialStore::new(MaterialSet::load_default())
+    }
+
+    fn fresh_app() -> App {
+        App::from_store(store(), Vec::new(), CurvatureCorrection::Bergstrasser)
+    }
+
+    fn fresh_app_conical() -> App {
+        let mut app = fresh_app();
+        app.family = Family::Conical;
+        app
+    }
+
+    #[test]
+    fn con_results_view_error_when_error_set() {
+        let mut app = fresh_app_conical();
+        app.error = Some("bad input".to_string());
+        assert!(matches!(con_results_view(&app), ConResultsView::Error(_)));
+    }
+
+    #[test]
+    fn con_results_view_empty_on_fresh_conical() {
+        let app = fresh_app_conical();
+        assert_eq!(con_results_view(&app), ConResultsView::Empty);
+    }
+}
