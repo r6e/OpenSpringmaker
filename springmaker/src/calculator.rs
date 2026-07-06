@@ -31,6 +31,10 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             crate::torsion::view::design_panel(app),
             crate::torsion::view::results_panel(app),
         ),
+        Family::Conical => (
+            crate::conical::view::design_panel(app),
+            crate::conical::view::results_panel(app),
+        ),
     };
     let status = status_panel(app);
     let footer = footer();
@@ -128,6 +132,7 @@ fn status_panel(app: &App) -> Element<'_, Message> {
         Family::Compression => crate::compression::view_model::status_view(app),
         Family::Extension => crate::extension::view_model::ext_status_view(app),
         Family::Torsion => crate::torsion::view_model::tor_status_view(app),
+        Family::Conical => crate::conical::view_model::con_status_view(app),
     };
 
     if lines.is_empty() {

@@ -712,9 +712,12 @@ mod tests {
         let status = evaluate_status(&tele, &m);
         assert!(has_message(&status, "coils telescope"));
         // And it is Info, not a warning — with the full pinned message string.
-        assert!(status.messages.iter().any(|msg| msg.severity == crate::design::Severity::Info
-            && msg.message
-                == "coils telescope (per-coil radial step ≥ wire diameter); the reported \
+        assert!(status
+            .messages
+            .iter()
+            .any(|msg| msg.severity == crate::design::Severity::Info
+                && msg.message
+                    == "coils telescope (per-coil radial step ≥ wire diameter); the reported \
                     solid length is conservative — the true solid height is lower and the \
                     reported at-solid stress is correspondingly understated"));
         let flat = solve(20.0, 12.0).unwrap();
