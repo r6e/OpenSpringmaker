@@ -871,6 +871,15 @@ impl App {
                     self.unit_system,
                 );
             }
+            springcore::DesignSpec::Conical(_) => {
+                // Placeholder until the conical GUI increment: surface a clean
+                // action error instead of a partially-applied load.
+                self.action_error = Some(
+                    "conical designs are not supported by this build yet (the conical GUI \
+                     ships in the next increment)"
+                        .into(),
+                );
+            }
         }
     }
 }
@@ -1379,5 +1388,34 @@ mod tests {
             "an extension form with input but missing geometry must show a parse error, not stay Empty"
         );
         assert!(app.ext_outcome.is_none());
+    }
+
+    // ── Task 2 (conical): placeholder arm test ─────────────────────────────
+    //
+    // Adaptation note: `apply_saved` is private but accessible from the child
+    // `tests` module. Uses `test_app()` (the module's hermetic constructor) rather
+    // than `App::default()` to avoid filesystem IO in the test.
+
+    #[test]
+    fn loading_a_conical_design_surfaces_a_clean_action_error() {
+        let mut app = test_app();
+        app.apply_saved(springcore::SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: springcore::UnitSystem::Metric,
+            design: springcore::DesignSpec::Conical(springcore::ConicalSpec::PowerUser {
+                end_type: "SquaredGround".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0],
+            }),
+        });
+        let err = app.action_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("conical designs are not supported"),
+            "got: {err}"
+        );
     }
 }

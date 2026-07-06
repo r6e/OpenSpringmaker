@@ -94,6 +94,7 @@ pub enum DesignSpec {
     Compression(ScenarioSpec),
     Extension(ExtScenarioSpec),
     Torsion(TorsionSpec),
+    Conical(ConicalSpec),
 }
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
@@ -174,6 +175,21 @@ pub enum TorsionSpec {
         /// Optional outer-diameter cap; missing key → None (documented rule).
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
+    },
+}
+
+/// Conical compression scenarios (v1: direct geometry only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ConicalSpec {
+    PowerUser {
+        end_type: String,
+        wire_dia_mm: f64,
+        large_mean_dia_mm: f64,
+        small_mean_dia_mm: f64,
+        active: f64,
+        free_length_mm: f64,
+        loads_n: Vec<f64>,
     },
 }
 
@@ -554,6 +570,11 @@ impl SavedDesign {
             DesignSpec::Torsion(_) => Err(SpringError::InconsistentInputs(
                 "SavedDesign::solve handles compression designs; torsion designs are solved \
                  via the torsion scenario"
+                    .into(),
+            )),
+            DesignSpec::Conical(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; conical designs are solved \
+                 via the conical scenario"
                     .into(),
             )),
         }
@@ -1801,5 +1822,107 @@ moments_nmm = [1000.0]
             msg.contains("max_outer_dia_mm must be a positive finite number"),
             "expected max_outer_dia_mm message, got: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (conical): ConicalSpec persistence tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn conical_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Conical(ConicalSpec::PowerUser {
+                end_type: "SquaredGround".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0, 25.0],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(back, saved);
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_conical_float() {
+        // Use a raw-TOML string (matching the file's existing non-finite test
+        // convention) rather than serializing an f64::INFINITY value, since the
+        // TOML serializer may reject non-finite floats before they reach the file.
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Conical"
+type = "PowerUser"
+end_type = "SquaredGround"
+wire_dia_mm = 2.0
+large_mean_dia_mm = inf
+small_mean_dia_mm = 12.0
+active = 10.0
+free_length_mm = 60.0
+loads_n = [10.0]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_unknown_conical_type() {
+        // A misspelled/unknown scenario tag must error, not fall back silently.
+        // Mirror the file's existing unknown-tag test shape; the raw TOML route:
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Conical"
+type = "PowerUsr"
+end_type = "SquaredGround"
+wire_dia_mm = 2.0
+large_mean_dia_mm = 20.0
+small_mean_dia_mm = 12.0
+active = 10.0
+free_length_mm = 60.0
+loads_n = [10.0]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn solve_with_material_rejects_conical_design() {
+        let m = crate::test_support::music_wire();
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Conical(ConicalSpec::PowerUser {
+                end_type: "SquaredGround".to_string(),
+                wire_dia_mm: 2.0,
+                large_mean_dia_mm: 20.0,
+                small_mean_dia_mm: 12.0,
+                active: 10.0,
+                free_length_mm: 60.0,
+                loads_n: vec![10.0],
+            }),
+        };
+        let err = saved
+            .solve_with_material(&m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SpringError::InconsistentInputs(ref msg)
+                if msg == "SavedDesign::solve handles compression designs; conical designs are \
+                           solved via the conical scenario"
+        ));
     }
 }
