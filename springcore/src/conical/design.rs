@@ -337,6 +337,18 @@ mod tests {
         )
     }
 
+    /// Solve a caller-supplied `ConicalInputs` with music wire, a single 10 N
+    /// load, and Bergsträsser correction — the standard probe for guard tests.
+    fn solve_inputs(i: &ConicalInputs) -> crate::Result<ConicalDesign> {
+        let m = crate::test_support::music_wire();
+        solve_forward(
+            &m,
+            i,
+            &[Force::from_newtons(10.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+    }
+
     // ── The golden: zero taper reduces exactly to the cylindrical solver ────
 
     #[test]
@@ -617,7 +629,6 @@ mod tests {
     fn diameter_range_error_precedes_solid_length_guard() {
         // Mirrors compression's precedence test: an out-of-range wire diameter
         // surfaces as DiameterOutOfRange even when free < solid would also fail.
-        let m = crate::test_support::music_wire();
         let i = ConicalInputs {
             wire_dia: Length::from_millimeters(10.0), // out of range for music wire
             large_mean_dia: Length::from_millimeters(80.0),
@@ -626,12 +637,7 @@ mod tests {
             free_length: Length::from_millimeters(50.0), // < Ls = 120 mm
             end_type: EndType::SquaredGround,
         };
-        let result = solve_forward(
-            &m,
-            &i,
-            &[Force::from_newtons(10.0)],
-            crate::CurvatureCorrection::Bergstrasser,
-        );
+        let result = solve_inputs(&i);
         assert!(
             matches!(result, Err(crate::SpringError::DiameterOutOfRange { .. })),
             "got {result:?}"
@@ -722,17 +728,10 @@ mod tests {
     ///        `&& →  ||` in the compound guard (would skip the finite check).
     #[test]
     fn small_dia_zero_rejected() {
-        let m = crate::test_support::music_wire();
         let mut i = inputs(20.0, 12.0);
         i.small_mean_dia = Length::from_millimeters(0.0);
-        let result = solve_forward(
-            &m,
-            &i,
-            &[Force::from_newtons(10.0)],
-            crate::CurvatureCorrection::Bergstrasser,
-        );
         assert_eq!(
-            msg(result),
+            msg(solve_inputs(&i)),
             "small-end mean diameter must be a positive finite number"
         );
     }
@@ -741,17 +740,10 @@ mod tests {
     /// Kills: `ds <= d` → `ds < d` (would accept equal).
     #[test]
     fn small_dia_equal_to_wire_rejected() {
-        let m = crate::test_support::music_wire();
         let mut i = inputs(20.0, 12.0);
         i.small_mean_dia = Length::from_millimeters(2.0); // == wire_dia
-        let result = solve_forward(
-            &m,
-            &i,
-            &[Force::from_newtons(10.0)],
-            crate::CurvatureCorrection::Bergstrasser,
-        );
         assert_eq!(
-            msg(result),
+            msg(solve_inputs(&i)),
             "small-end mean diameter must exceed wire diameter (spring index must exceed 1)"
         );
     }
@@ -760,20 +752,13 @@ mod tests {
     /// Kills: `dl > 0.0` → `>= 0.0` (would accept zero).
     #[test]
     fn large_dia_zero_rejected() {
-        let m = crate::test_support::music_wire();
         // Set small_mean_dia to something valid and larger so the small check passes first.
         // But we need large to fail its own guard, not the ordering guard.
         // Provide small=12mm (valid) and large=0 (zero).
         let mut i = inputs(20.0, 12.0);
         i.large_mean_dia = Length::from_millimeters(0.0);
-        let result = solve_forward(
-            &m,
-            &i,
-            &[Force::from_newtons(10.0)],
-            crate::CurvatureCorrection::Bergstrasser,
-        );
         assert_eq!(
-            msg(result),
+            msg(solve_inputs(&i)),
             "large-end mean diameter must be a positive finite number"
         );
     }
@@ -785,7 +770,6 @@ mod tests {
     /// reaches the `dl <= d` guard before the ordering check, which fires next.
     #[test]
     fn large_dia_equal_to_wire_rejected() {
-        let m = crate::test_support::music_wire();
         // wire=2mm, small=3mm (passes: finite, >0, >wire), large=2mm (==wire → rejected).
         // Note: large(2mm) < small(3mm) so if `dl <= d` were changed to `dl < d`,
         // the ordering guard would fire instead — proving the `<=` is load-bearing.
@@ -797,17 +781,11 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
         };
-        let result = solve_forward(
-            &m,
-            &i,
-            &[Force::from_newtons(10.0)],
-            crate::CurvatureCorrection::Bergstrasser,
-        );
-        // The `dl <= d` guard at line 118 fires before the ordering guard at line 124.
+        // The `dl <= d` guard fires before the ordering guard at line 124.
         // With `dl < d` mutation: 2.0 < 2.0 is false → guard skipped → ordering fires.
         // So this test KILLS the `<=` → `<` mutation.
         assert_eq!(
-            msg(result),
+            msg(solve_inputs(&i)),
             "large-end mean diameter must exceed wire diameter (spring index must exceed 1)"
         );
     }

@@ -1837,7 +1837,7 @@ unit_system = "Metric"
 [design]
 family = "Conical"
 type = "PowerUser"
-end_type = "SquaredGround"
+end_type = "squared_ground"
 wire_dia_mm = 2.0
 large_mean_dia_mm = 20.0
 small_mean_dia_mm = 12.0
@@ -1852,7 +1852,7 @@ loads_n = [10.0]
             material: "Music Wire".to_string(),
             unit_system: UnitSystem::Metric,
             design: DesignSpec::Conical(ConicalSpec::PowerUser {
-                end_type: "SquaredGround".to_string(),
+                end_type: "squared_ground".to_string(),
                 wire_dia_mm: 2.0,
                 large_mean_dia_mm: 20.0,
                 small_mean_dia_mm: 12.0,
@@ -1906,7 +1906,7 @@ loads_n = [10.0]
             material: "Music Wire".to_string(),
             unit_system: UnitSystem::Metric,
             design: DesignSpec::Conical(ConicalSpec::PowerUser {
-                end_type: "SquaredGround".to_string(),
+                end_type: "squared_ground".to_string(),
                 wire_dia_mm: 2.0,
                 large_mean_dia_mm: 20.0,
                 small_mean_dia_mm: 12.0,
