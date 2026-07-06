@@ -86,9 +86,12 @@ pub struct TorFormOutcome {
   `format_error` like any parse/solve error). EVERY scenario arm calls it after its
   solve (the MinWeight arm too — the status is computed even though the section
   hides; one code path, no scenario special-casing).
-- `is_blank`: `fatigue_min`/`fatigue_max` join ALL FIVE arms (typed-optional
-  signals intent — torsion's established rule; compression's treatment verified at
-  plan time and mirrored if it differs, with the divergence documented).
+- `is_blank`: `fatigue_min`/`fatigue_max` join the FOUR non-MinWeight arms —
+  torsion's displayed-inputs rule (every displayed text input counts; MinWeight
+  displays no fatigue inputs, see §C, so its arm excludes them). DOCUMENTED
+  DIVERGENCE from compression, which excludes fatigue fields from is_blank
+  entirely (verified at plan time — its own pre-fatigue legacy; torsion's rule is
+  the internally consistent one and the code comment records the divergence).
   `cycle_life` excluded (default-holding selector).
 - `populate_from_spec`: every arm clears both fatigue fields and resets
   `cycle_life = CycleLife::default()` (the established stale-field rule — nothing
@@ -127,14 +130,19 @@ const TOR_FATIGUE_SKIPPED: &str = "Enter min and max cycle moments to compute fa
 | Gerber FOS | `{:.3}` | — |
 
 `TorPopulatedResults` gains `pub fatigue: TorFatigueView`; `tor_results_view` fills
-it. `tor_inputs_view`: every scenario arm appends `Fatigue min moment ({moment},
-optional)` → `FatigueMin` and `Fatigue max moment ({moment}, optional)` →
-`FatigueMax` (after the scenario's existing fields).
+it. Fatigue INPUTS are a SEPARATE descriptor list (compression's verified shape —
+its inputs view-model exposes a distinct cycle set, EMPTY for the min-weight
+scenario): a new `tor_fatigue_inputs_view(app) -> Vec<FieldDescriptor<Field>>`
+returning `[]` when `scenario == MinWeight`, else `Min cycle moment ({moment})` →
+`FatigueMin` and `Max cycle moment ({moment})` → `FatigueMax` (compression's exact
+label wording, moments for forces). The view renders the group under a divider +
+`section_heading("Fatigue cycle (leave blank to skip)")` — compression's verbatim
+heading — only when the list is non-empty.
 
 `view.rs`: the `Cycle life` pick-list (`ALL_CYCLE_LIVES`, `Message::TorCycleLife`)
 joins the Setup group beside the friction selector (all scenarios — it gates only
 the fatigue computation); the results panel renders the fatigue state after the
-existing sections: `Computed` → `divided_result_section("Fatigue", rows)`;
+existing sections: `Computed` → `divided_result_section("Fatigue analysis", rows)` (compression's verbatim heading);
 `Note(s)` → the muted-note widget compression's fatigue section uses (mirror its
 exact widget helper); `Hidden` → nothing.
 
