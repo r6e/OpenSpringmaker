@@ -2,9 +2,12 @@
 use crate::form_helpers::{
     ang_rate_nmm_per_deg, angle_deg, finite_or_err, fmt_ang_rate_nmm_per_deg, fmt_angle_deg,
     fmt_len, fmt_moment, fmt_moments, length_mm, moment_nmm, moments_nmm, non_negative_length_mm,
-    num, positive_force_n, positive_num,
+    non_negative_moment_nmm, num, positive_force_n, positive_num,
 };
-use springcore::torsion::{DiaPolicy, FrictionModel, PowerUser, Scenario, TorsionDesign};
+use springcore::torsion::{
+    analyze_torsion_fatigue, CycleLife, DiaPolicy, FrictionModel, PowerUser, Scenario,
+    TorFatigueResult, TorsionDesign,
+};
 use springcore::units::{Angle, AngularRate, Force, Length, Moment};
 use springcore::{Material, MaterialStore, Result, TorsionSpec, UnitSystem};
 
@@ -96,6 +99,10 @@ pub enum Field {
     MaxOuterDia,
     /// Comma-separated candidate wire diameters (MinWeight mode).
     CandidateDiameters,
+    /// Minimum cycle moment for fatigue analysis (N·mm or lbf·in).
+    FatigueMin,
+    /// Maximum cycle moment for fatigue analysis (N·mm or lbf·in).
+    FatigueMax,
 }
 
 /// Torsion form inputs as raw strings, plus the friction-model selector.
@@ -139,6 +146,12 @@ pub struct TorFormState {
     /// Mean-diameter selection policy (MinWeight mode).
     pub dia_policy: DiaPolicy,
     pub friction_model: FrictionModel,
+    /// Minimum cycle moment for fatigue analysis (blank = skip).
+    pub fatigue_min: String,
+    /// Maximum cycle moment for fatigue analysis (blank = skip).
+    pub fatigue_max: String,
+    /// Cycle-life class for Table 10-10 lookup (defaults to Million).
+    pub cycle_life: CycleLife,
 }
 
 impl Default for TorFormState {
@@ -171,6 +184,9 @@ impl Default for TorFormState {
             candidate_diameters: String::new(),
             dia_policy: DiaPolicy::default(),
             friction_model: FrictionModel::default(),
+            fatigue_min: String::new(),
+            fatigue_max: String::new(),
+            cycle_life: CycleLife::default(),
         }
     }
 }
@@ -191,6 +207,11 @@ impl TorFormState {
                 self.forces.trim().is_empty() && self.load_radius.trim().is_empty()
             }
         };
+        // Fatigue cycle fields count toward "blank" in the four scenarios that
+        // display them (displayed-inputs rule). MinWeight hides them (its section
+        // yields to the optimizer readout), so the MinWeight arm excludes them.
+        // Deliberate divergence from compression, which excludes fatigue fields
+        // from is_blank everywhere — a pre-fatigue legacy there.
         match self.scenario {
             TorScenarioKind::PowerUser => {
                 moment_entry_blank
@@ -201,6 +222,8 @@ impl TorFormState {
                         &self.leg1,
                         &self.leg2,
                         &self.arbor_dia,
+                        &self.fatigue_min,
+                        &self.fatigue_max,
                     ])
             }
             TorScenarioKind::RateBased => {
@@ -212,6 +235,8 @@ impl TorFormState {
                         &self.leg1,
                         &self.leg2,
                         &self.arbor_dia,
+                        &self.fatigue_min,
+                        &self.fatigue_max,
                     ])
             }
             TorScenarioKind::Dimensional => {
@@ -223,6 +248,8 @@ impl TorFormState {
                         &self.leg1,
                         &self.leg2,
                         &self.arbor_dia,
+                        &self.fatigue_min,
+                        &self.fatigue_max,
                     ])
             }
             TorScenarioKind::TwoLoad => all_empty(&[
@@ -235,6 +262,8 @@ impl TorFormState {
                 &self.angle1,
                 &self.moment2,
                 &self.angle2,
+                &self.fatigue_min,
+                &self.fatigue_max,
             ]),
             // index_min and index_max are EXCLUDED: they are pre-filled defaults
             // ("4"/"12") so they cannot distinguish an untouched form from one the
@@ -250,6 +279,18 @@ impl TorFormState {
             ]),
         }
     }
+}
+
+/// Three-state fatigue result distinguishing "not attempted" from "no data"
+/// (compression's `FatigueStatus` shape).
+#[derive(Debug, Clone)]
+pub(crate) enum TorFatigueStatus {
+    /// User left min/max cycle moments blank; fatigue was not attempted.
+    Skipped,
+    /// Cycle moments supplied but the material has no bending-fatigue data.
+    NoData,
+    /// Fatigue analysis succeeded.
+    Computed(TorFatigueResult),
 }
 
 /// Min-weight optimisation extras when the active outcome is a MinWeight solve
@@ -270,6 +311,8 @@ pub struct TorFormOutcome {
     pub design: TorsionDesign,
     /// `Some` only for MinWeight solves.
     pub(crate) min_weight: Option<TorMinWeightExtra>,
+    /// Fatigue analysis status (Skipped if the user left the cycle-moment fields blank).
+    pub(crate) fatigue: TorFatigueStatus,
 }
 
 /// Parse the comma-separated moment list into SI newton-millimetres, rejecting an
@@ -376,6 +419,44 @@ fn parse_candidate_diameters_mm(form: &TorFormState, us: UnitSystem) -> Result<V
     Ok(candidates)
 }
 
+/// Compute the fatigue status for a solved design (compression's `compute_fatigue`
+/// mirror): blank cycle-moment fields → `Skipped`; supplied but the material lacks
+/// Table 10-10 data → `NoData`; parse errors and non-`NoFatigueData` analysis
+/// errors propagate. Uses the SOLVED geometry, so derived-geometry scenarios
+/// (Dimensional's mean, MinWeight's chosen wire) are analyzed correctly.
+fn compute_tor_fatigue(
+    form: &TorFormState,
+    material: &springcore::Material,
+    design: &TorsionDesign,
+    us: UnitSystem,
+) -> springcore::Result<TorFatigueStatus> {
+    if form.fatigue_min.trim().is_empty() || form.fatigue_max.trim().is_empty() {
+        return Ok(TorFatigueStatus::Skipped);
+    }
+    let m_min = Moment::from_newton_millimeters(non_negative_moment_nmm(
+        "fatigue min",
+        &form.fatigue_min,
+        us,
+    )?);
+    let m_max = Moment::from_newton_millimeters(non_negative_moment_nmm(
+        "fatigue max",
+        &form.fatigue_max,
+        us,
+    )?);
+    match analyze_torsion_fatigue(
+        material,
+        design.inputs.wire_dia,
+        design.inputs.mean_dia,
+        m_min,
+        m_max,
+        form.cycle_life,
+    ) {
+        Ok(r) => Ok(TorFatigueStatus::Computed(r)),
+        Err(springcore::SpringError::NoFatigueData(_)) => Ok(TorFatigueStatus::NoData),
+        Err(e) => Err(e),
+    }
+}
+
 /// Parse the form, build the active scenario, and solve. The engine's own
 /// input guards remain the defense-in-depth backstop.
 pub fn parse_and_solve(
@@ -399,9 +480,12 @@ pub fn parse_and_solve(
                     .map(Moment::from_newton_millimeters)
                     .collect(),
             };
+            let design = scenario.solve(material, form.friction_model)?;
+            let fatigue = compute_tor_fatigue(form, material, &design, us)?;
             Ok(TorFormOutcome {
-                design: scenario.solve(material, form.friction_model)?,
+                design,
                 min_weight: None,
+                fatigue,
             })
         }
         TorScenarioKind::RateBased => {
@@ -419,9 +503,12 @@ pub fn parse_and_solve(
                     .map(Moment::from_newton_millimeters)
                     .collect(),
             };
+            let design = scenario.solve(material, form.friction_model)?;
+            let fatigue = compute_tor_fatigue(form, material, &design, us)?;
             Ok(TorFormOutcome {
-                design: scenario.solve(material, form.friction_model)?,
+                design,
                 min_weight: None,
+                fatigue,
             })
         }
         TorScenarioKind::Dimensional => {
@@ -440,9 +527,12 @@ pub fn parse_and_solve(
                     .map(Moment::from_newton_millimeters)
                     .collect(),
             };
+            let design = scenario.solve(material, form.friction_model)?;
+            let fatigue = compute_tor_fatigue(form, material, &design, us)?;
             Ok(TorFormOutcome {
-                design: scenario.solve(material, form.friction_model)?,
+                design,
                 min_weight: None,
+                fatigue,
             })
         }
         TorScenarioKind::TwoLoad => {
@@ -461,9 +551,12 @@ pub fn parse_and_solve(
                     Angle::from_degrees(angle_deg("angle 2", &form.angle2)?),
                 ),
             };
+            let design = scenario.solve(material, form.friction_model)?;
+            let fatigue = compute_tor_fatigue(form, material, &design, us)?;
             Ok(TorFormOutcome {
-                design: scenario.solve(material, form.friction_model)?,
+                design,
                 min_weight: None,
+                fatigue,
             })
         }
         TorScenarioKind::MinWeight => {
@@ -502,12 +595,15 @@ pub fn parse_and_solve(
                     .collect(),
             };
             let sol = springcore::torsion::solve_min_weight(material, &req)?;
+            let design = sol.design;
+            let fatigue = compute_tor_fatigue(form, material, &design, us)?;
             Ok(TorFormOutcome {
-                design: sol.design,
+                design,
                 min_weight: Some(TorMinWeightExtra {
                     binding: sol.binding,
                     mass_kg: sol.mass_kg,
                 }),
+                fatigue,
             })
         }
     }
@@ -613,6 +709,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             };
             form.friction_model = *friction_model;
             form.moments = fmt_moments(moments_nmm, us);
+            form.fatigue_min = String::new();
+            form.fatigue_max = String::new();
+            form.cycle_life = CycleLife::default();
         }
         TorsionSpec::RateBased {
             wire_dia_mm,
@@ -639,6 +738,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             };
             form.friction_model = *friction_model;
             form.moments = fmt_moments(moments_nmm, us);
+            form.fatigue_min = String::new();
+            form.fatigue_max = String::new();
+            form.cycle_life = CycleLife::default();
         }
         TorsionSpec::Dimensional {
             wire_dia_mm,
@@ -665,6 +767,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             };
             form.friction_model = *friction_model;
             form.moments = fmt_moments(moments_nmm, us);
+            form.fatigue_min = String::new();
+            form.fatigue_max = String::new();
+            form.cycle_life = CycleLife::default();
         }
         TorsionSpec::TwoLoad {
             wire_dia_mm,
@@ -695,6 +800,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
             form.angle1 = fmt_angle_deg(*angle1_deg);
             form.moment2 = fmt_moment(*moment2_nmm, us);
             form.angle2 = fmt_angle_deg(*angle2_deg);
+            form.fatigue_min = String::new();
+            form.fatigue_max = String::new();
+            form.cycle_life = CycleLife::default();
         }
         TorsionSpec::MinWeight {
             rate_nmm_per_deg,
@@ -734,6 +842,9 @@ pub fn populate_from_spec(form: &mut TorFormState, spec: &TorsionSpec, us: UnitS
                 .map(|&d| fmt_len(d, us))
                 .collect::<Vec<_>>()
                 .join(", ");
+            form.fatigue_min = String::new();
+            form.fatigue_max = String::new();
+            form.cycle_life = CycleLife::default();
         }
     }
 }
@@ -1343,5 +1454,223 @@ mod tests {
             !blank.is_blank(),
             "typing a TwoLoad point field clears blank"
         );
+    }
+
+    fn shigley_10_8_us_form() -> TorFormState {
+        // Example 10-8's stock spring as direct PowerUser inputs (US units):
+        // d = 0.072 in, D = 0.5218 in, Nb = 4.25, legs 1 in, load 5 lbf·in.
+        TorFormState {
+            wire_dia: "0.072".into(),
+            mean_dia: "0.5218".into(),
+            body_coils: "4.25".into(),
+            leg1: "1".into(),
+            leg2: "1".into(),
+            moments: "5".into(),
+            fatigue_min: "1".into(),
+            fatigue_max: "5".into(),
+            ..TorFormState::default()
+        }
+    }
+
+    #[test]
+    fn fatigue_golden_through_the_form() {
+        let out = parse_and_solve(
+            &shigley_10_8_us_form(),
+            "Music Wire",
+            UnitSystem::Us,
+            &store(),
+        )
+        .expect("the worked example solves");
+        match &out.fatigue {
+            TorFatigueStatus::Computed(f) => {
+                assert_relative_eq!(f.gerber_factor_of_safety, 1.13, max_relative = 5e-3);
+            }
+            other => panic!("expected Computed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fatigue_r_zero_computes_with_finite_positive_fos() {
+        // R = 0 (fatigue_min = "0"): the flagship case Table 10-10's data is
+        // defined for.  Behavior is already correct; this test pins it so a
+        // regression in the non_negative_moment_nmm guard or the engine's
+        // lo-zero path is caught immediately.
+        let form = TorFormState {
+            fatigue_min: "0".into(),
+            fatigue_max: "5".into(),
+            ..shigley_10_8_us_form()
+        };
+        let out = parse_and_solve(&form, "Music Wire", UnitSystem::Us, &store())
+            .expect("R = 0 is feasible");
+        match &out.fatigue {
+            TorFatigueStatus::Computed(f) => {
+                assert!(
+                    f.gerber_factor_of_safety.is_finite() && f.gerber_factor_of_safety > 0.0,
+                    "R = 0 must yield a positive finite Gerber FOS; got {}",
+                    f.gerber_factor_of_safety
+                );
+            }
+            other => panic!("expected Computed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fatigue_skipped_when_either_field_blank() {
+        // Both blank (the default), and BOTH one-sided cases: compression's `||`
+        // check treats any blank side as not-attempted.
+        for (min, max) in [("", ""), ("1", ""), ("", "5")] {
+            let form = TorFormState {
+                fatigue_min: min.into(),
+                fatigue_max: max.into(),
+                ..shigley_10_8_us_form()
+            };
+            let out = parse_and_solve(&form, "Music Wire", UnitSystem::Us, &store()).unwrap();
+            assert!(
+                matches!(out.fatigue, TorFatigueStatus::Skipped),
+                "({min:?},{max:?}) must be Skipped"
+            );
+        }
+    }
+
+    #[test]
+    fn fatigue_no_data_for_material_without_table_10_10_grade() {
+        // Oil-Tempered Wire is A229 — deliberately data-less; the solve succeeds
+        // and the status degrades gracefully (never an error).
+        let form = TorFormState {
+            fatigue_min: "100".into(),
+            fatigue_max: "500".into(),
+            ..metric_form()
+        };
+        let out = parse_and_solve(&form, "Oil-Tempered Wire", UnitSystem::Metric, &store())
+            .expect("the solve itself succeeds");
+        assert!(matches!(out.fatigue, TorFatigueStatus::NoData));
+    }
+
+    #[test]
+    fn fatigue_parse_error_propagates() {
+        let form = TorFormState {
+            fatigue_min: "-1".into(),
+            fatigue_max: "5".into(),
+            ..shigley_10_8_us_form()
+        };
+        let err = parse_and_solve(&form, "Music Wire", UnitSystem::Us, &store())
+            .expect_err("a negative cycle moment is a form error, not a skip");
+        assert!(err
+            .to_string()
+            .contains("fatigue min must be zero or greater"));
+    }
+
+    #[test]
+    fn cycle_life_changes_endurance_through_the_form() {
+        let base = shigley_10_8_us_form();
+        let short = TorFormState {
+            cycle_life: springcore::torsion::CycleLife::HundredThousand,
+            ..base.clone()
+        };
+        let se =
+            |f: &TorFormState| match &parse_and_solve(f, "Music Wire", UnitSystem::Us, &store())
+                .unwrap()
+                .fatigue
+            {
+                TorFatigueStatus::Computed(r) => r.fully_reversed_endurance.pascals(),
+                other => panic!("expected Computed, got {other:?}"),
+            };
+        assert!(
+            se(&short) > se(&base),
+            "10^5's higher Sr fraction must raise Se over 10^6's"
+        );
+    }
+
+    #[test]
+    fn fatigue_computed_on_derived_geometry() {
+        // Dimensional derives mean = OD − d; fatigue must use the SOLVED geometry.
+        let form = TorFormState {
+            scenario: TorScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            fatigue_min: "100".into(),
+            fatigue_max: "500".into(),
+            ..TorFormState::default()
+        };
+        let out = parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &store()).unwrap();
+        assert!(matches!(out.fatigue, TorFatigueStatus::Computed(_)));
+    }
+
+    #[test]
+    fn fatigue_fields_trip_is_blank_except_min_weight() {
+        // Displayed-inputs rule: the four scenarios that SHOW the fatigue inputs
+        // count them; MinWeight (which hides them, mirroring its hidden section)
+        // does not. Documented divergence from compression, which excludes them
+        // everywhere (its pre-fatigue legacy).
+        for scenario in [
+            TorScenarioKind::PowerUser,
+            TorScenarioKind::RateBased,
+            TorScenarioKind::Dimensional,
+            TorScenarioKind::TwoLoad,
+        ] {
+            let f = TorFormState {
+                scenario,
+                fatigue_min: "1".into(),
+                ..TorFormState::default()
+            };
+            assert!(
+                !f.is_blank(),
+                "{scenario:?}: a typed fatigue field signals intent"
+            );
+        }
+        let mw = TorFormState {
+            scenario: TorScenarioKind::MinWeight,
+            fatigue_min: "1".into(),
+            ..TorFormState::default()
+        };
+        assert!(mw.is_blank(), "MinWeight displays no fatigue inputs");
+    }
+
+    #[test]
+    fn populate_clears_fatigue_fields_and_resets_life() {
+        // Every populate_from_spec arm must clear the fatigue cycle fields and
+        // reset cycle_life to default regardless of which scenario the spec
+        // carries. A dropped clear in any one arm is caught independently here;
+        // the previous PowerUser-only version left four arms uncovered.
+        let us = UnitSystem::Metric;
+        let dimensional_form = TorFormState {
+            scenario: TorScenarioKind::Dimensional,
+            wire_dia: "2".into(),
+            outer_dia: "22".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        let specs = [
+            build_spec(&metric_form(), us).unwrap(),
+            build_spec(&ratebased_metric_form(), us).unwrap(),
+            build_spec(&dimensional_form, us).unwrap(),
+            build_spec(&twoload_metric_form(), us).unwrap(),
+            build_spec(&min_weight_metric_form(), us).unwrap(),
+        ];
+        for spec in &specs {
+            let mut form = TorFormState {
+                fatigue_min: "1".into(),
+                fatigue_max: "5".into(),
+                cycle_life: springcore::torsion::CycleLife::HundredThousand,
+                ..TorFormState::default()
+            };
+            populate_from_spec(&mut form, spec, us);
+            assert!(
+                form.fatigue_min.is_empty() && form.fatigue_max.is_empty(),
+                "populate_from_spec must clear both fatigue cycle fields"
+            );
+            assert_eq!(
+                form.cycle_life,
+                springcore::torsion::CycleLife::Million,
+                "populate_from_spec must reset cycle_life to the default (Million)"
+            );
+        }
     }
 }

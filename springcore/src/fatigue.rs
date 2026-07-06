@@ -2,6 +2,7 @@
 //! per-material endurance data (Zimmerli); materials without it degrade
 //! gracefully by returning `NoFatigueData`.
 
+use crate::design::validate_wire_mean_geometry;
 use crate::material::Material;
 use crate::mechanics::{corrected_shear_stress, spring_index};
 use crate::units::{Force, Length, Stress};
@@ -29,19 +30,42 @@ pub fn analyze_fatigue(
     force_max: Force,
     correction: CurvatureCorrection,
 ) -> Result<FatigueResult> {
-    if force_max.newtons() < force_min.newtons() {
+    // Guard order mirrors torsion's `analyze_torsion_fatigue`: geometry → data
+    // present → input domain → ordering → degenerate cycle → data trap →
+    // compute → output finiteness.
+    validate_wire_mean_geometry(wire_dia, mean_dia)?;
+    let endurance = material
+        .endurance
+        .ok_or_else(|| SpringError::NoFatigueData(material.name.clone()))?;
+    let lo = force_min.newtons();
+    let hi = force_max.newtons();
+    if !(lo.is_finite() && lo >= 0.0 && hi.is_finite() && hi >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "cycle forces must be finite and non-negative (the endurance data \
+             covers unidirectional compressive loads)"
+                .into(),
+        ));
+    }
+    if hi < lo {
         return Err(SpringError::InconsistentInputs(
             "max cycle force must be at least the min cycle force".into(),
         ));
     }
-    let endurance = material
-        .endurance
-        .ok_or_else(|| SpringError::NoFatigueData(material.name.clone()))?;
+    // Equal NONZERO forces are legal (τa = 0; Goodman's reciprocal form stays
+    // finite) — the documented divergence from torsion's Gerber, which must
+    // reject σa = 0. The both-zero pair, though, has no load cycle at all and
+    // would produce nf = ∞; reject it precisely rather than letting the output
+    // guard below mislabel zeros as "exceeding the representable range".
+    if hi == 0.0 {
+        return Err(SpringError::InconsistentInputs(
+            "cycle forces must not both be zero (no load cycle to analyze)".into(),
+        ));
+    }
 
     let c = spring_index(mean_dia, wire_dia);
     let k = correction.factor(c);
-    let fa = Force::from_newtons((force_max.newtons() - force_min.newtons()) / 2.0);
-    let fm = Force::from_newtons((force_max.newtons() + force_min.newtons()) / 2.0);
+    let fa = Force::from_newtons((hi - lo) / 2.0);
+    let fm = Force::from_newtons((hi + lo) / 2.0);
     let tau_a = corrected_shear_stress(fa, mean_dia, wire_dia, k);
     let tau_m = corrected_shear_stress(fm, mean_dia, wire_dia, k);
 
@@ -65,6 +89,19 @@ pub fn analyze_fatigue(
     let sse = endurance.ssa.pascals() / (1.0 - endurance.ssm.pascals() / ssu);
     // Goodman factor of safety: 1/nf = tau_a/Sse + tau_m/Ssu.
     let nf = 1.0 / (tau_a.pascals() / sse + tau_m.pascals() / ssu);
+
+    // Belt-and-suspenders output guard (torsion's exact shape and message): a
+    // finite-input overflow anywhere in the chain must never escape as Ok.
+    if [tau_a.pascals(), tau_m.pascals(), sse, ssu, nf]
+        .into_iter()
+        .any(|v| !v.is_finite())
+    {
+        return Err(SpringError::InconsistentInputs(
+            "fatigue analysis produced a non-finite result (inputs exceed the \
+             representable range)"
+                .into(),
+        ));
+    }
 
     Ok(FatigueResult {
         alternating_stress: tau_a,
@@ -135,7 +172,11 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap_err();
-        assert!(matches!(err, crate::SpringError::InconsistentInputs(_)));
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "max cycle force must be at least the min cycle force"
+        ));
     }
 
     #[test]
@@ -159,9 +200,132 @@ mod tests {
         );
     }
 
-    // Pins the `<` (strict) in the force guard: equal forces (zero alternating load)
-    // must be accepted — the spring cycles at a single load point, which is a degenerate
-    // but valid fatigue case (infinite safety factor). A `<=` mutant would reject this.
+    #[test]
+    fn geometry_guard_rejects_zero_wire_before_bad_forces() {
+        // Precedence: geometry first — the negative force must NOT be the error.
+        let m = crate::test_support::music_wire();
+        let err = analyze_fatigue(
+            &m,
+            Length::from_millimeters(0.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(-5.0),
+            Force::from_newtons(30.0),
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "wire diameter must be a positive finite number"
+        ));
+    }
+
+    #[test]
+    fn no_data_beats_bad_forces() {
+        // Precedence: data presence before input domain (torsion's order).
+        let m = crate::test_support::material("Stainless 302");
+        let err = analyze_fatigue(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(-5.0),
+            Force::from_newtons(30.0),
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(matches!(err, crate::SpringError::NoFatigueData(_)));
+    }
+
+    #[test]
+    fn rejects_negative_cycle_forces() {
+        let m = crate::test_support::music_wire();
+        let err = analyze_fatigue(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(-5.0),
+            Force::from_newtons(30.0),
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "cycle forces must be finite and non-negative (the endurance data \
+                           covers unidirectional compressive loads)"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_finite_cycle_forces() {
+        let m = crate::test_support::music_wire();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = analyze_fatigue(
+                &m,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                Force::from_newtons(bad),
+                Force::from_newtons(30.0),
+                crate::CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                err,
+                crate::SpringError::InconsistentInputs(ref msg)
+                    if msg.starts_with("cycle forces must be finite and non-negative")
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_both_zero_cycle_forces() {
+        // Both-zero previously returned Ok with nf = inf — the masquerade class
+        // this guard kills. Equal NONZERO forces remain legal (see
+        // `equal_forces_min_eq_max_is_accepted`).
+        let m = crate::test_support::music_wire();
+        let err = analyze_fatigue(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(0.0),
+            Force::from_newtons(0.0),
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "cycle forces must not both be zero (no load cycle to analyze)"
+        ));
+    }
+
+    #[test]
+    fn huge_forces_trip_the_output_finiteness_guard() {
+        // 1e305 N is finite and passes every input guard, but the corrected shear
+        // stress overflows to inf — must surface as an error, never Ok(inf).
+        let m = crate::test_support::music_wire();
+        let err = analyze_fatigue(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            Force::from_newtons(0.0),
+            Force::from_newtons(1e305),
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "fatigue analysis produced a non-finite result (inputs exceed the \
+                           representable range)"
+        ));
+    }
+
+    // Pins the `<` (strict) in the ordering guard: equal NONZERO forces (zero
+    // alternating load) must be accepted — the spring cycles at a single load
+    // point, a degenerate but valid Goodman case (τa = 0 → nf = Ssu/τm, finite).
+    // A `<=` mutant would reject this. The both-zero pair IS rejected — see
+    // `rejects_both_zero_cycle_forces`.
     #[test]
     fn equal_forces_min_eq_max_is_accepted() {
         let m = crate::test_support::music_wire();
@@ -177,7 +341,7 @@ mod tests {
             result.is_ok(),
             "equal forces should be accepted: {result:?}"
         );
-        // Alternating stress is zero → safety factor is infinite (or very large).
+        // Alternating stress is zero → τa = 0, nf = Ssu/τm (finite, not infinite).
         let r = result.unwrap();
         assert_relative_eq!(
             r.alternating_stress.pascals(),

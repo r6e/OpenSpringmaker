@@ -160,6 +160,7 @@ pub enum Message {
     TorScenario(crate::torsion::form::TorScenarioKind),
     TorMomentEntry(crate::torsion::form::MomentEntry),
     TorDiaPolicy(springcore::torsion::DiaPolicy),
+    TorCycleLife(springcore::torsion::CycleLife),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -422,6 +423,10 @@ impl App {
             }
             Message::TorDiaPolicy(p) => {
                 self.torsion.dia_policy = p;
+                true
+            }
+            Message::TorCycleLife(l) => {
+                self.torsion.cycle_life = l;
                 true
             }
             Message::Material(m) => {
@@ -730,6 +735,8 @@ impl App {
             TF::IndexMax => f.index_max = value,
             TF::MaxOuterDia => f.max_outer_dia = value,
             TF::CandidateDiameters => f.candidate_diameters = value,
+            TF::FatigueMin => f.fatigue_min = value,
+            TF::FatigueMax => f.fatigue_max = value,
         }
     }
 

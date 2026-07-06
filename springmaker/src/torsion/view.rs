@@ -11,7 +11,10 @@ use crate::app::{App, Message, C};
 use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
-use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
+use crate::torsion::view_model::{
+    tor_fatigue_inputs_view, tor_inputs_view, tor_results_view, TorFatigueView, TorLoadTable,
+    TorResultsView,
+};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
     render_result_row, results_empty, results_error, rows_section, section_divider,
@@ -80,6 +83,18 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         .spacing(4),
     );
 
+    setup_group = setup_group.push(
+        column![
+            field_label("Cycle life"),
+            styled_pick_list(
+                springcore::torsion::ALL_CYCLE_LIVES,
+                Some(app.torsion.cycle_life),
+                Message::TorCycleLife,
+            ),
+        ]
+        .spacing(4),
+    );
+
     // Inputs group — driven by the presenter's field list.
     let inputs = tor_inputs_view(app);
     let mut inputs_col = column![section_heading("Inputs")].spacing(12);
@@ -91,6 +106,23 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
             tor_field_id(field),
             move |s| Message::TorField(field, s),
         ));
+    }
+
+    // Fatigue cycle group — a separate presenter list, empty for MinWeight.
+    let fatigue_inputs = tor_fatigue_inputs_view(app);
+    if !fatigue_inputs.is_empty() {
+        inputs_col = inputs_col
+            .push(section_divider())
+            .push(section_heading("Fatigue cycle (leave blank to skip)"));
+        for fd in &fatigue_inputs {
+            let field = fd.field;
+            inputs_col = inputs_col.push(labeled_input(
+                &fd.label,
+                tor_field_value(&app.torsion, field),
+                tor_field_id(field),
+                move |s| Message::TorField(field, s),
+            ));
+        }
     }
 
     let inner = column![setup_group, section_divider(), inputs_col].spacing(16);
@@ -123,6 +155,8 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::IndexMax => &form.index_max,
         Field::MaxOuterDia => &form.max_outer_dia,
         Field::CandidateDiameters => &form.candidate_diameters,
+        Field::FatigueMin => &form.fatigue_min,
+        Field::FatigueMax => &form.fatigue_max,
     }
 }
 
@@ -152,6 +186,8 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::IndexMax => "tor-index-max",
         Field::MaxOuterDia => "tor-max-outer-dia",
         Field::CandidateDiameters => "tor-candidate-diameters",
+        Field::FatigueMin => "tor-fatigue-min",
+        Field::FatigueMax => "tor-fatigue-max",
     }
 }
 
@@ -267,6 +303,19 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 
             if let Some(rows) = &p.min_weight {
                 col = col.push(divided_result_section("Min-weight optimisation", rows));
+            }
+
+            match &p.fatigue {
+                TorFatigueView::Hidden => {}
+                TorFatigueView::Computed(rows) => {
+                    col = col.push(divided_result_section("Fatigue analysis", rows));
+                }
+                TorFatigueView::Note(msg) => {
+                    col = col.push(
+                        column![section_divider(), text(*msg).size(SZ_LABEL).color(C::MUTED),]
+                            .spacing(8),
+                    );
+                }
             }
 
             col.into()

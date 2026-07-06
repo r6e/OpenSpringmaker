@@ -742,6 +742,73 @@ fn torsion_min_weight_e2e_and_save_load() {
 }
 
 #[test]
+fn torsion_fatigue_e2e_rows_nodata_and_minweight_suppression() {
+    use crate::torsion::form::{Field as TF, TorScenarioKind};
+    // Rows render for a computed analysis.
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+    type_into_tor(&mut app, TF::FatigueMin, "100");
+    type_into_tor(&mut app, TF::FatigueMax, "500");
+    let out = app.tor_outcome.as_ref().expect("solves");
+    assert!(matches!(
+        out.fatigue,
+        crate::torsion::form::TorFatigueStatus::Computed(_)
+    ));
+    assert!(shows(&app, "Gerber FOS"), "the fatigue rows render");
+
+    // NoData note for a material without Table 10-10 data.
+    app.update(Message::Material("Oil-Tempered Wire".into()));
+    assert!(
+        shows(&app, "No fatigue data for this material."),
+        "the NoData note renders"
+    );
+
+    // Positive control: the fatigue inputs heading IS shown in PowerUser state
+    // before the switch — ensures the later absence assert is a real suppression
+    // test, not an incidental pass.
+    assert!(
+        shows(&app, "Fatigue cycle (leave blank to skip)"),
+        "fatigue inputs heading must be visible in PowerUser before switching to MinWeight"
+    );
+
+    // MinWeight suppression: switch scenario, drive valid inputs so the solve
+    // succeeds (field ids and values from the existing MinWeight E2E above),
+    // keep fatigue fields filled, then assert both fatigue headings vanish while
+    // the optimization section is present.
+    app.update(Message::Material("Music Wire".into()));
+    app.update(Message::TorFriction(
+        springcore::torsion::FrictionModel::PureBending,
+    ));
+    app.update(Message::TorScenario(TorScenarioKind::MinWeight));
+    type_into_tor(&mut app, TF::Rate, "8.875");
+    type_into_tor(&mut app, TF::MaxMoment, "100");
+    type_into_tor(&mut app, TF::CandidateDiameters, "1.5, 2, 2.5");
+    let out = app.tor_outcome.as_ref().expect("MinWeight must solve");
+    assert!(
+        out.min_weight.is_some(),
+        "the optimisation extra must be present"
+    );
+    assert!(
+        shows(&app, "Min-weight optimisation"),
+        "the min-weight section must render — confirms the solve succeeded"
+    );
+    assert!(
+        !shows(&app, "Fatigue cycle (leave blank to skip)"),
+        "fatigue inputs heading must be absent under MinWeight"
+    );
+    assert!(
+        !shows(&app, "Fatigue analysis"),
+        "the Fatigue analysis results heading must be absent under MinWeight"
+    );
+}
+
+#[test]
 fn ext_scenario_switch_solves_each_mode() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));

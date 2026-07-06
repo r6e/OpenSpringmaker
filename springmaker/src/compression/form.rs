@@ -1067,4 +1067,27 @@ mod tests {
             "metric error message must not contain 'in': {msg}"
         );
     }
+
+    #[test]
+    fn huge_finite_fatigue_force_surfaces_engine_guard_as_form_error() {
+        // 1e305 N parses (finite), passes the non-negative helper, and overflows
+        // the corrected shear stress inside the engine — the Task-1 output guard
+        // must surface as a whole-form error, never Ok(inf) rows.
+        let set = default_store();
+        let mut form = rate_based_metric();
+        form.fatigue_min = "0".into();
+        form.fatigue_max = "1e305".into();
+        let err = parse_and_solve(
+            &form,
+            "Music Wire",
+            springcore::UnitSystem::Metric,
+            &set,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("produced a non-finite result"),
+            "got: {err}"
+        );
+    }
 }
