@@ -22,6 +22,18 @@ pub enum CycleLife {
     Million,
 }
 
+impl std::fmt::Display for CycleLife {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            CycleLife::HundredThousand => "10\u{2075} cycles",
+            CycleLife::Million => "10\u{2076} cycles",
+        })
+    }
+}
+
+/// All `CycleLife` variants in display order (pick-list source).
+pub const ALL_CYCLE_LIVES: &[CycleLife] = &[CycleLife::HundredThousand, CycleLife::Million];
+
 /// Torsion-spring fatigue analysis result (Shigley §10-12, Gerber).
 #[derive(Debug, Clone, Copy)]
 pub struct TorFatigueResult {
@@ -166,6 +178,16 @@ mod tests {
     }
 
     #[test]
+    fn cycle_life_display_and_all_const() {
+        assert_eq!(CycleLife::HundredThousand.to_string(), "10\u{2075} cycles");
+        assert_eq!(CycleLife::Million.to_string(), "10\u{2076} cycles");
+        assert_eq!(
+            ALL_CYCLE_LIVES,
+            &[CycleLife::HundredThousand, CycleLife::Million]
+        );
+    }
+
+    #[test]
     fn shigley_example_10_8c_golden() {
         let r = golden(CycleLife::Million);
         // Textbook-rounded chain at 5e-3 relative (the book rounds intermediates):
@@ -202,6 +224,32 @@ mod tests {
             r.mean_stress.pascals() / r.alternating_stress.pascals(),
             1.5,
             max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn r_zero_alternating_equals_mean_stress() {
+        // R = 0 (moment_min = 0): the exact case Table 10-10's data is defined for.
+        // When lo = 0, ma = (hi − 0)/2 and mm = (hi + 0)/2 — IEEE-exact equal —
+        // so alternating_stress must equal mean_stress to the bit.
+        let r = analyze_torsion_fatigue(
+            &music_wire(),
+            Length::from_inches(0.072),
+            Length::from_inches(0.5218),
+            Moment::from_pound_force_inches(0.0),
+            Moment::from_pound_force_inches(5.0),
+            CycleLife::Million,
+        )
+        .expect("R = 0 is feasible (lo = 0 is non-negative, hi > lo)");
+        assert_eq!(
+            r.alternating_stress.pascals(),
+            r.mean_stress.pascals(),
+            "when min = 0, Ma = Mm = hi/2 → alternating stress must equal mean stress"
+        );
+        assert!(
+            r.gerber_factor_of_safety.is_finite() && r.gerber_factor_of_safety > 0.0,
+            "R = 0 must yield a positive finite Gerber FOS; got {}",
+            r.gerber_factor_of_safety
         );
     }
 

@@ -130,6 +130,23 @@ pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> 
     finite_or_err(field, value, v_si)
 }
 
+/// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected),
+/// returning SI newton-millimetres. Zero is legal for cycle-moment minimums — the
+/// exact R = 0 repeated-bending case the fatigue data is defined for.
+pub(crate) fn non_negative_moment_nmm(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
+    let v = num(field, value)?;
+    if v < 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be zero or greater"
+        )));
+    }
+    let v_si = match us {
+        UnitSystem::Us => Moment::from_pound_force_inches(v).newton_millimeters(),
+        UnitSystem::Metric => v,
+    };
+    finite_or_err(field, value, v_si)
+}
+
 /// Like `non_negative_force_n` but requires the value to be strictly positive
 /// (e.g. max force, which must be greater than zero).
 pub(crate) fn positive_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
@@ -276,6 +293,7 @@ pub(crate) fn fmt_angle_deg(deg: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
     use springcore::SpringError;
 
     #[test]
@@ -405,5 +423,24 @@ mod tests {
     fn fmt_angle_deg_round_trips() {
         let v = -42.5_f64;
         assert_eq!(angle_deg("angle", &fmt_angle_deg(v)).unwrap(), v);
+    }
+
+    #[test]
+    fn non_negative_moment_allows_zero_rejects_negative_converts_us() {
+        assert_eq!(
+            non_negative_moment_nmm("fatigue min", "0", UnitSystem::Metric).unwrap(),
+            0.0
+        );
+        let err = non_negative_moment_nmm("fatigue min", "-1", UnitSystem::Metric).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("fatigue min must be zero or greater"));
+        // 1 lbf·in = 112.98482... N·mm (the moment conversion, not force).
+        assert_relative_eq!(
+            non_negative_moment_nmm("fatigue max", "1", UnitSystem::Us).unwrap(),
+            4.4482216152605 * 0.0254 * 1000.0,
+            max_relative = 1e-9
+        );
+        assert!(non_negative_moment_nmm("fatigue min", "nan", UnitSystem::Metric).is_err());
     }
 }

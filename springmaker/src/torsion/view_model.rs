@@ -11,8 +11,56 @@ use crate::presenter::{
     unit_force_label, unit_length_label, unit_moment_label, unit_stress_label, Emphasis,
     FieldDescriptor, ResultRow, StatusLine,
 };
-use crate::torsion::form::{Field, MomentEntry, TorFormOutcome, TorScenarioKind};
+use crate::torsion::form::{Field, MomentEntry, TorFatigueStatus, TorFormOutcome, TorScenarioKind};
 use springcore::torsion::{TorBindingConstraint, TorsionDesign};
+
+// ── Fatigue section ───────────────────────────────────────────────────────────
+
+/// Fatigue section state (compression's shape).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TorFatigueView {
+    /// Suppressed: a min-weight result occupies the panel instead.
+    Hidden,
+    /// Fatigue analysis succeeded; readout rows.
+    Computed(Vec<ResultRow>),
+    /// A muted note (no data / not attempted).
+    Note(&'static str),
+}
+
+/// Shown when cycle moments were supplied but the material has no bending data.
+const TOR_FATIGUE_NO_DATA: &str = "No fatigue data for this material.";
+/// Shown when the user left the cycle moments blank.
+const TOR_FATIGUE_SKIPPED: &str = "Enter min and max cycle moments to compute fatigue.";
+
+/// Map a solved outcome's fatigue status to the presenter type.
+fn tor_fatigue_view(out: &TorFormOutcome, us: springcore::UnitSystem) -> TorFatigueView {
+    if out.min_weight.is_some() {
+        return TorFatigueView::Hidden;
+    }
+    match &out.fatigue {
+        TorFatigueStatus::Skipped => TorFatigueView::Note(TOR_FATIGUE_SKIPPED),
+        TorFatigueStatus::NoData => TorFatigueView::Note(TOR_FATIGUE_NO_DATA),
+        TorFatigueStatus::Computed(r) => {
+            let (alt_val, alt_lbl) = display_stress(r.alternating_stress, us);
+            let (mean_val, mean_lbl) = display_stress(r.mean_stress, us);
+            let (se_val, se_lbl) = display_stress(r.fully_reversed_endurance, us);
+            let (sut_val, sut_lbl) = display_stress(r.ultimate_tensile, us);
+            let (sa_val, sa_lbl) = display_stress(r.strength_amplitude, us);
+            TorFatigueView::Computed(vec![
+                ResultRow::new("Alternating stress", format!("{alt_val:.2}"), alt_lbl),
+                ResultRow::new("Mean stress", format!("{mean_val:.2}"), mean_lbl),
+                ResultRow::new("Endurance (Se)", format!("{se_val:.2}"), se_lbl),
+                ResultRow::new("Ultimate tensile (Sut)", format!("{sut_val:.2}"), sut_lbl),
+                ResultRow::new("Strength amplitude (Sa)", format!("{sa_val:.2}"), sa_lbl),
+                ResultRow::new(
+                    "Gerber FOS",
+                    format!("{:.3}", r.gerber_factor_of_safety),
+                    "",
+                ),
+            ])
+        }
+    }
+}
 
 // ── Torsion load-point table ─────────────────────────────────────────────────
 
@@ -110,6 +158,8 @@ pub struct TorPopulatedResults {
     pub load_table: TorLoadTable,
     /// Min-weight optimisation rows (MinWeight solves only).
     pub min_weight: Option<Vec<ResultRow>>,
+    /// Fatigue section (Skipped / NoData / Computed rows).
+    pub(crate) fatigue: TorFatigueView,
 }
 
 /// Geometry summary rows: spring index and effective active coils.
@@ -152,6 +202,7 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
                 geometry: geometry_rows(&out.design),
                 load_table: tor_load_table(&out.design, us),
                 min_weight: tor_min_weight_rows(out),
+                fatigue: tor_fatigue_view(out, us),
             }))
         }
         None => match &app.error {
@@ -292,6 +343,21 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
             ),
         ],
     }
+}
+
+/// The fatigue cycle-moment fields, a SEPARATE descriptor group rendered under
+/// the primary inputs (compression's verified shape). Empty for MinWeight —
+/// that scenario shows no fatigue inputs, so its `is_blank` arm excludes the
+/// fields too.
+pub fn tor_fatigue_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
+    if app.torsion.scenario == TorScenarioKind::MinWeight {
+        return Vec::new();
+    }
+    let moment = unit_moment_label(app.unit_system);
+    vec![
+        FieldDescriptor::new(format!("Min cycle moment ({moment})"), Field::FatigueMin),
+        FieldDescriptor::new(format!("Max cycle moment ({moment})"), Field::FatigueMax),
+    ]
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -912,5 +978,92 @@ mod tests {
             .any(|f| f.label == "Candidate wire diameters (mm), comma-separated"));
         assert!(fields.iter().any(|f| f.label == "Index min"));
         assert!(!fields.iter().any(|f| f.label.contains("Moments")));
+    }
+
+    // ── fatigue inputs group ─────────────────────────────────────────────────
+
+    #[test]
+    fn fatigue_inputs_view_two_unit_aware_descriptors() {
+        let app = fresh_app_torsion();
+        let fields = tor_fatigue_inputs_view(&app);
+        let labels: Vec<&str> = fields.iter().map(|fd| fd.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["Min cycle moment (N·mm)", "Max cycle moment (N·mm)"]
+        );
+        let kinds: Vec<Field> = fields.iter().map(|fd| fd.field).collect();
+        assert_eq!(kinds, vec![Field::FatigueMin, Field::FatigueMax]);
+
+        let mut us_app = fresh_app_torsion();
+        us_app.unit_system = UnitSystem::Us;
+        assert!(
+            tor_fatigue_inputs_view(&us_app)
+                .iter()
+                .all(|fd| fd.label.contains("lbf·in")),
+            "US labels must use lbf·in"
+        );
+    }
+
+    #[test]
+    fn fatigue_inputs_view_empty_for_min_weight() {
+        let mut app = fresh_app_torsion();
+        app.torsion.scenario = crate::torsion::form::TorScenarioKind::MinWeight;
+        assert!(tor_fatigue_inputs_view(&app).is_empty());
+    }
+
+    // ── fatigue presenter ────────────────────────────────────────────────────
+
+    /// Helper: a solved torsion outcome with fatigue cycle moments filled.
+    fn app_with_tor_fatigue(fatigue_min: &str, fatigue_max: &str) -> App {
+        app_with_tor(TorFormState {
+            fatigue_min: fatigue_min.into(),
+            fatigue_max: fatigue_max.into(),
+            ..metric_form()
+        })
+    }
+
+    #[test]
+    fn fatigue_view_skipped_note_when_cycle_moments_blank() {
+        // Blank fatigue fields → muted "not attempted" note.
+        let p = tor_populated(&app_with_tor(metric_form()));
+        assert_eq!(p.fatigue, TorFatigueView::Note(TOR_FATIGUE_SKIPPED));
+    }
+
+    #[test]
+    fn fatigue_view_computed_for_music_wire_with_cycle_moments() {
+        // Music Wire has Table 10-10 data → Computed row set with spec §C labels.
+        let p = tor_populated(&app_with_tor_fatigue("100", "500"));
+        let TorFatigueView::Computed(rows) = &p.fatigue else {
+            panic!("expected Computed, got {:?}", p.fatigue);
+        };
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Alternating stress",
+                "Mean stress",
+                "Endurance (Se)",
+                "Ultimate tensile (Sut)",
+                "Strength amplitude (Sa)",
+                "Gerber FOS",
+            ]
+        );
+    }
+
+    #[test]
+    fn fatigue_view_no_data_note_for_material_without_bending_fatigue() {
+        // Oil-Tempered Wire has no Table 10-10 bending data → "no data" note.
+        let mut app = app_with_tor_fatigue("100", "500");
+        app.material = "Oil-Tempered Wire".into();
+        app.recompute();
+        let p = tor_populated(&app);
+        assert_eq!(p.fatigue, TorFatigueView::Note(TOR_FATIGUE_NO_DATA));
+    }
+
+    #[test]
+    fn fatigue_view_hidden_for_min_weight_run() {
+        // MinWeight solves suppress the fatigue section entirely.
+        let p = tor_populated(&app_with_tor(min_weight_form_fixture()));
+        assert_eq!(p.fatigue, TorFatigueView::Hidden);
     }
 }
