@@ -210,14 +210,21 @@ pub fn solve_forward(
 
     // Output-finiteness guard (the cross-family hardening standard): a
     // finite-input overflow anywhere in the chain must never escape as Ok.
-    if [rate.newtons_per_meter(), at_solid.shear_stress.pascals()]
-        .into_iter()
-        .chain(
-            load_points
-                .iter()
-                .flat_map(|lp| [lp.shear_stress.pascals(), lp.deflection.meters()]),
-        )
-        .any(|v| !v.is_finite())
+    // `at_solid.deflection` is included: with no load points the per-load
+    // chain is vacuous, and rate=0 (from a diameter overflow) makes
+    // at_solid.deflection = 0/0 = NaN — it must be caught here.
+    if [
+        rate.newtons_per_meter(),
+        at_solid.shear_stress.pascals(),
+        at_solid.deflection.meters(),
+    ]
+    .into_iter()
+    .chain(
+        load_points
+            .iter()
+            .flat_map(|lp| [lp.shear_stress.pascals(), lp.deflection.meters()]),
+    )
+    .any(|v| !v.is_finite())
     {
         return Err(SpringError::InconsistentInputs(
             "conical solve produced a non-finite result (inputs exceed the representable range)"
@@ -884,6 +891,27 @@ mod tests {
                 .iter()
                 .any(|msg| msg.message.contains("stress at solid")),
             "at-solid stress exactly at set allowable must not trigger warning"
+        );
+    }
+
+    #[test]
+    fn empty_loads_with_overflow_diameters_trip_the_output_guard() {
+        // rate denominator overflows → rate = 0.0 (finite); with no load points the
+        // per-load checks are vacuous, so at_solid.deflection = 0/0 = NaN must be
+        // caught by the at_solid.deflection element of the guard.
+        let m = crate::test_support::music_wire();
+        let i = ConicalInputs {
+            wire_dia: Length::from_millimeters(2.0),
+            large_mean_dia: Length::from_millimeters(1e200),
+            small_mean_dia: Length::from_millimeters(1e200),
+            active_coils: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(&m, &i, &[], crate::CurvatureCorrection::Bergstrasser);
+        assert_eq!(
+            msg(result),
+            "conical solve produced a non-finite result (inputs exceed the representable range)"
         );
     }
 }

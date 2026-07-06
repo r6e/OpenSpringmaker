@@ -128,9 +128,17 @@ compute → output; each message pinned):**
    verified at plan time and copied verbatim).
 6. Loads: each finite and ≥ 0 (compression's engine treatment mirrored).
 7. Output guard before `Ok` (the hardening standard): rate, every load
-   point's stress/deflection, and at_solid's stress all finite, else
-   `"conical solve produced a non-finite result (inputs exceed the
-   representable range)"` (the established message shape).
+   point's stress/deflection, and **at_solid's stress and deflection** all
+   finite, else `"conical solve produced a non-finite result (inputs exceed
+   the representable range)"` (the established message shape). **Final panel
+   (2026-07-06) found the empty-loads NaN escape**: with `loads = &[]` and
+   huge-but-finite diameters (≥ ~1e152 mm) the rate denominator overflows to
+   Inf → rate = 0.0 (finite), the per-load chain is vacuous, and
+   at_solid.deflection = 0/0 = NaN slipped the original guard (which omitted
+   at_solid.deflection). Fixed in-branch: `at_solid.deflection.meters()`
+   added to the guarded array. The compression sibling hole (no output guard
+   at all) was also found and fixed in-branch (sweep-sibling standard; both
+   fixes in the same commit).
 
 **`evaluate_status`:** index caution at BOTH ends with end-labeled messages
 (the shared 4–12 band; message shape mirrors `index_caution` with a
@@ -206,7 +214,9 @@ The GUI increment (own spec) replaces the placeholders.
   boundary, including exactly-at (≥ semantics pinned).
 - **Guard matrix:** every message pinned exactly; precedence (bad wire beats
   bad mean beats bad ordering beats bad loads); zero-taper accepted; the
-  1e305-load output-guard case; NaN/∞ inputs per guard.
+  1e305-load output-guard case; NaN/∞ inputs per guard; **empty-loads +
+  overflow-diameter NaN regression** (final panel finding; also the twin
+  in compression — see §A item 7).
 - **Status set:** both index cautions (end-labeled), overstress at a load
   point, solid stress, telescoping Info present/absent.
 - **Persistence:** round-trip through TOML; reject non-finite fields;
