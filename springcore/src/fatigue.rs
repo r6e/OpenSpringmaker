@@ -172,7 +172,11 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         )
         .unwrap_err();
-        assert!(matches!(err, crate::SpringError::InconsistentInputs(_)));
+        assert!(matches!(
+            err,
+            crate::SpringError::InconsistentInputs(ref msg)
+                if msg == "max cycle force must be at least the min cycle force"
+        ));
     }
 
     #[test]
