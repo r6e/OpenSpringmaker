@@ -706,6 +706,42 @@ moments_nmm = [1000.0]
 }
 
 #[test]
+fn torsion_min_weight_e2e_and_save_load() {
+    use crate::torsion::form::{Field as TF, TorScenarioKind};
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    app.update(Message::TorScenario(TorScenarioKind::MinWeight));
+    app.update(Message::TorFriction(
+        springcore::torsion::FrictionModel::PureBending,
+    ));
+    type_into_tor(&mut app, TF::Rate, "8.875");
+    type_into_tor(&mut app, TF::MaxMoment, "100");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::CandidateDiameters, "1.5, 2, 2.5");
+    let out = app.tor_outcome.as_ref().expect("MinWeight must solve");
+    assert!(out.min_weight.is_some(), "the optimisation extra is filled");
+
+    let dir = std::env::temp_dir().join(format!("osm_tor_mw_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("minweight.toml");
+    app.update(Message::TorDiaPolicy(
+        springcore::torsion::DiaPolicy::Compact,
+    ));
+    app.save_to(&path);
+    let mut app2 = test_app();
+    assert!(app2.load_from(&path));
+    assert_eq!(app2.torsion.scenario, TorScenarioKind::MinWeight);
+    assert!(app2.torsion.candidate_diameters.contains("1.5"));
+    assert_eq!(
+        app2.torsion.dia_policy,
+        springcore::torsion::DiaPolicy::Compact,
+        "policy round-trips through save/load"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn ext_scenario_switch_solves_each_mode() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));

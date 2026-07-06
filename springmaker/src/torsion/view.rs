@@ -13,9 +13,9 @@ use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
-    field_label, labeled_input, material_picker, panel_container, render_result_row, results_empty,
-    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
-    SZ_LABEL,
+    divided_result_section, field_label, labeled_input, material_picker, panel_container,
+    render_result_row, results_empty, results_error, rows_section, section_divider,
+    section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -38,7 +38,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let mut setup_group =
         column![section_heading("Setup"), material_picker(app), scenario_col].spacing(10);
 
-    if app.torsion.scenario != TorScenarioKind::TwoLoad {
+    if app.torsion.scenario != TorScenarioKind::TwoLoad
+        && app.torsion.scenario != TorScenarioKind::MinWeight
+    {
         setup_group = setup_group.push(
             column![
                 field_label("Moment entry"),
@@ -46,6 +48,20 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                     ALL_MOMENT_ENTRIES,
                     Some(app.torsion.moment_entry),
                     Message::TorMomentEntry,
+                ),
+            ]
+            .spacing(4),
+        );
+    }
+
+    if app.torsion.scenario == TorScenarioKind::MinWeight {
+        setup_group = setup_group.push(
+            column![
+                field_label("Diameter policy"),
+                styled_pick_list(
+                    springcore::torsion::ALL_DIA_POLICIES,
+                    Some(app.torsion.dia_policy),
+                    Message::TorDiaPolicy,
                 ),
             ]
             .spacing(4),
@@ -102,6 +118,11 @@ fn tor_field_value(form: &TorFormState, field: Field) -> &str {
         Field::Angle2 => &form.angle2,
         Field::Forces => &form.forces,
         Field::LoadRadius => &form.load_radius,
+        Field::MaxMoment => &form.max_moment,
+        Field::IndexMin => &form.index_min,
+        Field::IndexMax => &form.index_max,
+        Field::MaxOuterDia => &form.max_outer_dia,
+        Field::CandidateDiameters => &form.candidate_diameters,
     }
 }
 
@@ -126,6 +147,11 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
         Field::Angle2 => "tor-angle2",
         Field::Forces => "tor-forces",
         Field::LoadRadius => "tor-load-radius",
+        Field::MaxMoment => "tor-max-moment",
+        Field::IndexMin => "tor-index-min",
+        Field::IndexMax => "tor-index-max",
+        Field::MaxOuterDia => "tor-max-outer-dia",
+        Field::CandidateDiameters => "tor-candidate-diameters",
     }
 }
 
@@ -228,7 +254,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
             rate_col = rate_col.push(render_result_row(&p.rate_per_turn));
 
-            column![
+            let mut col = column![
                 section_heading("Results"),
                 section_divider(),
                 rate_col,
@@ -237,8 +263,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 section_divider(),
                 render_tor_load_table(&p.load_table),
             ]
-            .spacing(6)
-            .into()
+            .spacing(6);
+
+            if let Some(rows) = &p.min_weight {
+                col = col.push(divided_result_section("Min-weight optimisation", rows));
+            }
+
+            col.into()
         }
     };
 

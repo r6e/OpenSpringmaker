@@ -23,7 +23,7 @@ use crate::{Result, SpringError};
 /// D-independent at fixed rate and wire (module doc), so D is policy, not
 /// optimization.
 #[non_exhaustive] // sibling parity (HookSpec precedent): variants may be added
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum DiaPolicy {
     /// Largest allowed D: minimum bending stress (K_bi falls with index), maximum
     /// margin (default).
@@ -35,6 +35,18 @@ pub enum DiaPolicy {
     /// or the index floor.
     Compact,
 }
+
+impl std::fmt::Display for DiaPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DiaPolicy::MaxMargin => "Max Margin",
+            DiaPolicy::Compact => "Compact",
+        })
+    }
+}
+
+/// All `DiaPolicy` variants in display order (pick-list source).
+pub const ALL_DIA_POLICIES: &[DiaPolicy] = &[DiaPolicy::MaxMargin, DiaPolicy::Compact];
 
 /// Which constraint bound the chosen design.
 #[non_exhaustive]
@@ -821,6 +833,16 @@ mod tests {
         // Mutant:   `>=` is true → skips → Infeasible.
         solve_min_weight(&m, &req)
             .expect("stress == allow passes the strict `>` guard; the `>=` mutant rejects it");
+    }
+
+    #[test]
+    fn dia_policy_display_and_all_const() {
+        assert_eq!(DiaPolicy::MaxMargin.to_string(), "Max Margin");
+        assert_eq!(DiaPolicy::Compact.to_string(), "Compact");
+        assert_eq!(
+            ALL_DIA_POLICIES,
+            &[DiaPolicy::MaxMargin, DiaPolicy::Compact]
+        );
     }
 
     #[test]

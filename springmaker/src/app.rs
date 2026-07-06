@@ -159,6 +159,7 @@ pub enum Message {
     TorFriction(springcore::torsion::FrictionModel),
     TorScenario(crate::torsion::form::TorScenarioKind),
     TorMomentEntry(crate::torsion::form::MomentEntry),
+    TorDiaPolicy(springcore::torsion::DiaPolicy),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -417,6 +418,10 @@ impl App {
             }
             Message::TorMomentEntry(m) => {
                 self.torsion.moment_entry = m;
+                true
+            }
+            Message::TorDiaPolicy(p) => {
+                self.torsion.dia_policy = p;
                 true
             }
             Message::Material(m) => {
@@ -720,6 +725,11 @@ impl App {
             TF::Angle2 => f.angle2 = value,
             TF::Forces => f.forces = value,
             TF::LoadRadius => f.load_radius = value,
+            TF::MaxMoment => f.max_moment = value,
+            TF::IndexMin => f.index_min = value,
+            TF::IndexMax => f.index_max = value,
+            TF::MaxOuterDia => f.max_outer_dia = value,
+            TF::CandidateDiameters => f.candidate_diameters = value,
         }
     }
 

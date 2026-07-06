@@ -160,6 +160,21 @@ pub enum TorsionSpec {
         moment2_nmm: f64,
         angle2_deg: f64,
     },
+    MinWeight {
+        /// Required angular rate in N·mm per degree (the family's storage flavor).
+        rate_nmm_per_deg: f64,
+        max_moment_nmm: f64,
+        leg1_mm: f64,
+        leg2_mm: f64,
+        arbor_dia_mm: Option<f64>,
+        friction_model: crate::torsion::FrictionModel,
+        dia_policy: crate::torsion::DiaPolicy,
+        index_min: f64,
+        index_max: f64,
+        /// Optional outer-diameter cap; missing key → None (documented rule).
+        max_outer_dia_mm: Option<f64>,
+        candidate_diameters_mm: Vec<f64>,
+    },
 }
 
 /// Extension scenario inputs (SI millimetres / newtons, as stored). 1c adds the other modes.
@@ -1423,6 +1438,121 @@ angle2_deg = 114.59156
             SavedDesign::from_toml(toml),
             Err(SpringError::DataFile(_))
         ));
+    }
+
+    #[test]
+    fn torsion_min_weight_round_trips_both_options_and_policies() {
+        use crate::torsion::{DiaPolicy, FrictionModel};
+        for design in [
+            DesignSpec::Torsion(TorsionSpec::MinWeight {
+                rate_nmm_per_deg: 8.875,
+                max_moment_nmm: 100.0,
+                leg1_mm: 10.0,
+                leg2_mm: 0.0,
+                arbor_dia_mm: Some(10.0),
+                friction_model: FrictionModel::PureBending,
+                dia_policy: DiaPolicy::MaxMargin,
+                index_min: 4.0,
+                index_max: 12.0,
+                max_outer_dia_mm: Some(30.0),
+                candidate_diameters_mm: vec![1.5, 2.0, 2.5],
+            }),
+            DesignSpec::Torsion(TorsionSpec::MinWeight {
+                rate_nmm_per_deg: 8.875,
+                max_moment_nmm: 100.0,
+                leg1_mm: 0.0,
+                leg2_mm: 0.0,
+                arbor_dia_mm: None,
+                friction_model: FrictionModel::ShigleyFriction,
+                dia_policy: DiaPolicy::Compact,
+                index_min: 4.0,
+                index_max: 12.0,
+                max_outer_dia_mm: None,
+                candidate_diameters_mm: vec![2.0],
+            }),
+        ] {
+            let saved = SavedDesign {
+                material: "Music Wire".into(),
+                unit_system: UnitSystem::Metric,
+                design,
+            };
+            let back = SavedDesign::from_toml(&saved.to_toml().unwrap()).unwrap();
+            assert_eq!(saved, back);
+        }
+    }
+
+    #[test]
+    fn torsion_min_weight_missing_required_field_errors() {
+        // dia_policy omitted → DataFile (only the two *_mm Options may be absent).
+        let toml = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "MinWeight"
+rate_nmm_per_deg = 8.875
+max_moment_nmm = 100.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "PureBending"
+index_min = 4.0
+index_max = 12.0
+candidate_diameters_mm = [2.0]
+"#;
+        assert!(matches!(
+            SavedDesign::from_toml(toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn torsion_min_weight_rejects_non_finite_candidate_and_bound() {
+        // Two complete fixtures: a non-finite Vec ENTRY and a non-finite scalar bound —
+        // both must trip reject_non_finite's tree-walk.
+        const NON_FINITE_CANDIDATE: &str = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "MinWeight"
+rate_nmm_per_deg = 8.875
+max_moment_nmm = 100.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "PureBending"
+dia_policy = "MaxMargin"
+index_min = 4.0
+index_max = 12.0
+candidate_diameters_mm = [2.0, inf]
+"#;
+        const NON_FINITE_BOUND: &str = r#"
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "MinWeight"
+rate_nmm_per_deg = 8.875
+max_moment_nmm = 100.0
+leg1_mm = 0.0
+leg2_mm = 0.0
+friction_model = "PureBending"
+dia_policy = "MaxMargin"
+index_min = inf
+index_max = 12.0
+candidate_diameters_mm = [2.0]
+"#;
+        for (name, toml) in [
+            ("candidate", NON_FINITE_CANDIDATE),
+            ("bound", NON_FINITE_BOUND),
+        ] {
+            assert!(
+                matches!(SavedDesign::from_toml(toml), Err(SpringError::DataFile(_))),
+                "non-finite {name} must be rejected"
+            );
+        }
     }
 
     #[test]
