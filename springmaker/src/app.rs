@@ -1461,6 +1461,52 @@ mod tests {
         assert!(app.ext_outcome.is_none());
     }
 
+    // ── Conical family: cross-family outcome clearing ────────────────────────
+
+    /// Switching to the Conical family must clear stale outcomes from every
+    /// other family so the results panel can never show residual data.
+    #[test]
+    fn switching_to_conical_clears_other_family_outcomes() {
+        use springcore::Family;
+        let mut app = solved_app();
+        assert!(app.outcome.is_some(), "pre-condition: compression solved");
+        app.update(Message::SelectFamily(Family::Conical));
+        assert!(
+            app.outcome.is_none(),
+            "switching to Conical must clear compression outcome"
+        );
+        assert!(
+            app.ext_outcome.is_none(),
+            "switching to Conical must clear extension outcome"
+        );
+        assert!(
+            app.tor_outcome.is_none(),
+            "switching to Conical must clear torsion outcome"
+        );
+    }
+
+    /// Switching away from the Conical family must clear the conical outcome so
+    /// the results panel can never show stale data when another family is active.
+    #[test]
+    fn switching_away_from_conical_clears_con_outcome() {
+        use springcore::Family;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Conical));
+        app.conical.wire_dia = "2".into();
+        app.conical.large_mean_dia = "20".into();
+        app.conical.small_mean_dia = "12".into();
+        app.conical.active = "10".into();
+        app.conical.free_length = "60".into();
+        app.conical.loads = "10".into();
+        app.recompute();
+        assert!(app.con_outcome.is_some(), "fixture should solve");
+        app.update(Message::SelectFamily(Family::Compression));
+        assert!(
+            app.con_outcome.is_none(),
+            "switching away from Conical must clear conical outcome"
+        );
+    }
+
     // ── Conical family: apply_saved integration test ─────────────────────────
 
     #[test]
