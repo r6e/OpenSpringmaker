@@ -370,7 +370,7 @@ fn parse_candidate_diameters_mm(form: &TorFormState, us: UnitSystem) -> Result<V
         .collect::<Result<_>>()?;
     if candidates.is_empty() {
         return Err(springcore::SpringError::InconsistentInputs(
-            "provide at least one candidate diameter".into(),
+            "provide at least one candidate wire diameter".into(),
         ));
     }
     Ok(candidates)
@@ -1248,7 +1248,7 @@ mod tests {
             .expect_err("empty candidate list rejected at the form boundary");
         assert!(
             err.to_string()
-                .contains("provide at least one candidate diameter"),
+                .contains("provide at least one candidate wire diameter"),
             "form guard message expected; got: {err}"
         );
     }

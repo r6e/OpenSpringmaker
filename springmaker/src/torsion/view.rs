@@ -13,9 +13,9 @@ use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{tor_inputs_view, tor_results_view, TorLoadTable, TorResultsView};
 use crate::widgets::{
-    field_label, labeled_input, material_picker, panel_container, render_result_row, results_empty,
-    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
-    SZ_LABEL,
+    divided_result_section, field_label, labeled_input, material_picker, panel_container,
+    render_result_row, results_empty, results_error, rows_section, section_divider,
+    section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -266,8 +266,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             .spacing(6);
 
             if let Some(rows) = &p.min_weight {
-                col = col.push(section_divider());
-                col = col.push(rows_section("Optimization", rows));
+                col = col.push(divided_result_section("Min-weight optimisation", rows));
             }
 
             col.into()

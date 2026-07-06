@@ -725,11 +725,19 @@ fn torsion_min_weight_e2e_and_save_load() {
     let dir = std::env::temp_dir().join(format!("osm_tor_mw_e2e_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("minweight.toml");
+    app.update(Message::TorDiaPolicy(
+        springcore::torsion::DiaPolicy::Compact,
+    ));
     app.save_to(&path);
     let mut app2 = test_app();
     assert!(app2.load_from(&path));
     assert_eq!(app2.torsion.scenario, TorScenarioKind::MinWeight);
     assert!(app2.torsion.candidate_diameters.contains("1.5"));
+    assert_eq!(
+        app2.torsion.dia_policy,
+        springcore::torsion::DiaPolicy::Compact,
+        "policy round-trips through save/load"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

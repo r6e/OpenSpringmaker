@@ -61,7 +61,7 @@ variant names (`"MaxMargin"`/`"Compact"`), consistent with every persisted enum.
   `tor-candidate-diameters` via `tor_field_id`.
 - Private `parse_candidate_diameters_mm(form, us) -> Result<Vec<f64>>` mirroring
   extension's (split ',', trim, skip empties, `length_mm("candidate diameter", …)`
-  each, non-empty guard "provide at least one candidate diameter").
+  each, non-empty guard "provide at least one candidate wire diameter").
 - **parse_and_solve MinWeight arm** builds `TorMinWeightRequest`:
   - `required_rate`: the existing `ang_rate_nmm_per_deg("rate", …)` → `/1000` →
     `AngularRate::from_newton_meters_per_degree` chain (RateBased's exact path);
@@ -104,9 +104,11 @@ variant names (`"MaxMargin"`/`"Compact"`), consistent with every persisted enum.
   the match "bending stress" / "index" / "outer diameter" and the documented
   `_ => "other"` wildcard (`TorBindingConstraint` is `#[non_exhaustive]` and
   springmaker is downstream). `TorPopulatedResults` gains `pub min_weight:
-  Option<Vec<ResultRow>>`; the view renders it as an "Optimization" `rows_section`
-  between the rate section and Geometry when present. Everything else (rate rows,
-  geometry, the load table with the single max-moment point) renders unchanged.
+  Option<Vec<ResultRow>>`; the view renders it via the shared
+  `divided_result_section("Min-weight optimisation", …)` AFTER the load table —
+  the sibling families' convention (extension view.rs:310, compression view.rs:325).
+  Everything else (rate rows, geometry, the load table with the single max-moment
+  point) renders unchanged.
 - The winning wire/mean diameters already surface through the geometry/load rows
   (index, wound ID) — extension precedent: no dedicated "chosen diameter" row; the
   design's inputs are visible via populate-on-save or the load table. (Deliberate:
