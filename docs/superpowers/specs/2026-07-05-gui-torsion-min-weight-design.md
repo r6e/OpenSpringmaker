@@ -96,7 +96,7 @@ variant names (`"MaxMargin"`/`"Compact"`), consistent with every persisted enum.
 - `tor_inputs_view` MinWeight arm (unit-aware labels): Rate ({moment}/°) — reused
   descriptor; `Max moment ({moment})`; `Leg 1/Leg 2 ({len})`; `Arbor diameter
   ({len}, optional)`; `Index min` / `Index max` (unitless); `Max outer diameter
-  ({len}, optional)`; `Candidate diameters ({len}), comma-separated`. No moments /
+  ({len}, optional)`; `Candidate wire diameters ({len}), comma-separated`. No moments /
   forces / body-coils descriptors.
 - New presenter fn `tor_min_weight_rows(out) -> Option<Vec<ResultRow>>` mirroring
   extension's: `None` unless `out.min_weight` is Some; rows `("Wire mass",

@@ -287,7 +287,7 @@ pub fn tor_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
                 Field::MaxOuterDia,
             ),
             FieldDescriptor::new(
-                format!("Candidate diameters ({len}), comma-separated"),
+                format!("Candidate wire diameters ({len}), comma-separated"),
                 Field::CandidateDiameters,
             ),
         ],
@@ -909,7 +909,7 @@ mod tests {
         assert_eq!(fields.len(), 9);
         assert!(fields
             .iter()
-            .any(|f| f.label == "Candidate diameters (mm), comma-separated"));
+            .any(|f| f.label == "Candidate wire diameters (mm), comma-separated"));
         assert!(fields.iter().any(|f| f.label == "Index min"));
         assert!(!fields.iter().any(|f| f.label.contains("Moments")));
     }
