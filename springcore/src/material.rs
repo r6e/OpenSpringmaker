@@ -202,8 +202,11 @@ pub struct EnduranceDraft {
 /// Editable bending-fatigue data within a [`MaterialDraft`]. Fractions of Sut.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BendingFatigueDraft {
+    /// Sr/Sut at 10⁵ cycles.
     pub sr_pct_1e5: f64,
+    /// Sr/Sut at 10⁶ cycles.
     pub sr_pct_1e6: f64,
+    /// Whether the values are the shot-peened column.
     pub peened: bool,
 }
 
