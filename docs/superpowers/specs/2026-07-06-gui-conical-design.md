@@ -106,9 +106,13 @@ pub struct ConPopulatedResults {
     pub governing_rate: GoverningRate,
     pub geometry: Vec<ResultRow>,
     pub load_table: LoadTable,
-    pub status: Vec<StatusLine>,
 }
 ```
+
+> **Implementation note (panel finding):** The `pub status: Vec<StatusLine>` field originally
+> specified here was dropped. §D specifies a single shared `status_panel` across all families —
+> status renders once via that shared path, not via a field on `ConPopulatedResults`.
+> Including the field in the struct would have been dead data never read by `render_populated`.
 
 Geometry rows (labels exact; every numeric via `fmt_row_value`; lengths via
 `display_len` + unit label, indices/coils unitless):

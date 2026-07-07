@@ -134,7 +134,7 @@ pub fn populate_from_spec(form: &mut ConFormState, spec: &ConicalSpec, us: UnitS
             form.wire_dia = fmt_len(*wire_dia_mm, us);
             form.large_mean_dia = fmt_len(*large_mean_dia_mm, us);
             form.small_mean_dia = fmt_len(*small_mean_dia_mm, us);
-            form.active = format!("{active}");
+            form.active = active.to_string();
             form.free_length = fmt_len(*free_length_mm, us);
             form.loads = fmt_loads(loads_n, us);
         }

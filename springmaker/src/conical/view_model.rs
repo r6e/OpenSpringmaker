@@ -27,7 +27,6 @@ pub struct ConPopulatedResults {
     pub governing_rate: GoverningRate,
     pub geometry: Vec<ResultRow>,
     pub load_table: LoadTable,
-    pub status: Vec<StatusLine>,
 }
 
 /// The three mutually-exclusive states of the conical results panel.
@@ -64,7 +63,6 @@ fn con_populated_results(out: &super::form::ConFormOutcome, app: &App) -> ConPop
         governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: con_geometry_rows(d, us),
         load_table: con_load_table(d, us),
-        status: con_status_view(app),
     }
 }
 
@@ -234,21 +232,6 @@ mod tests {
             ConResultsView::Populated(p) => *p,
             other => panic!("expected Populated, got {other:?}"),
         }
-    }
-
-    // ── pre-existing: Empty / Error ─────────────────────────────────────────
-
-    #[test]
-    fn con_results_view_error_when_error_set() {
-        let mut app = fresh_app_conical();
-        app.error = Some("bad input".to_string());
-        assert!(matches!(con_results_view(&app), ConResultsView::Error(_)));
-    }
-
-    #[test]
-    fn con_results_view_empty_on_fresh_conical() {
-        let app = fresh_app_conical();
-        assert_eq!(con_results_view(&app), ConResultsView::Empty);
     }
 
     // ── geometry_rows_exact ─────────────────────────────────────────────────

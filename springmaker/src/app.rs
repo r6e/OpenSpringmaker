@@ -208,10 +208,11 @@ pub struct App {
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
-    /// Solve error: set/cleared by [`App::recompute`]. Exclusive pair with
-    /// `outcome` (Compression) or `ext_outcome` (Extension) depending on the active
-    /// family — a present outcome means the solve succeeded. Surfaced in the results
-    /// panel only when the corresponding outcome is `None`.
+    /// Solve error for the active family: set/cleared by [`App::recompute`].
+    /// Exclusive with that family's outcome field — a present outcome means the
+    /// solve succeeded and `error` is `None`. Shared by all four families
+    /// (Compression, Extension, Torsion, Conical). Surfaced in the results panel
+    /// only when the active family's outcome is `None`.
     pub error: Option<String>,
     /// Save/load action error. Independent of `outcome`/`error` so a failed save
     /// or load is surfaced (in the status panel) without wiping the design the
@@ -353,6 +354,7 @@ impl App {
                 }
             }
             Family::Torsion => {
+                // Stale compression/extension/conical outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
                 self.con_outcome = None;
@@ -902,7 +904,10 @@ impl App {
     pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
-            Ok(saved) => self.apply_saved(saved),
+            Ok(saved) => {
+                self.apply_saved(saved);
+                true
+            }
             Err(e) => {
                 self.action_error = Some(e.to_string());
                 false
@@ -912,9 +917,9 @@ impl App {
 
     /// Apply a successfully-parsed `SavedDesign` to the form.
     ///
-    /// Returns `true` when the form was mutated (all current families apply).
-    /// The caller recomputes after a `true` return to surface the loaded design.
-    fn apply_saved(&mut self, saved: SavedDesign) -> bool {
+    /// All recognised families apply unconditionally; the caller recomputes
+    /// after this returns to surface the loaded design.
+    fn apply_saved(&mut self, saved: SavedDesign) {
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -951,7 +956,6 @@ impl App {
                 );
             }
         }
-        true
     }
 }
 
@@ -1561,7 +1565,7 @@ mod tests {
     #[test]
     fn loading_a_conical_design_populates_the_conical_form() {
         let mut app = test_app();
-        let applied = app.apply_saved(springcore::SavedDesign {
+        app.apply_saved(springcore::SavedDesign {
             material: "Music Wire".to_string(),
             unit_system: springcore::UnitSystem::Metric,
             design: springcore::DesignSpec::Conical(springcore::ConicalSpec::PowerUser {
@@ -1574,7 +1578,6 @@ mod tests {
                 loads_n: vec![10.0],
             }),
         });
-        assert!(applied, "conical loads now apply like any family");
         assert_eq!(app.family, springcore::Family::Conical);
         assert_eq!(app.conical.wire_dia, "2");
         assert_eq!(app.conical.large_mean_dia, "20");
