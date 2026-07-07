@@ -904,10 +904,7 @@ impl App {
     pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
-            Ok(saved) => {
-                self.apply_saved(saved);
-                true
-            }
+            Ok(saved) => self.apply_saved(saved),
             Err(e) => {
                 self.action_error = Some(e.to_string());
                 false
@@ -915,11 +912,21 @@ impl App {
         }
     }
 
-    /// Apply a successfully-parsed `SavedDesign` to the form.
-    ///
-    /// All recognised families apply unconditionally; the caller recomputes
-    /// after this returns to surface the loaded design.
-    fn apply_saved(&mut self, saved: SavedDesign) {
+    /// Apply a loaded design to the app. Returns `false` when the design's
+    /// family has no GUI yet (nothing is applied and `action_error` is set)
+    /// so `load_from` can skip the recompute that would wipe the error —
+    /// the load-path invariant from the conical increment. (The conical GUI
+    /// spec's Decision-5 reversal note anticipated this signal returning
+    /// with the next placeholder; here it is.)
+    fn apply_saved(&mut self, saved: SavedDesign) -> bool {
+        if matches!(saved.design, springcore::DesignSpec::Assembly(_)) {
+            self.action_error = Some(
+                "assembly designs are not supported by this build yet (the assembly GUI \
+                 ships in the next increment)"
+                    .into(),
+            );
+            return false;
+        }
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -955,7 +962,9 @@ impl App {
                     self.unit_system,
                 );
             }
+            springcore::DesignSpec::Assembly(_) => unreachable!("handled above"),
         }
+        true
     }
 }
 
@@ -1692,5 +1701,74 @@ mod tests {
         assert_eq!(app.conical.wire_dia, "2");
         assert_eq!(app.conical.large_mean_dia, "20");
         assert!(app.action_error.is_none());
+    }
+
+    // ── Assembly placeholder: load_from rejects and preserves state ───────────
+
+    #[test]
+    fn loading_an_assembly_design_rejects_and_preserves_form() {
+        use springcore::{AssemblyMemberSpec, AssemblySpec, DesignSpec, SavedDesign, UnitSystem};
+
+        let mut app = test_app();
+        // Pre-seed values that differ from the assembly TOML's `material`
+        // ("Music Wire") and `unit_system` (Metric), so the unchanged assertions
+        // can't pass vacuously if `apply_saved` mutates before returning false.
+        app.material = "Chrome-Vanadium".to_string();
+        app.unit_system = springcore::UnitSystem::Us;
+
+        // Write an assembly TOML to a real temp file.
+        let assembly_design = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
+                topology: "nested".to_string(),
+                fixity: "fixed_fixed".to_string(),
+                loads_n: vec![10.0, 25.0],
+                members: vec![AssemblyMemberSpec {
+                    material_name: "Music Wire".to_string(),
+                    end_type: "squared_ground".to_string(),
+                    wire_dia_mm: 2.0,
+                    mean_dia_mm: 20.0,
+                    active: 10.0,
+                    free_length_mm: 60.0,
+                }],
+            }),
+        };
+        let path =
+            std::env::temp_dir().join(format!("osm_assembly_reject_{}.toml", std::process::id()));
+        assembly_design
+            .save(&path)
+            .expect("write temp assembly TOML");
+
+        // load_from returns false — the false suppresses the caller's recompute.
+        let result = app.load_from(&path);
+        let _ = std::fs::remove_file(&path);
+
+        // Mirror `update`'s contract: `if app.load_from(&path) { app.recompute(); }`
+        // The false return means recompute was NOT called, so the error survives.
+        if result {
+            app.recompute();
+        }
+
+        assert!(
+            !result,
+            "load_from must return false for an assembly design"
+        );
+        assert!(
+            app.action_error
+                .as_deref()
+                .is_some_and(|m| m.contains("assembly designs are not supported")),
+            "action_error must contain the rejection message, got: {:?}",
+            app.action_error
+        );
+        assert_eq!(
+            app.material, "Chrome-Vanadium",
+            "material must be unchanged (reject must happen before any mutation)"
+        );
+        assert_eq!(
+            app.unit_system,
+            springcore::UnitSystem::Us,
+            "unit_system must be unchanged"
+        );
     }
 }
