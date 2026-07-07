@@ -1,6 +1,7 @@
 //! Human-readable persistence of a single design. Stores the user's inputs
 //! (not computed outputs); the design is recomputed on load.
 
+use crate::assembly::Topology;
 use crate::design::SpringDesign;
 use crate::end_type::EndType;
 use crate::material::{Material, MaterialSet};
@@ -95,6 +96,14 @@ pub enum DesignSpec {
     Extension(ExtScenarioSpec),
     Torsion(TorsionSpec),
     Conical(ConicalSpec),
+    /// Assembly of N cylindrical round-wire compression springs.
+    ///
+    /// **Decision-2 semantic**: `SavedDesign.material` is the top-level active
+    /// picker state (what the GUI had selected when the design was saved); each
+    /// `AssemblyMemberSpec.material_name` governs its member's actual solve.
+    /// The two fields are intentionally independent — the file-level material is
+    /// NOT rewritten to match members, and they may differ.
+    Assembly(AssemblySpec),
 }
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
@@ -193,6 +202,48 @@ pub enum ConicalSpec {
     },
 }
 
+/// One member in a persisted assembly. All fields are required — no
+/// `#[serde(default)]` — so a misspelled key surfaces as "missing field"
+/// rather than silently defaulting.
+///
+/// **Schema evolution rule**: any future additive field on this struct must be
+/// `Option<T>` (a missing key in the TOML deserializes to `None` without
+/// `#[serde(default)]` — see the `TorsionSpec::arbor_dia_mm` precedent). A new
+/// required field would break every existing assembly file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssemblyMemberSpec {
+    pub material_name: String,
+    pub end_type: String,
+    pub wire_dia_mm: f64,
+    pub mean_dia_mm: f64,
+    pub active: f64,
+    pub free_length_mm: f64,
+}
+
+/// Assembly scenario inputs.  `type`-tagged for forward-compat additive growth.
+///
+/// Declare `loads_n` **before** `members`: TOML `to_string_pretty` emits fields
+/// in declaration order and cannot write scalar key-values after an array-of-tables
+/// block (`[[design.members]]`) at the same level.  Named-field construction in
+/// calling code is unaffected by this ordering.
+//
+// GUARDRAIL: Do NOT add `#[serde(deny_unknown_fields)]` here. The enum is
+// flattened under `DesignSpec`'s `#[serde(tag = "family")]` internally-tagged
+// enum; serde rejects `deny_unknown_fields` in that position (same rule as
+// TorsionSpec's guardrail comment).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AssemblySpec {
+    PowerUser {
+        topology: String,
+        fixity: String,
+        /// Declare before `members` — TOML cannot emit scalars after an
+        /// array-of-tables block at the same table level.
+        loads_n: Vec<f64>,
+        members: Vec<AssemblyMemberSpec>,
+    },
+}
+
 /// Extension scenario inputs (SI millimetres / newtons, as stored). 1c adds the other modes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -276,7 +327,25 @@ pub fn parse_end_type(s: &str) -> Result<EndType> {
     })
 }
 
-fn parse_fixity(s: &str) -> Result<EndFixity> {
+/// Parse a persisted topology key ("nested" | "series").
+///
+/// The `topology` field of [`AssemblySpec`] stores a raw `String`; this
+/// function is called at solve/GUI time (not at deserialize) so that unknown
+/// values survive the TOML round-trip and produce a clear error at the point
+/// of use.
+pub fn parse_topology(s: &str) -> Result<Topology> {
+    Ok(match s {
+        "nested" => Topology::Nested,
+        "series" => Topology::Series,
+        other => return Err(SpringError::DataFile(format!("unknown topology: {other}"))),
+    })
+}
+
+/// Parse a persisted fixity key ("fixed_fixed" | "fixed_pinned" | "pinned_pinned" | "fixed_free").
+///
+/// Promoted to `pub` so the assembly GUI increment can call it without
+/// duplicating the match — same rationale as [`parse_end_type`].
+pub fn parse_fixity(s: &str) -> Result<EndFixity> {
     Ok(match s {
         "fixed_fixed" => EndFixity::FixedFixed,
         "fixed_pinned" => EndFixity::FixedPinned,
@@ -576,6 +645,11 @@ impl SavedDesign {
             DesignSpec::Conical(_) => Err(SpringError::InconsistentInputs(
                 "SavedDesign::solve handles compression designs; conical designs are solved \
                  via the conical scenario"
+                    .into(),
+            )),
+            DesignSpec::Assembly(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; assembly designs are solved \
+                 via the assembly scenario"
                     .into(),
             )),
         }
@@ -1925,5 +1999,228 @@ loads_n = [10.0]
                 if msg == "SavedDesign::solve handles compression designs; conical designs are \
                            solved via the conical scenario"
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (assembly): AssemblySpec persistence tests
+    // -----------------------------------------------------------------------
+
+    // Base TOML for assembly raw-string tests — layout verified against actual
+    // `to_toml()` output so the negative tests below can't pass vacuously on
+    // a layout mistake.  Scalars precede `[[design.members]]` (the array-of-tables
+    // block), matching the field declaration order (`loads_n` before `members`).
+    const VALID_ASSEMBLY_TOML: &str = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Assembly"
+type = "PowerUser"
+topology = "nested"
+fixity = "fixed_fixed"
+loads_n = [10.0, 25.0]
+
+[[design.members]]
+material_name = "Music Wire"
+end_type = "squared_ground"
+wire_dia_mm = 2.0
+mean_dia_mm = 20.0
+active = 10.0
+free_length_mm = 60.0
+"#;
+
+    fn member_spec() -> AssemblyMemberSpec {
+        AssemblyMemberSpec {
+            material_name: "Music Wire".to_string(),
+            end_type: "squared_ground".to_string(),
+            wire_dia_mm: 2.0,
+            mean_dia_mm: 20.0,
+            active: 10.0,
+            free_length_mm: 60.0,
+        }
+    }
+
+    #[test]
+    fn assembly_round_trips_one_and_three_members() {
+        // Anchor: VALID_ASSEMBLY_TOML must parse Ok so the round-trip tests
+        // can't pass vacuously on a layout mismatch.
+        assert!(
+            SavedDesign::from_toml(VALID_ASSEMBLY_TOML).is_ok(),
+            "base VALID_ASSEMBLY_TOML must parse Ok"
+        );
+
+        // 1-member round-trip.
+        let saved1 = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
+                topology: "nested".to_string(),
+                fixity: "fixed_fixed".to_string(),
+                loads_n: vec![10.0, 25.0],
+                members: vec![member_spec()],
+            }),
+        };
+        let toml1 = saved1.to_toml().unwrap();
+        let back1 = SavedDesign::from_toml(&toml1).unwrap();
+        assert_eq!(back1, saved1);
+
+        // 3-member round-trip.
+        let saved3 = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
+                topology: "series".to_string(),
+                fixity: "pinned_pinned".to_string(),
+                loads_n: vec![50.0],
+                members: vec![member_spec(), member_spec(), member_spec()],
+            }),
+        };
+        let toml3 = saved3.to_toml().unwrap();
+        let back3 = SavedDesign::from_toml(&toml3).unwrap();
+        assert_eq!(back3, saved3);
+    }
+
+    #[test]
+    fn from_toml_rejects_missing_field_inside_a_member() {
+        // Anchor: the base TOML must parse Ok.
+        assert!(
+            SavedDesign::from_toml(VALID_ASSEMBLY_TOML).is_ok(),
+            "base VALID_ASSEMBLY_TOML must parse Ok"
+        );
+        // Rename a required member key — serde must reject with "missing field".
+        let toml = VALID_ASSEMBLY_TOML.replace("wire_dia_mm = 2.0", "wire_diam = 2.0");
+        assert!(
+            matches!(SavedDesign::from_toml(&toml), Err(SpringError::DataFile(_))),
+            "misspelled member field must be rejected"
+        );
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_inside_a_member_and_in_loads() {
+        // Anchor: the base TOML must parse Ok.
+        assert!(
+            SavedDesign::from_toml(VALID_ASSEMBLY_TOML).is_ok(),
+            "base VALID_ASSEMBLY_TOML must parse Ok"
+        );
+        // Non-finite inside the member block.
+        let toml_member_inf = VALID_ASSEMBLY_TOML.replace("wire_dia_mm = 2.0", "wire_dia_mm = inf");
+        assert!(
+            matches!(
+                SavedDesign::from_toml(&toml_member_inf),
+                Err(SpringError::DataFile(_))
+            ),
+            "inf inside member must be rejected"
+        );
+        // Non-finite in loads_n.
+        let toml_loads_nan =
+            VALID_ASSEMBLY_TOML.replace("loads_n = [10.0, 25.0]", "loads_n = [10.0, nan]");
+        assert!(
+            matches!(
+                SavedDesign::from_toml(&toml_loads_nan),
+                Err(SpringError::DataFile(_))
+            ),
+            "nan in loads_n must be rejected"
+        );
+    }
+
+    #[test]
+    fn parse_topology_rejects_unknown_key_and_accepts_both() {
+        // Topology validation happens at solve/GUI time via parse_topology — the
+        // end-to-end file→solve pin lands with the GUI increment, which wires the call.
+        assert!(matches!(
+            parse_topology("stacked"),
+            Err(SpringError::DataFile(ref m)) if m == "unknown topology: stacked"
+        ));
+        assert!(matches!(
+            parse_topology("nested"),
+            Ok(crate::assembly::Topology::Nested)
+        ));
+        assert!(matches!(
+            parse_topology("series"),
+            Ok(crate::assembly::Topology::Series)
+        ));
+    }
+
+    #[test]
+    fn from_toml_accepts_empty_members_array() {
+        // Spec §D: "empty members array (engine-level reject; the file itself
+        // parses)". The engine-level reject is pinned in assembly::design tests;
+        // this pins the parse half.
+        let empty_members_toml = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Assembly"
+type = "PowerUser"
+topology = "nested"
+fixity = "fixed_fixed"
+loads_n = [10.0, 25.0]
+members = []
+"#;
+        let result = SavedDesign::from_toml(empty_members_toml);
+        assert!(result.is_ok(), "empty members array must parse Ok");
+        let saved = result.unwrap();
+        if let DesignSpec::Assembly(AssemblySpec::PowerUser { members, .. }) = &saved.design {
+            assert!(members.is_empty(), "parsed members vec must be empty");
+        } else {
+            panic!("expected Assembly(PowerUser {{ ... }})");
+        }
+    }
+
+    #[test]
+    fn solve_with_material_rejects_assembly_design() {
+        let m = crate::test_support::music_wire();
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
+                topology: "nested".to_string(),
+                fixity: "fixed_fixed".to_string(),
+                loads_n: vec![10.0],
+                members: vec![member_spec()],
+            }),
+        };
+        let err = saved
+            .solve_with_material(&m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SpringError::InconsistentInputs(ref msg)
+                if msg == "SavedDesign::solve handles compression designs; assembly designs \
+                           are solved via the assembly scenario"
+        ));
+    }
+
+    #[test]
+    fn top_level_material_differs_from_members_and_still_parses() {
+        // Decision-2 semantic: SavedDesign.material = top-level active picker
+        // state; member material_name governs the solve. The file-level material
+        // is NOT rewritten to match members — they are intentionally independent.
+        let saved = SavedDesign {
+            material: "Chrome-Vanadium".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
+                topology: "nested".to_string(),
+                fixity: "fixed_fixed".to_string(),
+                loads_n: vec![10.0],
+                members: vec![AssemblyMemberSpec {
+                    material_name: "Music Wire".to_string(),
+                    end_type: "plain".to_string(),
+                    wire_dia_mm: 2.0,
+                    mean_dia_mm: 20.0,
+                    active: 10.0,
+                    free_length_mm: 60.0,
+                }],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(back, saved);
+        // Confirm the materials are genuinely different.
+        assert_ne!(back.material, "Music Wire");
+        if let DesignSpec::Assembly(AssemblySpec::PowerUser { members, .. }) = &back.design {
+            assert_eq!(members[0].material_name, "Music Wire");
+        } else {
+            panic!("expected Assembly variant");
+        }
     }
 }
