@@ -1560,6 +1560,116 @@ mod tests {
         );
     }
 
+    /// Switching to Extension must clear a primed con_outcome so the conical
+    /// results panel can never show stale data when Extension is active.
+    /// Revert-probe: comment out `self.con_outcome = None` in the Extension arm
+    /// → this test FAILS → restore → green.
+    #[test]
+    fn switching_to_extension_clears_con_outcome() {
+        use crate::conical::form::{parse_and_solve as con_parse_and_solve, ConFormState};
+        use crate::extension::form::ExtFormState;
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real conical outcome by solving directly.
+        let con_form = ConFormState {
+            end_type: "squared_ground".into(),
+            wire_dia: "2".into(),
+            large_mean_dia: "20".into(),
+            small_mean_dia: "12".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            loads: "10".into(),
+        };
+        let con_out = con_parse_and_solve(
+            &con_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.con_outcome = Some(con_out);
+        assert!(
+            app.con_outcome.is_some(),
+            "pre-condition: con_outcome must be Some before switching"
+        );
+
+        // Switch to Extension with a valid form so the Extension arm runs through
+        // to the parse_and_solve path (not the blank-guard early return).
+        app.extension = ExtFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "50".into(),
+            ..ExtFormState::default()
+        };
+        app.update(Message::SelectFamily(Family::Extension));
+
+        assert!(
+            app.con_outcome.is_none(),
+            "switching to Extension must clear con_outcome"
+        );
+    }
+
+    /// Switching to Torsion must clear a primed con_outcome so the conical
+    /// results panel can never show stale data when Torsion is active.
+    /// Revert-probe: comment out `self.con_outcome = None` in the Torsion arm
+    /// → this test FAILS → restore → green.
+    #[test]
+    fn switching_to_torsion_clears_con_outcome() {
+        use crate::conical::form::{parse_and_solve as con_parse_and_solve, ConFormState};
+        use crate::torsion::form::TorFormState;
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real conical outcome by solving directly.
+        let con_form = ConFormState {
+            end_type: "squared_ground".into(),
+            wire_dia: "2".into(),
+            large_mean_dia: "20".into(),
+            small_mean_dia: "12".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            loads: "10".into(),
+        };
+        let con_out = con_parse_and_solve(
+            &con_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.con_outcome = Some(con_out);
+        assert!(
+            app.con_outcome.is_some(),
+            "pre-condition: con_outcome must be Some before switching"
+        );
+
+        // Switch to Torsion with a valid form so the Torsion arm runs through
+        // to the parse_and_solve path (not the blank-guard early return).
+        app.torsion = TorFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        app.update(Message::SelectFamily(Family::Torsion));
+
+        assert!(
+            app.con_outcome.is_none(),
+            "switching to Torsion must clear con_outcome"
+        );
+    }
+
     // ── Conical family: apply_saved integration test ─────────────────────────
 
     #[test]

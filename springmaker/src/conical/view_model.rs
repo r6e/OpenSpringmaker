@@ -370,6 +370,40 @@ and the reported at-solid stress is correspondingly understated";
         );
     }
 
+    // ── geometry_pitch_sci_notation ─────────────────────────────────────────
+
+    /// Pin that the Pitch geometry cell uses scientific notation for a
+    /// huge-but-finite free_length (≥ SCI_THRESHOLD after display_len scaling).
+    ///
+    /// Revert-probe: swap fmt_row_value for raw fixed-point in the Pitch row
+    /// → this test FAILS → restore → green.
+    #[test]
+    fn geometry_pitch_renders_scientific_for_huge_free_length() {
+        // free_length=1e299 mm → pitch ≈ 1e299/10 = 1e298 mm, far above SCI_THRESHOLD=1e6.
+        let mut app = fresh_app_conical();
+        app.conical = ConFormState {
+            free_length: "1e299".into(),
+            ..metric_form()
+        };
+        app.recompute();
+
+        assert!(
+            app.con_outcome.is_some(),
+            "huge finite free_length must still solve (not a physics error)"
+        );
+        let p = con_populated(&app);
+        let pitch_row = p
+            .geometry
+            .iter()
+            .find(|r| r.label == "Pitch")
+            .expect("Pitch row must be present");
+        assert!(
+            pitch_row.value.contains('e'),
+            "Pitch must render in scientific notation for huge free_length; got '{}'",
+            pitch_row.value
+        );
+    }
+
     // ── footer_constant_is_exact ────────────────────────────────────────────
 
     #[test]

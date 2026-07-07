@@ -883,6 +883,27 @@ fn conical_e2e_solve_renders_results_and_footer() {
     );
 }
 
+/// The linear-model footer must NOT appear in the Empty state (no inputs).
+/// Revert-probe: temporarily add `render_linear_model_footer()` to the Empty
+/// arm → test FAILS → restore → green.
+#[test]
+fn conical_footer_absent_in_empty_state() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    // No inputs: form is blank → Empty arm → no footer.
+    assert!(
+        app.con_outcome.is_none(),
+        "pre-condition: no outcome without inputs"
+    );
+    assert!(
+        !shows(
+            &app,
+            "Linear-range model: progressive stiffening as coils bottom out is not modeled."
+        ),
+        "linear-model footer must not appear in the Empty state"
+    );
+}
+
 #[test]
 fn conical_save_load_round_trip() {
     use crate::conical::form::Field as CF;
