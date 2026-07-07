@@ -10,6 +10,7 @@
 //! base unit kelvin. See the crate `ARCHITECTURE.md` and `docs/adr/` for design
 //! rationale.
 
+pub mod assembly;
 pub mod conical;
 pub(crate) mod design;
 pub(crate) mod end_type;
