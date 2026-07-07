@@ -853,4 +853,175 @@ mod tests {
             "member 1: solve produced a non-finite result (inputs exceed the representable range)"
         );
     }
+
+    // ── Mutation-killing supplement ─────────────────────────────────────────
+
+    #[test]
+    fn zero_load_is_accepted() {
+        // Load of 0.0 N is finite and non-negative → must be accepted.
+        // Kills the `< 0.0 → <= 0.0` mutant in the load guard (line 113).
+        let asm = solve(Topology::Nested, vec![baseline_member()], &[0.0]).unwrap();
+        assert_relative_eq!(
+            asm.load_points[0].deflection.millimeters(),
+            0.0,
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn series_tie_limiting_member_resolves_to_lowest_index() {
+        // Two members with identical bottoming forces: k1*(L01-Ls1) == k2*(L02-Ls2).
+        // Two baseline members in series: both have k≈2000, travel=36mm → F_bottom≈72N.
+        // The lowest index (0) must win, not the last seen.
+        // Kills the `< → <=` mutant in the series travel-limit fold (line 235).
+        let asm = solve(
+            Topology::Series,
+            vec![baseline_member(), baseline_member()],
+            &[1.0],
+        )
+        .unwrap();
+        assert_eq!(asm.limiting_member, 0, "tie breaks to lowest index");
+    }
+
+    #[test]
+    fn load_point_length_is_free_minus_deflection() {
+        // load_point.length = free_length − deflection.
+        // Kills the `- → +` and `- → /` mutants in load_point construction (line 253).
+        let asm = solve(Topology::Nested, vec![baseline_member()], &[10.0]).unwrap();
+        let lp = &asm.load_points[0];
+        assert_relative_eq!(
+            lp.length.meters(),
+            asm.free_length.meters() - lp.deflection.meters(),
+            max_relative = 1e-12
+        );
+        // Also verify the magnitude: 60mm − 5mm = 55mm.
+        assert_relative_eq!(lp.length.millimeters(), 55.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn torsion_stress_exactly_at_allowable_produces_no_warning() {
+        // Load chosen so that pct_mts == allowable_pct_torsion (0.45) exactly
+        // in IEEE 754 double precision (for Music Wire, d=2mm, D=20mm baseline).
+        // Formula: F = pct * MTS * π * d³ / (K * 8 * D).
+        // Derived from springcore's corrected_shear_stress: K * 8 * F * D / (π * d³).
+        // The round-trip is exact for this geometry (verified empirically).
+        // Exactly at limit must NOT warn (strict > semantics).
+        // Kills the `> → >=` mutant in the load-point torsion check (line 340).
+        use std::f64::consts::PI;
+        let d_mm = 2.0_f64;
+        let d = d_mm / 1000.0;
+        let dm = 20.0_f64 / 1000.0;
+        let c = dm / d; // index = 10
+        let k_berg = (4.0 * c + 2.0) / (4.0 * c - 3.0);
+        let mts_pa = 2211.0_f64 / d_mm.powf(0.145) * 1e6; // Music Wire PowerLaw in Pa
+        let allowable_pct = 0.45_f64;
+        // F such that K*8*F*D/(π*d³) == allowable_pct * mts
+        let f_at = allowable_pct * mts_pa * PI * d.powi(3) / (k_berg * 8.0 * dm);
+        let asm = solve(Topology::Nested, vec![baseline_member()], &[f_at]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        // The travel limit warning fires (f_at > travel limit force) — ignore it;
+        // the torsion stress warning must NOT fire at exactly the allowable.
+        assert!(
+            !has_message(&status, "load point 1 stress"),
+            "stress exactly at allowable must not warn (strict >)"
+        );
+    }
+
+    #[test]
+    fn at_solid_stress_exactly_at_set_allowable_produces_no_warning() {
+        // L0 chosen so that the at_solid force produces stress == allowable_pct_set
+        // (0.60 for Music Wire) exactly in IEEE 754.
+        // Formula: L0 = Ls + [pct_set * MTS * π * d³ / (K * 8 * D)] / k.
+        // Kills `> → ==`, `> → <`, and `> → >=` mutants at line 354.
+        use std::f64::consts::PI;
+        let d_mm = 2.0_f64;
+        let d = d_mm / 1000.0;
+        let dm = 20.0_f64 / 1000.0;
+        let na = 10.0_f64;
+        let c = dm / d;
+        let k_berg = (4.0 * c + 2.0) / (4.0 * c - 3.0);
+        let g = 80.0_f64 * 1e9;
+        let k_spring = g * d.powi(4) / (8.0 * dm.powi(3) * na);
+        let mts_pa = 2211.0_f64 / d_mm.powf(0.145) * 1e6;
+        let pct_set = 0.60_f64;
+        // F_solid that gives pct_set exactly
+        let f_solid_target = pct_set * mts_pa * PI * d.powi(3) / (k_berg * 8.0 * dm);
+        // SquaredGround: Nt = Na + 2, Ls = d * Nt
+        let nt = na + 2.0;
+        let ls = d * nt;
+        let l0 = ls + f_solid_target / k_spring;
+        let m_at_solid = AssemblyMember {
+            free_length: Length::from_meters(l0),
+            ..baseline_member()
+        };
+        let asm = solve(Topology::Nested, vec![m_at_solid], &[1.0]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        assert!(
+            !has_message(&status, "stress at solid"),
+            "at-solid stress exactly at set allowable must not warn (strict >)"
+        );
+    }
+
+    #[test]
+    fn at_solid_stress_above_set_allowable_generates_warning() {
+        // Confirms that > allowable DOES warn; together with the exactly-at test,
+        // kills `> → ==`, `> → <`, and `> → >=` at line 354.
+        // d=2mm, D=20mm, Na=2, L0=30mm: k=10000 N/m, F_solid=220N,
+        // stress_solid≈1590MPa = 79.5% MTS (>> 60% set allowable).
+        let stiff = AssemblyMember {
+            active_coils: 2.0,
+            free_length: Length::from_millimeters(30.0),
+            ..baseline_member()
+        };
+        let asm = solve(Topology::Nested, vec![stiff], &[1.0]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        assert!(
+            has_message(&status, "member 1: stress at solid"),
+            "at-solid stress above allowable must warn"
+        );
+    }
+
+    #[test]
+    fn stable_member_produces_no_buckling_warning() {
+        // Baseline (L0=60mm, D=20mm, FixedFixed) is well within the buckling
+        // stability limit (~103 mm). No buckling warning must appear.
+        // Kills the `delete !` mutant in the buckling check (line 366).
+        let asm = solve(Topology::Nested, vec![baseline_member()], &[10.0]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        assert!(
+            !has_message(&status, "buckling"),
+            "stable member must not produce a buckling warning"
+        );
+    }
+
+    #[test]
+    fn unstable_member_produces_buckling_warning() {
+        // Long spring (L0=200mm, D=20mm, FixedFixed): critical L0 ≈ 103mm → unstable.
+        // Together with the stable test, pins the `!` semantics.
+        let long = AssemblyMember {
+            free_length: Length::from_millimeters(200.0),
+            ..baseline_member()
+        };
+        let asm = solve(Topology::Nested, vec![long], &[10.0]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        assert!(
+            has_message(
+                &status,
+                "member 1: free length exceeds the absolute-stability limit"
+            ),
+            "unstable member must produce a buckling warning"
+        );
+    }
+
+    #[test]
+    fn load_point_stress_clearly_below_allowable_produces_no_warning() {
+        // Baseline at 1 N: pct ≈ 0.045% << 45% allowable → no torsion warning.
+        // Kills `> → <` mutant at line 340 (< mutant would warn here).
+        let asm = solve(Topology::Nested, vec![baseline_member()], &[1.0]).unwrap();
+        let status = evaluate_status(&asm, &materials());
+        assert!(
+            !has_message(&status, "load point 1 stress"),
+            "stress well below allowable must not warn"
+        );
+    }
 }
