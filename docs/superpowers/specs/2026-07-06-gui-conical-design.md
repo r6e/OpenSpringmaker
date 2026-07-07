@@ -25,10 +25,17 @@ with assemblies afterward.
    is a flat all-fields check; `populate_from_spec` has one arm.
 5. **The placeholder dies**: `apply_saved`'s conical early-reject and its
    `unreachable!()` arm are deleted, replaced by the real populate arm. The
-   bool return stays (all arms now return `true`); the two wholesale-reject
-   regression tests are REPLACED by positive load→populate→recompute tests
-   (the load-path invariant they pinned — action_error surviving recompute —
-   no longer applies to conical, which now recomputes like any family).
+   two wholesale-reject regression tests are REPLACED by positive
+   load→populate→recompute tests (the load-path invariant they pinned —
+   action_error surviving recompute — no longer applies to conical, which now
+   recomputes like any family).
+   > **Reversal (final panel):** this decision originally RETAINED the bool
+   > return ("all arms now return `true`"). The panel's fix wave reversed
+   > that: with the rejection path gone the bool was vestigial, so
+   > `apply_saved` returns `()` and `load_from`'s Ok arm recomputes
+   > unconditionally — `load_from` keeps its own bool contract. A future
+   > family placeholder reintroduces a signal mechanically if needed (the
+   > exhaustive `DesignSpec` match forces the reckoning at compile time).
 
 ## A. springcore (mutation-gated 0 in-diff survivors)
 
@@ -89,7 +96,7 @@ Manual `Default` with `end_type: "squared_ground"` and empty strings.
 - `build_spec(form, us) -> Result<ConicalSpec>` →
   `ConicalSpec::PowerUser { ... }` (mm/N via the helpers).
 - `populate_from_spec(form, spec, us)`: one arm; `fmt_len`/`fmt_loads`/
-  `format!("{active}")` round-trip.
+  `active.to_string()` round-trip.
 
 ## C. Presenter + view (ADR 0008)
 
@@ -158,7 +165,8 @@ treatment mirroring compression's. Status lines flow from
   `parse_and_solve` with `self.correction`), and `save_to`
   (`DesignSpec::Conical(build_spec(...)?)`).
 - `apply_saved`: early-reject + `unreachable!()` deleted; real arm sets
-  `Family::Conical` + populates; returns `true` like the siblings.
+  `Family::Conical` + populates. (`apply_saved` returns `()` — see Decision
+  5's reversal note; `load_from` retains its bool contract.)
 
 ## E. Testing & gates
 
