@@ -149,9 +149,12 @@ pub fn solve_assembly(
         .map_err(|e| member_error(i, e))?;
         rates.push(d.rate.newtons_per_meter());
     }
+    // Nested rate sum bound once; reused for k_total and per-member shares so
+    // both see the same f64 accumulation (bit-identical, same operands/order).
+    let nested_rate_sum: f64 = rates.iter().sum();
     let k_total = match inputs.topology {
         // k = Σkᵢ (Ch. 4, generalized to N by the same equilibrium argument).
-        Topology::Nested => rates.iter().sum::<f64>(),
+        Topology::Nested => nested_rate_sum,
         // 1/k = Σ 1/kᵢ (Eq. 8-15, generalized to N).
         Topology::Series => 1.0 / rates.iter().map(|k| 1.0 / k).sum::<f64>(),
     };
@@ -160,7 +163,7 @@ pub fn solve_assembly(
     let mut members = Vec::with_capacity(inputs.members.len());
     for (i, m) in inputs.members.iter().enumerate() {
         let share = match inputs.topology {
-            Topology::Nested => rates[i] / rates.iter().sum::<f64>(),
+            Topology::Nested => rates[i] / nested_rate_sum,
             Topology::Series => 1.0,
         };
         let member_loads: Vec<Force> = loads
@@ -1022,6 +1025,68 @@ mod tests {
         assert!(
             !has_message(&status, "load point 1 stress"),
             "stress well below allowable must not warn"
+        );
+    }
+
+    #[test]
+    fn nested_rate_sum_overflow_trips_the_assembly_guard() {
+        // Each member individually solves Ok (finite rate near f64::MAX); the
+        // Nested sum k_total = k1 + k2 overflows to +inf — the ASSEMBLY-level
+        // guard must fire with its own distinct message.  The member-level guard
+        // in design.rs cannot catch this; see huge_load_trips_the_output_guard
+        // for the member-level path.
+        //
+        // Fixture derivation (k = G·d⁴ / (8·D³·Na)):
+        //   G=80 GPa, d=2 mm, D=20 mm — Music Wire geometry, in the material's
+        //   valid diameter range [0.10, 6.5] mm.
+        //   Na chosen so k ≈ 0.6·f64::MAX (finite, below f64::MAX) by inverting
+        //   the rate formula: Na = G·d⁴ / (8·D³·k_target).
+        //   free_length = solid_length = d·(Na+2) ≈ 4 mm so the at-solid force
+        //   is 0 N (stress = 0 Pa, finite) — the member-level guard clears.
+        //   With two such members Nested: k1 + k2 = 2·(0.6·MAX) = 1.2·MAX = +inf.
+        let d_m = 0.002_f64; // 2 mm
+        let dm_m = 0.020_f64; // 20 mm
+        let g = 80.0e9_f64;
+        let k_target = f64::MAX * 0.6;
+        let na = g * d_m.powi(4) / (8.0 * dm_m.powi(3) * k_target);
+        // Sanity: Na is a normal, positive, finite f64 — passes solve_forward's guard.
+        assert!(
+            na.is_finite() && na > 0.0,
+            "fixture: Na must be positive-finite"
+        );
+        // Sanity: individual rate is finite and below f64::MAX.
+        let k_individual = g * d_m.powi(4) / (8.0 * dm_m.powi(3) * na);
+        assert!(
+            k_individual.is_finite() && k_individual < f64::MAX,
+            "fixture: individual rate must be finite"
+        );
+        // Sanity: the Nested sum overflows to +inf.
+        assert!(
+            (k_individual + k_individual).is_infinite(),
+            "fixture: rate sum must overflow to +inf"
+        );
+        // solid_length (SquaredGround): d·(Na+2) ≈ 4 mm; L0 == Ls so at-solid
+        // force = 0 N and its stress = 0 Pa — the member-level guard stays silent.
+        let ls_m = d_m * (na + 2.0);
+        let huge = AssemblyMember {
+            material_name: "Music Wire".to_string(),
+            wire_dia: Length::from_meters(d_m),
+            mean_dia: Length::from_meters(dm_m),
+            active_coils: na,
+            free_length: Length::from_meters(ls_m), // L0 == Ls: at-solid travel = 0
+            end_type: EndType::SquaredGround,
+        };
+        // One such member alone must solve Ok — this pins that the overflow is
+        // produced solely by the SUM, not by any single-member non-finiteness.
+        assert!(
+            solve(Topology::Nested, vec![huge.clone()], &[0.0]).is_ok(),
+            "fixture: a single huge member must solve Ok"
+        );
+        // Two members: the Nested sum overflows → assembly guard fires.
+        let m = msg(solve(Topology::Nested, vec![huge.clone(), huge], &[0.0]));
+        assert_eq!(
+            m,
+            "assembly solve produced a non-finite result (inputs exceed the representable range)"
         );
     }
 }
