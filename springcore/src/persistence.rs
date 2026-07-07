@@ -205,6 +205,11 @@ pub enum ConicalSpec {
 /// One member in a persisted assembly. All fields are required — no
 /// `#[serde(default)]` — so a misspelled key surfaces as "missing field"
 /// rather than silently defaulting.
+///
+/// **Schema evolution rule**: any future additive field on this struct must be
+/// `Option<T>` (a missing key in the TOML deserializes to `None` without
+/// `#[serde(default)]` — see the `TorsionSpec::arbor_dia_mm` precedent). A new
+/// required field would break every existing assembly file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssemblyMemberSpec {
     pub material_name: String,
@@ -2118,9 +2123,9 @@ free_length_mm = 60.0
     }
 
     #[test]
-    fn from_toml_rejects_unknown_topology() {
-        // parse_topology is pinned directly — topology is a raw String in the
-        // spec struct, so rejection happens at solve/GUI time, not at deserialize.
+    fn parse_topology_rejects_unknown_key_and_accepts_both() {
+        // Topology validation happens at solve/GUI time via parse_topology — the
+        // end-to-end file→solve pin lands with the GUI increment, which wires the call.
         assert!(matches!(
             parse_topology("stacked"),
             Err(SpringError::DataFile(ref m)) if m == "unknown topology: stacked"
@@ -2133,6 +2138,32 @@ free_length_mm = 60.0
             parse_topology("series"),
             Ok(crate::assembly::Topology::Series)
         ));
+    }
+
+    #[test]
+    fn from_toml_accepts_empty_members_array() {
+        // Spec §D: "empty members array (engine-level reject; the file itself
+        // parses)". The engine-level reject is pinned in assembly::design tests;
+        // this pins the parse half.
+        let empty_members_toml = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Assembly"
+type = "PowerUser"
+topology = "nested"
+fixity = "fixed_fixed"
+loads_n = [10.0, 25.0]
+members = []
+"#;
+        let result = SavedDesign::from_toml(empty_members_toml);
+        assert!(result.is_ok(), "empty members array must parse Ok");
+        let saved = result.unwrap();
+        if let DesignSpec::Assembly(AssemblySpec::PowerUser { members, .. }) = &saved.design {
+            assert!(members.is_empty(), "parsed members vec must be empty");
+        } else {
+            panic!("expected Assembly(PowerUser {{ ... }})");
+        }
     }
 
     #[test]

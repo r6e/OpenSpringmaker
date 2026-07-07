@@ -77,6 +77,7 @@ pub struct AssemblyDesign {
     pub travel_limit_force: Force,
     /// Index into `members` of the first member to bottom (ties: lowest).
     pub limiting_member: usize,
+    /// Assembly-level state at each applied load: force, deflection (F/k_assembly), assembly length (free_length − deflection).
     pub load_points: Vec<AssemblyLoadPoint>,
 }
 

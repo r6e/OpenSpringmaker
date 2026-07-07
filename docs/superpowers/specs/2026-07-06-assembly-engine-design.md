@@ -234,10 +234,18 @@ pub enum AssemblySpec {
         /// "nested" | "series" (parse_topology, the parse_end_type pattern).
         topology: String,
         fixity: String,
-        members: Vec<AssemblyMemberSpec>,
+        /// Declare before `members` — TOML cannot emit scalars after an
+        /// array-of-tables block at the same table level.
         loads_n: Vec<f64>,
+        members: Vec<AssemblyMemberSpec>,
     },
 }
+
+> **Amendment (during implementation):** The shipped struct declares `loads_n` BEFORE
+> `members` because TOML cannot serialize scalar key-values after an
+> `[[array-of-tables]]` block at the same level (`ValueAfterTable` error); named-field
+> construction in calling code is unaffected by this ordering. Hand-editors who append
+> `loads_n` after member blocks will hit a TOML structural error.
 
 /// One persisted member. Every field required (structural forward-compat:
 /// a misspelled key errors as missing, per the file's convention).
