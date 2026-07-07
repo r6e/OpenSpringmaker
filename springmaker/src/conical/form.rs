@@ -68,9 +68,6 @@ impl ConFormState {
 /// A successful conical solve.
 #[derive(Debug, Clone)]
 pub struct ConFormOutcome {
-    // Task 2's results panel reads this; the field is declared here so Task 1's
-    // form layer compiles and the outcome type is stable across tasks.
-    #[allow(dead_code)]
     pub design: ConicalDesign,
 }
 
