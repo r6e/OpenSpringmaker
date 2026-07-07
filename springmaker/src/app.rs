@@ -1,6 +1,7 @@
 //! Application state, messages, and update/view glue for the iced GUI.
 
 use crate::compression::form::{parse_and_solve, Field, FormOutcome, FormState, ScenarioKind};
+use crate::conical::form::{ConFormOutcome, ConFormState};
 use crate::extension::form::{ExtFormOutcome, ExtFormState};
 use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
@@ -161,6 +162,9 @@ pub enum Message {
     TorMomentEntry(crate::torsion::form::MomentEntry),
     TorDiaPolicy(springcore::torsion::DiaPolicy),
     TorCycleLife(springcore::torsion::CycleLife),
+    // Calculator screen — conical
+    ConField(crate::conical::form::Field, String),
+    ConEndType(String),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -193,6 +197,10 @@ pub struct App {
     pub torsion: crate::torsion::form::TorFormState,
     /// Solved torsion outcome; `None` until a valid torsion form is solved.
     pub tor_outcome: Option<crate::torsion::form::TorFormOutcome>,
+    /// Conical PowerUser form inputs.
+    pub conical: ConFormState,
+    /// Solved conical outcome; `None` until a valid conical form is solved.
+    pub con_outcome: Option<ConFormOutcome>,
     /// Selected material name (shared across families). Lifted out of `FormState`.
     pub material: String,
     /// Active unit system (shared across families). Lifted out of `FormState`.
@@ -200,10 +208,11 @@ pub struct App {
     pub materials: MaterialStore,
     pub load_warnings: Vec<LoadWarning>,
     pub outcome: Option<FormOutcome>,
-    /// Solve error: set/cleared by [`App::recompute`]. Exclusive pair with
-    /// `outcome` (Compression) or `ext_outcome` (Extension) depending on the active
-    /// family — a present outcome means the solve succeeded. Surfaced in the results
-    /// panel only when the corresponding outcome is `None`.
+    /// Solve error for the active family: set/cleared by [`App::recompute`].
+    /// Exclusive with that family's outcome field — a present outcome means the
+    /// solve succeeded and `error` is `None`. Shared by all four families
+    /// (Compression, Extension, Torsion, Conical). Surfaced in the results panel
+    /// only when the active family's outcome is `None`.
     pub error: Option<String>,
     /// Save/load action error. Independent of `outcome`/`error` so a failed save
     /// or load is surfaced (in the status panel) without wiping the design the
@@ -245,6 +254,8 @@ impl App {
             ext_outcome: None,
             torsion: crate::torsion::form::TorFormState::default(),
             tor_outcome: None,
+            conical: ConFormState::default(),
+            con_outcome: None,
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
             materials,
@@ -279,9 +290,10 @@ impl App {
         self.action_error = None;
         match self.family {
             Family::Compression => {
-                // Stale extension/torsion outcomes from a prior solve are no longer active.
+                // Stale extension/torsion/conical outcomes from a prior solve are no longer active.
                 self.ext_outcome = None;
                 self.tor_outcome = None;
+                self.con_outcome = None;
                 // If the user has entered none of the active scenario's required
                 // inputs (e.g. switched families on an untouched form), treat this
                 // as the initial state rather than surfacing a parse error. Once any
@@ -310,9 +322,10 @@ impl App {
                 }
             }
             Family::Extension => {
-                // Stale compression/torsion outcomes from a prior solve are no longer active.
+                // Stale compression/torsion/conical outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.tor_outcome = None;
+                self.con_outcome = None;
                 // If the user has entered none of the PowerUser required inputs
                 // (e.g. switched families on an untouched form), treat this as the
                 // initial state rather than surfacing a parse error. Once any
@@ -341,8 +354,10 @@ impl App {
                 }
             }
             Family::Torsion => {
+                // Stale compression/extension/conical outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
+                self.con_outcome = None;
                 if self.torsion.is_blank() {
                     self.error = None;
                     self.tor_outcome = None;
@@ -360,6 +375,33 @@ impl App {
                     }
                     Err(e) => {
                         self.tor_outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
+            }
+            Family::Conical => {
+                // Stale compression/extension/torsion outcomes from a prior solve are no longer active.
+                self.outcome = None;
+                self.ext_outcome = None;
+                self.tor_outcome = None;
+                if self.conical.is_blank() {
+                    self.error = None;
+                    self.con_outcome = None;
+                    return;
+                }
+                match crate::conical::form::parse_and_solve(
+                    &self.conical,
+                    &self.material,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.con_outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.con_outcome = None;
                         self.error = Some(format_error(&e, self.unit_system));
                     }
                 }
@@ -427,6 +469,14 @@ impl App {
             }
             Message::TorCycleLife(l) => {
                 self.torsion.cycle_life = l;
+                true
+            }
+            Message::ConField(f, v) => {
+                self.set_con_field(f, v);
+                true
+            }
+            Message::ConEndType(e) => {
+                self.conical.end_type = e;
                 true
             }
             Message::Material(m) => {
@@ -740,6 +790,19 @@ impl App {
         }
     }
 
+    fn set_con_field(&mut self, field: crate::conical::form::Field, value: String) {
+        use crate::conical::form::Field as CF;
+        let f = &mut self.conical;
+        match field {
+            CF::WireDia => f.wire_dia = value,
+            CF::LargeMeanDia => f.large_mean_dia = value,
+            CF::SmallMeanDia => f.small_mean_dia = value,
+            CF::Active => f.active = value,
+            CF::FreeLength => f.free_length = value,
+            CF::Loads => f.loads = value,
+        }
+    }
+
     fn set_mat_field(&mut self, field: MatField, value: String) {
         let f = &mut self.mat_form;
         match field {
@@ -804,6 +867,15 @@ impl App {
                     }
                 }
             }
+            Family::Conical => {
+                match crate::conical::form::build_spec(&self.conical, self.unit_system) {
+                    Ok(s) => springcore::DesignSpec::Conical(s),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
+            }
         };
         let saved = SavedDesign {
             material: self.material.clone(),
@@ -832,7 +904,10 @@ impl App {
     pub(crate) fn load_from(&mut self, path: &std::path::Path) -> bool {
         self.action_error = None;
         match SavedDesign::load(path) {
-            Ok(saved) => self.apply_saved(saved),
+            Ok(saved) => {
+                self.apply_saved(saved);
+                true
+            }
             Err(e) => {
                 self.action_error = Some(e.to_string());
                 false
@@ -842,25 +917,9 @@ impl App {
 
     /// Apply a successfully-parsed `SavedDesign` to the form.
     ///
-    /// Returns `true` when the form was mutated (supported family applied) and
-    /// `false` when the design was rejected wholesale (e.g. unsupported family).
-    /// The caller **must not recompute** when this returns `false` — recompute's
-    /// first action is `self.action_error = None`, which would erase the rejection
-    /// error set here. This mirrors the `Message::Save` invariant (see ~line 452).
-    fn apply_saved(&mut self, saved: SavedDesign) -> bool {
-        // Reject unsupported families wholesale BEFORE any state mutation so
-        // that a failed load leaves the app in its prior state.
-        if matches!(saved.design, springcore::DesignSpec::Conical(_)) {
-            // Placeholder until the conical GUI increment: reject the load
-            // wholesale — nothing (material, units, family, form) is applied.
-            self.action_error = Some(
-                "conical designs are not supported by this build yet (the conical GUI \
-                 ships in the next increment)"
-                    .into(),
-            );
-            return false;
-        }
-
+    /// All recognised families apply unconditionally; the caller recomputes
+    /// after this returns to surface the loaded design.
+    fn apply_saved(&mut self, saved: SavedDesign) {
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -888,11 +947,15 @@ impl App {
                     self.unit_system,
                 );
             }
-            springcore::DesignSpec::Conical(_) => {
-                unreachable!("Conical is handled by the early-return above")
+            springcore::DesignSpec::Conical(spec) => {
+                self.family = Family::Conical;
+                crate::conical::form::populate_from_spec(
+                    &mut self.conical,
+                    &spec,
+                    self.unit_system,
+                );
             }
         }
-        true
     }
 }
 
@@ -1402,21 +1465,216 @@ mod tests {
         assert!(app.ext_outcome.is_none());
     }
 
-    // ── Task 2 (conical): placeholder arm test ─────────────────────────────
-    //
-    // Adaptation note: `apply_saved` is private but accessible from the child
-    // `tests` module. Uses `test_app()` (the module's hermetic constructor) rather
-    // than `App::default()` to avoid filesystem IO in the test.
+    // ── Conical family: cross-family outcome clearing ────────────────────────
+
+    /// Switching to the Conical family must clear stale outcomes from every
+    /// other family so the results panel can never show residual data.
+    #[test]
+    fn switching_to_conical_clears_other_family_outcomes() {
+        use crate::extension::form::{parse_and_solve as ext_parse_and_solve, ExtFormState};
+        use crate::torsion::form::{parse_and_solve as tor_parse_and_solve, TorFormState};
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = solved_app();
+        assert!(app.outcome.is_some(), "pre-condition: compression solved");
+
+        // Inject a real extension outcome directly (recompute would clobber outcome).
+        let ext_form = ExtFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "50".into(),
+            ..ExtFormState::default()
+        };
+        let ext_out = ext_parse_and_solve(
+            &ext_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.ext_outcome = Some(ext_out);
+        assert!(
+            app.ext_outcome.is_some(),
+            "pre-condition: ext_outcome must be Some before switching"
+        );
+
+        // Inject a real torsion outcome directly.
+        let tor_form = TorFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        let tor_out =
+            tor_parse_and_solve(&tor_form, "Music Wire", UnitSystem::Metric, &app.materials)
+                .unwrap();
+        app.tor_outcome = Some(tor_out);
+        assert!(
+            app.tor_outcome.is_some(),
+            "pre-condition: tor_outcome must be Some before switching"
+        );
+
+        // Switch to Conical — the Conical arm of recompute() clears all three.
+        app.update(Message::SelectFamily(Family::Conical));
+
+        assert!(
+            app.outcome.is_none(),
+            "compression outcome must be None after switching to Conical"
+        );
+        assert!(
+            app.ext_outcome.is_none(),
+            "ext_outcome must be None after switching to Conical"
+        );
+        assert!(
+            app.tor_outcome.is_none(),
+            "tor_outcome must be None after switching to Conical"
+        );
+    }
+
+    /// Switching away from the Conical family must clear the conical outcome so
+    /// the results panel can never show stale data when another family is active.
+    #[test]
+    fn switching_away_from_conical_clears_con_outcome() {
+        use springcore::Family;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Conical));
+        app.conical.wire_dia = "2".into();
+        app.conical.large_mean_dia = "20".into();
+        app.conical.small_mean_dia = "12".into();
+        app.conical.active = "10".into();
+        app.conical.free_length = "60".into();
+        app.conical.loads = "10".into();
+        app.recompute();
+        assert!(app.con_outcome.is_some(), "fixture should solve");
+        app.update(Message::SelectFamily(Family::Compression));
+        assert!(
+            app.con_outcome.is_none(),
+            "switching away from Conical must clear conical outcome"
+        );
+    }
+
+    /// Switching to Extension must clear a primed con_outcome so the conical
+    /// results panel can never show stale data when Extension is active.
+    /// Revert-probe: comment out `self.con_outcome = None` in the Extension arm
+    /// → this test FAILS → restore → green.
+    #[test]
+    fn switching_to_extension_clears_con_outcome() {
+        use crate::conical::form::{parse_and_solve as con_parse_and_solve, ConFormState};
+        use crate::extension::form::ExtFormState;
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real conical outcome by solving directly.
+        let con_form = ConFormState {
+            end_type: "squared_ground".into(),
+            wire_dia: "2".into(),
+            large_mean_dia: "20".into(),
+            small_mean_dia: "12".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            loads: "10".into(),
+        };
+        let con_out = con_parse_and_solve(
+            &con_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.con_outcome = Some(con_out);
+        assert!(
+            app.con_outcome.is_some(),
+            "pre-condition: con_outcome must be Some before switching"
+        );
+
+        // Switch to Extension with a valid form so the Extension arm runs through
+        // to the parse_and_solve path (not the blank-guard early return).
+        app.extension = ExtFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "100".into(),
+            initial_tension: "5".into(),
+            loads: "50".into(),
+            ..ExtFormState::default()
+        };
+        app.update(Message::SelectFamily(Family::Extension));
+
+        assert!(
+            app.con_outcome.is_none(),
+            "switching to Extension must clear con_outcome"
+        );
+    }
+
+    /// Switching to Torsion must clear a primed con_outcome so the conical
+    /// results panel can never show stale data when Torsion is active.
+    /// Revert-probe: comment out `self.con_outcome = None` in the Torsion arm
+    /// → this test FAILS → restore → green.
+    #[test]
+    fn switching_to_torsion_clears_con_outcome() {
+        use crate::conical::form::{parse_and_solve as con_parse_and_solve, ConFormState};
+        use crate::torsion::form::TorFormState;
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real conical outcome by solving directly.
+        let con_form = ConFormState {
+            end_type: "squared_ground".into(),
+            wire_dia: "2".into(),
+            large_mean_dia: "20".into(),
+            small_mean_dia: "12".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            loads: "10".into(),
+        };
+        let con_out = con_parse_and_solve(
+            &con_form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.con_outcome = Some(con_out);
+        assert!(
+            app.con_outcome.is_some(),
+            "pre-condition: con_outcome must be Some before switching"
+        );
+
+        // Switch to Torsion with a valid form so the Torsion arm runs through
+        // to the parse_and_solve path (not the blank-guard early return).
+        app.torsion = TorFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            body_coils: "5".into(),
+            leg1: "0".into(),
+            leg2: "0".into(),
+            moments: "1000".into(),
+            ..TorFormState::default()
+        };
+        app.update(Message::SelectFamily(Family::Torsion));
+
+        assert!(
+            app.con_outcome.is_none(),
+            "switching to Torsion must clear con_outcome"
+        );
+    }
+
+    // ── Conical family: apply_saved integration test ─────────────────────────
 
     #[test]
-    fn loading_a_conical_design_surfaces_a_clean_action_error() {
+    fn loading_a_conical_design_populates_the_conical_form() {
         let mut app = test_app();
-        // Set a known material and unit system BEFORE loading; the conical load
-        // must leave both unchanged (no partial application) while setting action_error.
-        // The saved design carries a DIFFERENT material ("Chrome Vanadium") to prove
-        // the early-return prevents the mutation.
-        app.material = "Chrome Vanadium".to_string();
-        app.unit_system = springcore::UnitSystem::Us;
         app.apply_saved(springcore::SavedDesign {
             material: "Music Wire".to_string(),
             unit_system: springcore::UnitSystem::Metric,
@@ -1430,78 +1688,9 @@ mod tests {
                 loads_n: vec![10.0],
             }),
         });
-        let err = app.action_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("conical designs are not supported"),
-            "got: {err}"
-        );
-        // Wholesale rejection: material and unit_system must be unchanged.
-        assert_eq!(
-            app.material, "Chrome Vanadium",
-            "conical load must not mutate material"
-        );
-        assert_eq!(
-            app.unit_system,
-            springcore::UnitSystem::Us,
-            "conical load must not mutate unit_system"
-        );
-    }
-
-    /// Regression test: loading a conical design through the real `load_from` path
-    /// (file on disk) and then calling `recompute()` — exactly what `update` does
-    /// when `Message::Load` returns `true` — must NOT wipe the "not supported" error.
-    ///
-    /// The prior bug: `load_from` returned `true` unconditionally on `Ok`, so
-    /// `should_recompute` fired, and `recompute()`'s first line (`self.action_error =
-    /// None`) silently erased the conical rejection error.
-    #[test]
-    fn conical_load_from_error_survives_post_load_recompute() {
-        const CONICAL_TOML: &str = r#"material = "Music Wire"
-unit_system = "Metric"
-
-[design]
-family = "Conical"
-type = "PowerUser"
-end_type = "squared_ground"
-wire_dia_mm = 2.0
-large_mean_dia_mm = 20.0
-small_mean_dia_mm = 12.0
-active = 10.0
-free_length_mm = 60.0
-loads_n = [10.0]
-"#;
-        let dir =
-            std::env::temp_dir().join(format!("osm_conical_load_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("conical.toml");
-        std::fs::write(&path, CONICAL_TOML).unwrap();
-
-        let mut app = test_app();
-        app.material = "Chrome Vanadium".to_string();
-        app.unit_system = springcore::UnitSystem::Us;
-
-        // Drive the REAL path: load_from, then if it returns true, recompute —
-        // mirroring what update() does after Message::Load.
-        let should_recompute = app.load_from(&path);
-        if should_recompute {
-            app.recompute();
-        }
-
-        let _ = std::fs::remove_dir_all(&dir);
-
-        let err = app.action_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("conical designs are not supported"),
-            "action_error must survive the post-load recompute; got: {err:?}"
-        );
-        assert_eq!(
-            app.material, "Chrome Vanadium",
-            "conical load must not mutate material"
-        );
-        assert_eq!(
-            app.unit_system,
-            springcore::UnitSystem::Us,
-            "conical load must not mutate unit_system"
-        );
+        assert_eq!(app.family, springcore::Family::Conical);
+        assert_eq!(app.conical.wire_dia, "2");
+        assert_eq!(app.conical.large_mean_dia, "20");
+        assert!(app.action_error.is_none());
     }
 }

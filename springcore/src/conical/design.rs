@@ -297,7 +297,8 @@ pub fn evaluate_status(design: &ConicalDesign, material: &Material) -> DesignSta
         messages.push(StatusMessage {
             severity: Severity::Info,
             message: "coils telescope (per-coil radial step ≥ wire diameter); the reported \
-                      solid length is conservative — the true solid height is lower"
+                      solid length is conservative — the true solid height is lower and the \
+                      reported at-solid stress is correspondingly understated"
                 .into(),
         });
     }
@@ -710,12 +711,15 @@ mod tests {
         let tele = solve(92.0, 52.0).unwrap();
         let status = evaluate_status(&tele, &m);
         assert!(has_message(&status, "coils telescope"));
-        // And it is Info, not a warning.
+        // And it is Info, not a warning — with the full pinned message string.
         assert!(status
             .messages
             .iter()
-            .any(|msg| msg.message.contains("coils telescope")
-                && msg.severity == crate::design::Severity::Info));
+            .any(|msg| msg.severity == crate::design::Severity::Info
+                && msg.message
+                    == "coils telescope (per-coil radial step ≥ wire diameter); the reported \
+                    solid length is conservative — the true solid height is lower and the \
+                    reported at-solid stress is correspondingly understated"));
         let flat = solve(20.0, 12.0).unwrap();
         let status = evaluate_status(&flat, &m);
         assert!(!has_message(&status, "coils telescope"));

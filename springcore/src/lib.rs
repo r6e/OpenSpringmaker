@@ -47,8 +47,8 @@ pub use material_store::MaterialStore;
 pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{
-    min_weight_request_from_spec, ConicalSpec, DesignSpec, ExtScenarioSpec, HookSpecSpec,
-    SavedDesign, ScenarioSpec, TorsionSpec, UnitSystem,
+    min_weight_request_from_spec, parse_end_type, ConicalSpec, DesignSpec, ExtScenarioSpec,
+    HookSpecSpec, SavedDesign, ScenarioSpec, TorsionSpec, UnitSystem,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{

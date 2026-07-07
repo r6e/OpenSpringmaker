@@ -11,6 +11,7 @@ use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
     inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
 };
+use crate::picker::{find_by_key, KeyLabel, END_TYPES};
 use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
@@ -19,44 +20,8 @@ use crate::widgets::{
 };
 
 // --------------------------------------------------------------------------
-// KeyLabel newtype for pick-list items
+// Fixity pick-list items (compression-only; end-types are shared via picker)
 // --------------------------------------------------------------------------
-
-/// A (key, label) pair for end-type and fixity pick-lists.
-///
-/// The `Display` impl renders the human-readable label; the key is used to
-/// store the value in `FormState` and round-trip through save/load.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct KeyLabel {
-    key: &'static str,
-    label: &'static str,
-}
-
-impl std::fmt::Display for KeyLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label)
-    }
-}
-
-/// All end-type options in display order.
-const END_TYPES: &[KeyLabel] = &[
-    KeyLabel {
-        key: "plain",
-        label: "Plain",
-    },
-    KeyLabel {
-        key: "plain_ground",
-        label: "Plain ground",
-    },
-    KeyLabel {
-        key: "squared",
-        label: "Squared",
-    },
-    KeyLabel {
-        key: "squared_ground",
-        label: "Squared and ground",
-    },
-];
 
 /// All fixity options in display order.
 const FIXITIES: &[KeyLabel] = &[
@@ -77,12 +42,6 @@ const FIXITIES: &[KeyLabel] = &[
         label: "Fixed-Free",
     },
 ];
-
-/// Find a `KeyLabel` by its stored key string. Returns `None` if the key is
-/// unrecognised (e.g. a future format loaded into an older binary).
-fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {
-    options.iter().find(|kl| kl.key == key)
-}
 
 // --------------------------------------------------------------------------
 // Style helpers

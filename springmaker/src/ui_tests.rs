@@ -843,3 +843,96 @@ fn ext_scenario_switch_solves_each_mode() {
         other => panic!("expected Populated MinWeight results, got {other:?}"),
     }
 }
+
+// ── Conical E2E ───────────────────────────────────────────────────────────────
+
+/// Conical analog of `type_into_tor`: focus a conical field by its stable id
+/// and type `text`, then apply the resulting messages. Mirrors `type_into_tor`
+/// exactly (same idiom, adapted field type and id resolver).
+fn type_into_con(app: &mut App, field: crate::conical::form::Field, text: &str) {
+    let id = iced_test::core::widget::Id::from(crate::conical::view::con_field_id(field));
+    let mut sim = ui(app);
+    sim.click(id)
+        .unwrap_or_else(|e| panic!("could not focus conical input for {field:?}: {e}"));
+    sim.typewrite(text);
+    for message in sim.into_messages() {
+        app.update(message);
+    }
+}
+
+#[test]
+fn conical_e2e_solve_renders_results_and_footer() {
+    use crate::conical::form::Field as CF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    type_into_con(&mut app, CF::WireDia, "2");
+    type_into_con(&mut app, CF::LargeMeanDia, "20");
+    type_into_con(&mut app, CF::SmallMeanDia, "12");
+    type_into_con(&mut app, CF::Active, "10");
+    type_into_con(&mut app, CF::FreeLength, "60");
+    type_into_con(&mut app, CF::Loads, "10, 25");
+    assert!(app.con_outcome.is_some(), "solve must succeed");
+    assert!(shows(&app, "Geometry"));
+    assert!(shows(&app, "Large end OD"));
+    assert!(
+        shows(
+            &app,
+            "Linear-range model: progressive stiffening as coils bottom out is not modeled."
+        ),
+        "footer note must render in the results panel"
+    );
+}
+
+/// The linear-model footer must NOT appear in the Empty state (no inputs).
+/// Revert-probe: temporarily add `render_linear_model_footer()` to the Empty
+/// arm → test FAILS → restore → green.
+#[test]
+fn conical_footer_absent_in_empty_state() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    // No inputs: form is blank → Empty arm → no footer.
+    assert!(
+        app.con_outcome.is_none(),
+        "pre-condition: no outcome without inputs"
+    );
+    assert!(
+        !shows(
+            &app,
+            "Linear-range model: progressive stiffening as coils bottom out is not modeled."
+        ),
+        "linear-model footer must not appear in the Empty state"
+    );
+}
+
+#[test]
+fn conical_save_load_round_trip() {
+    use crate::conical::form::Field as CF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    type_into_con(&mut app, CF::WireDia, "2");
+    type_into_con(&mut app, CF::LargeMeanDia, "20");
+    type_into_con(&mut app, CF::SmallMeanDia, "12");
+    type_into_con(&mut app, CF::Active, "10");
+    type_into_con(&mut app, CF::FreeLength, "60");
+    type_into_con(&mut app, CF::Loads, "10, 25");
+    assert!(app.con_outcome.is_some(), "fixture must solve before save");
+
+    // Mirror the torsion round-trip's temp-file + save_to/load_from idiom exactly.
+    let dir = std::env::temp_dir().join(format!("osm_con_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("design.toml");
+    app.save_to(&path);
+
+    let mut app2 = test_app();
+    assert!(app2.load_from(&path));
+    assert_eq!(app2.family, Family::Conical);
+    assert_eq!(app2.conical.large_mean_dia, "20");
+    // A recompute after load must produce a Populated result.
+    app2.recompute();
+    assert!(
+        app2.con_outcome.is_some(),
+        "recompute after load must solve"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

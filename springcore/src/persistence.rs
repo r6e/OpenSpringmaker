@@ -265,7 +265,8 @@ pub struct SavedDesign {
     pub design: DesignSpec,
 }
 
-fn parse_end_type(s: &str) -> Result<EndType> {
+/// Parse a persisted end-type key ("plain" | "plain_ground" | "squared" | "squared_ground").
+pub fn parse_end_type(s: &str) -> Result<EndType> {
     Ok(match s {
         "plain" => EndType::Plain,
         "plain_ground" => EndType::PlainGround,
