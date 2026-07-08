@@ -1913,7 +1913,11 @@ mod tests {
         let oob = 7; // well past the single member
 
         app.action_error = Some("prior status".to_string());
-        app.update(Message::AsmField(oob, MemberField::WireDia, "3".to_string()));
+        app.update(Message::AsmField(
+            oob,
+            MemberField::WireDia,
+            "3".to_string(),
+        ));
         app.update(Message::AsmMemberMaterial(oob, "Stainless 302".to_string()));
         app.update(Message::AsmMemberEndType(oob, "closed_ground".to_string()));
 
