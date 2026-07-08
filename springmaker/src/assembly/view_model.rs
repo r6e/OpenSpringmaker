@@ -216,9 +216,9 @@ fn member_load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
 
 /// Build design-level status lines: shared prefix + `evaluate_status` messages.
 ///
-/// This is the single source of truth for assembly status; both `asm_status_view`
-/// (the calculator's shared panel) and `AsmPopulatedResults.status` (for tests)
-/// call this function — no double-rendering.
+/// The single source of truth for assembly status; `asm_status_view` (the
+/// calculator's shared status panel) calls this. Status is NOT carried on the
+/// populated-results struct — it renders only through the shared panel.
 fn asm_design_status(out: &AssemblyDesign, app: &App) -> Vec<StatusLine> {
     let mut lines = crate::presenter::common_status_lines(app);
     append_status_messages(&mut lines, &evaluate_status(out, &app.materials).messages);
