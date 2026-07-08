@@ -21,10 +21,6 @@ pub struct AsmPopulatedResults {
     /// stress (stress lives in the per-member tables).
     pub assembly_loads: LoadTable,
     pub members: Vec<AsmMemberResultView>,
-    /// Design-level status lines (single source of truth shared with
-    /// `asm_status_view`); rendered by the calculator's shared status panel,
-    /// NOT inside the results panel.
-    pub status: Vec<StatusLine>,
 }
 
 /// One member's display data in the populated results.
@@ -77,7 +73,6 @@ fn asm_populated_results(out: &AssemblyDesign, app: &App) -> AsmPopulatedResults
             .enumerate()
             .map(|(i, mr)| asm_member_result_view(i, mr, us))
             .collect(),
-        status: asm_design_status(out, app),
     }
 }
 

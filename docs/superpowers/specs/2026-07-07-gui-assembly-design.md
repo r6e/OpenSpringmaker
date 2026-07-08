@@ -197,8 +197,9 @@ pub struct AsmPopulatedResults {
                                              // "limited by member N"
     pub assembly_loads: LoadTable,           // assembly-level per-load state
     pub members: Vec<AsmMemberResultView>,   // one per member
-    pub status: Vec<StatusLine>,
 }
+
+> **Implementation note (panel finding):** A `pub status: Vec<StatusLine>` field was dropped before implementation. §D specifies a single shared `status_panel` across all families — status renders once via the shared path (`asm_status_view`), not via a field on `AsmPopulatedResults`. The field would have been dead data never read by `render_populated`.
 
 pub struct AsmMemberResultView {
     pub heading: String,        // "Member N (Music Wire)"
