@@ -339,6 +339,27 @@ mod tests {
         let share = p.members[0].rows.iter().find(|r| r.label == "Share");
         assert!(share.is_some(), "member 1 must have a Share row");
         assert_eq!(share.unwrap().unit, "%");
+
+        // Assembly-level load table: 2 rows, no stress at assembly level.
+        assert_eq!(p.assembly_loads.rows.len(), 2, "two load points → two rows");
+        assert_eq!(
+            p.assembly_loads.stress_unit, "",
+            "assembly table must carry empty stress_unit (no stress at assembly level)"
+        );
+        assert!(
+            p.assembly_loads.rows[0].stress.is_empty(),
+            "assembly LoadRow stress cell must be empty"
+        );
+        assert!(
+            p.assembly_loads.rows[0].pct_mts.is_empty(),
+            "assembly LoadRow pct_mts cell must be empty"
+        );
+        // Metric fixture → force unit is N.
+        assert!(
+            p.assembly_loads.rows[0].force.ends_with(" N"),
+            "metric assembly force cell must end with ' N', got {:?}",
+            p.assembly_loads.rows[0].force
+        );
     }
 
     // ── results_view_tristate ─────────────────────────────────────────────────

@@ -989,10 +989,15 @@ fn assembly_e2e_dynamic_members_and_results() {
     app.update(Message::AsmLoads("10, 25".into()));
     assert!(app.asm_outcome.is_some(), "two-member assembly must solve");
 
-    // Summary section and both member headings must be present in the render.
+    // Summary section, assembly load table, and both member headings must be
+    // present in the render.
     assert!(
         shows(&app, "Summary"),
         "populated results must show Summary"
+    );
+    assert!(
+        shows(&app, "Assembly load points"),
+        "assembly load table heading must render"
     );
     assert!(
         shows(&app, "Member 1 (Music Wire)"),
