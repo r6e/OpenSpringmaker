@@ -301,8 +301,11 @@ mod tests {
             loads_n: vec![10.0],
             members: vec![],
         };
+        // Seed the form with one default material, then coerce with a DISTINCT
+        // one, so the material assert below proves the seeded card takes the
+        // passed `default_material` (not the form's prior default or a fallback).
         let mut form = AsmFormState::with_default_material("Music Wire");
-        populate_from_spec(&mut form, &spec, UnitSystem::Metric, "Music Wire");
+        populate_from_spec(&mut form, &spec, UnitSystem::Metric, "Stainless 302");
 
         assert_eq!(
             form.members.len(),
@@ -313,7 +316,10 @@ mod tests {
             form.members[0].is_blank(),
             "the seeded member must be blank"
         );
-        assert_eq!(form.members[0].material, "Music Wire");
+        assert_eq!(
+            form.members[0].material, "Stainless 302",
+            "the seeded member must take the passed default_material, not the form's prior default"
+        );
         // The rest of the loaded spec is preserved.
         assert_eq!(form.topology, "nested");
         assert_eq!(form.fixity, "fixed_fixed");
