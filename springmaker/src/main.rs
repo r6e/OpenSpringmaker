@@ -1,4 +1,5 @@
 mod app;
+mod assembly;
 mod calculator;
 mod compression;
 mod conical;

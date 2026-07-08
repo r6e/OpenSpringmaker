@@ -4,7 +4,7 @@
 
 use crate::design::{index_caution_labeled, DesignStatus, Severity, SpringDesign, StatusMessage};
 use crate::end_type::EndType;
-use crate::material::MaterialSet;
+use crate::material_store::MaterialStore;
 use crate::mechanics::EndFixity;
 use crate::units::{Force, Length, SpringRate};
 use crate::{CurvatureCorrection, Result, SpringError};
@@ -94,7 +94,7 @@ fn member_error(index: usize, err: SpringError) -> SpringError {
 }
 
 pub fn solve_assembly(
-    materials: &MaterialSet,
+    materials: &MaterialStore,
     inputs: &AssemblyInputs,
     loads: &[Force],
     fixity: EndFixity,
@@ -292,7 +292,7 @@ pub fn solve_assembly(
 }
 
 /// Engineering status checks for a solved assembly.
-pub fn evaluate_status(design: &AssemblyDesign, materials: &MaterialSet) -> DesignStatus {
+pub fn evaluate_status(design: &AssemblyDesign, materials: &MaterialStore) -> DesignStatus {
     let mut messages = Vec::new();
 
     // Nested clearance (geometric): with members ordered by mean diameter,
@@ -423,8 +423,8 @@ mod tests {
         }
     }
 
-    fn materials() -> crate::MaterialSet {
-        crate::MaterialSet::load_default()
+    fn materials() -> crate::MaterialStore {
+        crate::MaterialStore::new(crate::MaterialSet::load_default())
     }
 
     fn solve(
