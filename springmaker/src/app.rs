@@ -538,6 +538,10 @@ impl App {
                 true
             }
             Message::AsmField(i, field, v) => {
+                // Return whether a field was actually written: an out-of-bounds
+                // index (not UI-reachable, but defensively possible via direct
+                // message dispatch) is a no-op and must NOT trigger a recompute
+                // that would clear `action_error`.
                 if let Some(m) = self.assembly.members.get_mut(i) {
                     use crate::assembly::form::MemberField as F;
                     match field {
@@ -546,20 +550,26 @@ impl App {
                         F::Active => m.active = v,
                         F::FreeLength => m.free_length = v,
                     }
+                    true
+                } else {
+                    false
                 }
-                true
             }
             Message::AsmMemberMaterial(i, mat) => {
                 if let Some(m) = self.assembly.members.get_mut(i) {
                     m.material = mat;
+                    true
+                } else {
+                    false
                 }
-                true
             }
             Message::AsmMemberEndType(i, et) => {
                 if let Some(m) = self.assembly.members.get_mut(i) {
                     m.end_type = et;
+                    true
+                } else {
+                    false
                 }
-                true
             }
             Message::AsmMemberAdd => {
                 self.assembly
@@ -568,11 +578,15 @@ impl App {
                 true
             }
             Message::AsmMemberRemove(i) => {
+                // A no-op removal (min-one floor or out-of-bounds index) must not
+                // recompute — that would clear `action_error` though nothing changed.
                 let len = self.assembly.members.len();
                 if len > 1 && i < len {
                     self.assembly.members.remove(i);
+                    true
+                } else {
+                    false
                 }
-                true
             }
             Message::Material(m) => {
                 self.material = m;
@@ -1836,8 +1850,11 @@ mod tests {
     }
 
     /// AsmMemberRemove with an out-of-bounds or at-boundary index must be a no-op,
-    /// not a Vec::remove panic.
-    /// Revert-probe: remove the `i < len` guard → this test panics → restore → green.
+    /// not a Vec::remove panic — AND side-effect-free: a no-op must not trigger the
+    /// recompute that clears `action_error` (nothing changed, so nothing to resolve).
+    /// Revert-probe (panic): remove the `i < len` guard → this test panics.
+    /// Revert-probe (side effect): make the no-op arm return `true` → recompute clears
+    /// `action_error` → the preservation asserts fail → restore → green.
     #[test]
     fn asm_member_remove_oob_is_noop() {
         use crate::assembly::form::AsmMemberForm;
@@ -1851,12 +1868,21 @@ mod tests {
             .push(AsmMemberForm::blank("Music Wire"));
         assert_eq!(app.assembly.members.len(), 3);
 
+        // Seed a status message a prior failed save would have set. A genuine no-op
+        // must leave it intact (only a real state change recomputes and clears it).
+        app.action_error = Some("prior status".to_string());
+
         // OOB index (5 on a 3-element vec) must be a no-op, not a panic.
         app.update(Message::AsmMemberRemove(5));
         assert_eq!(
             app.assembly.members.len(),
             3,
             "OOB AsmMemberRemove(5) must not change length"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "a no-op OOB removal must not recompute and clear action_error"
         );
 
         // Exact boundary: i == len (3) must also be a no-op.
@@ -1865,6 +1891,41 @@ mod tests {
             app.assembly.members.len(),
             3,
             "AsmMemberRemove(i==len) must be a no-op"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "a boundary no-op removal must not clear action_error"
+        );
+    }
+
+    /// The three member-attribute arms (`AsmField`/`AsmMemberMaterial`/
+    /// `AsmMemberEndType`) share the no-op-is-side-effect-free contract: an
+    /// out-of-bounds index writes nothing, so it must not recompute and clear
+    /// `action_error`. Locks the sibling sweep alongside `AsmMemberRemove`.
+    /// Revert-probe: make any of the three arms return `true` on the `None`
+    /// branch → recompute clears action_error → the matching assert fails.
+    #[test]
+    fn asm_member_attribute_oob_is_side_effect_free() {
+        use crate::assembly::form::MemberField;
+        let mut app = test_app();
+        assert_eq!(app.assembly.members.len(), 1); // default: one blank member
+        let oob = 7; // well past the single member
+
+        app.action_error = Some("prior status".to_string());
+        app.update(Message::AsmField(oob, MemberField::WireDia, "3".to_string()));
+        app.update(Message::AsmMemberMaterial(oob, "Stainless 302".to_string()));
+        app.update(Message::AsmMemberEndType(oob, "closed_ground".to_string()));
+
+        assert_eq!(
+            app.assembly.members.len(),
+            1,
+            "OOB member-attribute writes must not alter the member list"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "OOB member-attribute writes are no-ops and must not clear action_error"
         );
     }
 
