@@ -164,7 +164,7 @@ pub fn populate_from_spec(form: &mut AsmFormState, spec: &AssemblySpec, us: Unit
             end_type: m.end_type.clone(),
             wire_dia: crate::form_helpers::fmt_len(m.wire_dia_mm, us),
             mean_dia: crate::form_helpers::fmt_len(m.mean_dia_mm, us),
-            active: format!("{}", m.active),
+            active: m.active.to_string(),
             free_length: crate::form_helpers::fmt_len(m.free_length_mm, us),
         })
         .collect();

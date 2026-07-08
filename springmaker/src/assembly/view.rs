@@ -12,9 +12,9 @@ use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
 use crate::presenter::LoadTable;
 use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
-    material_picker_for_member, panel_container, render_governing_rate, results_empty,
-    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
-    SZ_LABEL,
+    material_picker_for_member, panel_container, render_governing_rate, render_result_row,
+    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
+    SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -53,8 +53,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     .spacing(8);
 
     let mut members_col = column![section_heading("Members")].spacing(12);
-    for index in 0..app.assembly.members.len() {
-        let m = &app.assembly.members[index];
+    for (index, m) in app.assembly.members.iter().enumerate() {
         members_col = members_col.push(member_card(app, index, m));
     }
 
@@ -179,11 +178,16 @@ fn render_asm_load_table(lt: &LoadTable) -> Element<'static, Message> {
 }
 
 /// Per-member section: heading + geometry rows + 6-column load table.
+///
+/// Rows are pushed directly into the column (no empty section heading above
+/// them) to avoid the blank-line visual artifact from `rows_section("")`.
 fn render_member_section(m: &AsmMemberResultView) -> Element<'static, Message> {
     let heading = text(m.heading.clone()).size(SZ_LABEL).color(C::TEXT);
 
     let mut col = column![heading].spacing(6);
-    col = col.push(rows_section("", &m.rows));
+    for r in &m.rows {
+        col = col.push(render_result_row(r));
+    }
     if !m.loads.rows.is_empty() {
         col = col.push(render_member_load_table(&m.loads));
     }

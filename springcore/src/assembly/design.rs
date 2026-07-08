@@ -752,13 +752,7 @@ mod tests {
     fn msg(result: crate::Result<AssemblyDesign>) -> String {
         match result {
             Err(crate::SpringError::InconsistentInputs(m)) => m,
-            Err(crate::SpringError::Member { index, source }) => {
-                let inner = match *source {
-                    crate::SpringError::InconsistentInputs(m) => m,
-                    other => other.to_string(),
-                };
-                format!("member {}: {inner}", index + 1)
-            }
+            Err(e @ crate::SpringError::Member { .. }) => e.to_string(),
             other => panic!("expected InconsistentInputs or Member, got {other:?}"),
         }
     }
