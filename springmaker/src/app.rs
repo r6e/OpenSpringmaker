@@ -305,10 +305,11 @@ impl App {
         self.action_error = None;
         match self.family {
             Family::Compression => {
-                // Stale extension/torsion/conical outcomes from a prior solve are no longer active.
+                // Stale extension/torsion/conical/assembly outcomes from a prior solve are no longer active.
                 self.ext_outcome = None;
                 self.tor_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 // If the user has entered none of the active scenario's required
                 // inputs (e.g. switched families on an untouched form), treat this
                 // as the initial state rather than surfacing a parse error. Once any
@@ -337,10 +338,11 @@ impl App {
                 }
             }
             Family::Extension => {
-                // Stale compression/torsion/conical outcomes from a prior solve are no longer active.
+                // Stale compression/torsion/conical/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.tor_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 // If the user has entered none of the PowerUser required inputs
                 // (e.g. switched families on an untouched form), treat this as the
                 // initial state rather than surfacing a parse error. Once any
@@ -369,10 +371,11 @@ impl App {
                 }
             }
             Family::Torsion => {
-                // Stale compression/extension/conical outcomes from a prior solve are no longer active.
+                // Stale compression/extension/conical/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 if self.torsion.is_blank() {
                     self.error = None;
                     self.tor_outcome = None;
@@ -395,10 +398,11 @@ impl App {
                 }
             }
             Family::Conical => {
-                // Stale compression/extension/torsion outcomes from a prior solve are no longer active.
+                // Stale compression/extension/torsion/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
                 self.tor_outcome = None;
+                self.asm_outcome = None;
                 if self.conical.is_blank() {
                     self.error = None;
                     self.con_outcome = None;
@@ -1828,5 +1832,52 @@ mod tests {
         assert_eq!(app.assembly.members.len(), 1);
         assert_eq!(app.assembly.members[0].wire_dia, "2");
         assert!(app.action_error.is_none());
+    }
+
+    /// Switching away from Assembly must clear the asm_outcome so the results
+    /// panel can never show stale data when another family is active.
+    /// Revert-probe: comment out `self.asm_outcome = None` in a non-Assembly arm
+    /// (Compression, Extension, Torsion, or Conical) → this test FAILS → restore → green.
+    #[test]
+    fn switching_away_from_assembly_clears_asm_outcome() {
+        use crate::assembly::form::{parse_and_solve as asm_parse_and_solve, AsmFormState};
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real assembly outcome by solving directly.
+        let asm_form = AsmFormState {
+            topology: "nested".into(),
+            fixity: "fixed_fixed".into(),
+            loads: "10".into(),
+            members: vec![crate::assembly::form::AsmMemberForm {
+                material: "Music Wire".into(),
+                end_type: "squared_ground".into(),
+                wire_dia: "2".into(),
+                mean_dia: "20".into(),
+                active: "10".into(),
+                free_length: "60".into(),
+            }],
+        };
+        let asm_out = asm_parse_and_solve(
+            &asm_form,
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.asm_outcome = Some(asm_out);
+        assert!(
+            app.asm_outcome.is_some(),
+            "pre-condition: asm_outcome must be Some before switching"
+        );
+
+        // Switch to Compression — the Compression arm of recompute() must clear asm_outcome.
+        app.update(Message::SelectFamily(Family::Compression));
+
+        assert!(
+            app.asm_outcome.is_none(),
+            "switching away from Assembly must clear asm_outcome"
+        );
     }
 }
