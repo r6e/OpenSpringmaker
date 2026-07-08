@@ -5,9 +5,13 @@
 Completes the assembly increment. Carries two firsts (a dynamic member-list
 widget; per-member material pickers) and two engine-panel carry-forward
 obligations (the end-to-end topology-rejection pin; the member
-`DiameterOutOfRange` re-localization). One mutation-gated springcore change
-beyond the `Family` enum: a structured member-error variant enabling the
-re-localization. Two SDD tasks, mirroring the conical GUI split.
+`DiameterOutOfRange` re-localization). Two mutation-gated springcore changes
+beyond the `Family` enum: (1) the structured `SpringError::Member` variant
+enabling the re-localization; and (2) `solve_assembly`/`evaluate_status`
+retyped `&MaterialSet` → `&MaterialStore` — a correctness fix (resolves
+user-overlay member materials that `MaterialSet` cannot see) and a consistency
+fix (all four sibling `parse_and_solve` functions already took `&MaterialStore`).
+Two SDD tasks, mirroring the conical GUI split.
 
 ## Decisions (settled during brainstorming)
 
