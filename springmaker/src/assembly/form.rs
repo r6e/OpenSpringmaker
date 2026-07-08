@@ -161,7 +161,12 @@ pub fn build_spec(form: &AsmFormState, us: UnitSystem) -> Result<AssemblySpec> {
 }
 
 /// Fill the form from a loaded spec (round-trips with `build_spec`).
-pub fn populate_from_spec(form: &mut AsmFormState, spec: &AssemblySpec, us: UnitSystem) {
+pub fn populate_from_spec(
+    form: &mut AsmFormState,
+    spec: &AssemblySpec,
+    us: UnitSystem,
+    default_material: &str,
+) {
     let AssemblySpec::PowerUser {
         topology,
         fixity,
@@ -182,6 +187,14 @@ pub fn populate_from_spec(form: &mut AsmFormState, spec: &AssemblySpec, us: Unit
             free_length: crate::form_helpers::fmt_len(m.free_length_mm, us),
         })
         .collect();
+    // Uphold the min-one-member floor. Persistence deliberately parses
+    // `members = []` (the engine rejects it at solve-time — see design.rs), but
+    // every GUI path guarantees at least one member. A loaded empty list seeds
+    // one blank member here (mirroring `with_default_material`) rather than
+    // leaving a zero-card form that breaks the Remove/Add invariants.
+    if form.members.is_empty() {
+        form.members = vec![AsmMemberForm::blank(default_material)];
+    }
 }
 
 #[cfg(test)]
@@ -265,13 +278,45 @@ mod tests {
             }
             let spec = build_spec(&f, us).unwrap();
             let mut round = AsmFormState::with_default_material("Music Wire");
-            populate_from_spec(&mut round, &spec, us);
+            populate_from_spec(&mut round, &spec, us, "Music Wire");
             assert_eq!(
                 build_spec(&round, us).unwrap(),
                 spec,
                 "round-trip lossless ({us:?})"
             );
         }
+    }
+
+    /// A save file with `members = []` parses (persistence deliberately allows
+    /// it — the engine rejects it only at solve). `populate_from_spec` must
+    /// uphold the GUI min-one-member floor by seeding one blank member, not
+    /// leave a zero-card form that breaks the Add/Remove invariants.
+    /// Revert-probe: drop the `is_empty()` coercion → members stays empty →
+    /// the length assert fails.
+    #[test]
+    fn populate_from_empty_members_seeds_one_blank() {
+        let spec = AssemblySpec::PowerUser {
+            topology: "nested".into(),
+            fixity: "fixed_fixed".into(),
+            loads_n: vec![10.0],
+            members: vec![],
+        };
+        let mut form = AsmFormState::with_default_material("Music Wire");
+        populate_from_spec(&mut form, &spec, UnitSystem::Metric, "Music Wire");
+
+        assert_eq!(
+            form.members.len(),
+            1,
+            "empty loaded members must be coerced to the min-one floor"
+        );
+        assert!(
+            form.members[0].is_blank(),
+            "the seeded member must be blank"
+        );
+        assert_eq!(form.members[0].material, "Music Wire");
+        // The rest of the loaded spec is preserved.
+        assert_eq!(form.topology, "nested");
+        assert_eq!(form.fixity, "fixed_fixed");
     }
 
     #[test]

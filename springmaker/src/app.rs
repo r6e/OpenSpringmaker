@@ -1078,6 +1078,7 @@ impl App {
                     &mut self.assembly,
                     &spec,
                     self.unit_system,
+                    &self.material,
                 );
             }
         }
