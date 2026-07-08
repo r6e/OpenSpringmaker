@@ -568,7 +568,8 @@ impl App {
                 true
             }
             Message::AsmMemberRemove(i) => {
-                if self.assembly.members.len() > 1 {
+                let len = self.assembly.members.len();
+                if len > 1 && i < len {
                     self.assembly.members.remove(i);
                 }
                 true
@@ -1832,6 +1833,35 @@ mod tests {
         assert_eq!(app.assembly.members.len(), 1);
         assert_eq!(app.assembly.members[0].wire_dia, "2");
         assert!(app.action_error.is_none());
+    }
+
+    /// AsmMemberRemove with an out-of-bounds or at-boundary index must be a no-op,
+    /// not a Vec::remove panic.
+    /// Revert-probe: remove the `i < len` guard → this test panics → restore → green.
+    #[test]
+    fn asm_member_remove_oob_is_noop() {
+        use crate::assembly::form::AsmMemberForm;
+        let mut app = test_app();
+        // Seed three members (default starts with one blank; push two more).
+        app.assembly.members.push(AsmMemberForm::blank("Music Wire"));
+        app.assembly.members.push(AsmMemberForm::blank("Music Wire"));
+        assert_eq!(app.assembly.members.len(), 3);
+
+        // OOB index (5 on a 3-element vec) must be a no-op, not a panic.
+        app.update(Message::AsmMemberRemove(5));
+        assert_eq!(
+            app.assembly.members.len(),
+            3,
+            "OOB AsmMemberRemove(5) must not change length"
+        );
+
+        // Exact boundary: i == len (3) must also be a no-op.
+        app.update(Message::AsmMemberRemove(3));
+        assert_eq!(
+            app.assembly.members.len(),
+            3,
+            "AsmMemberRemove(i==len) must be a no-op"
+        );
     }
 
     /// Switching away from Assembly must clear the asm_outcome so the results

@@ -5,7 +5,7 @@ use springcore::assembly::{solve_assembly, AssemblyDesign, AssemblyInputs, Assem
 use springcore::units::{Force, Length};
 use springcore::{
     parse_end_type, parse_fixity, parse_topology, AssemblyMemberSpec, AssemblySpec,
-    CurvatureCorrection, MaterialStore, Result, UnitSystem,
+    CurvatureCorrection, MaterialStore, Result, SpringError, UnitSystem,
 };
 
 use crate::form_helpers::{length_mm, loads_n, positive_num};
@@ -92,15 +92,22 @@ pub fn parse_and_solve(
     let topology = parse_topology(&form.topology)?;
     let fixity = parse_fixity(&form.fixity)?;
     let mut members = Vec::with_capacity(form.members.len());
-    for m in &form.members {
-        members.push(AssemblyMember {
-            material_name: m.material.clone(),
-            wire_dia: Length::from_millimeters(length_mm("wire diameter", &m.wire_dia, us)?),
-            mean_dia: Length::from_millimeters(length_mm("mean diameter", &m.mean_dia, us)?),
-            active_coils: positive_num("active coils", &m.active)?,
-            free_length: Length::from_millimeters(length_mm("free length", &m.free_length, us)?),
-            end_type: parse_end_type(&m.end_type)?,
-        });
+    for (i, m) in form.members.iter().enumerate() {
+        let member = (|| -> Result<AssemblyMember> {
+            Ok(AssemblyMember {
+                material_name: m.material.clone(),
+                wire_dia: Length::from_millimeters(length_mm("wire diameter", &m.wire_dia, us)?),
+                mean_dia: Length::from_millimeters(length_mm("mean diameter", &m.mean_dia, us)?),
+                active_coils: positive_num("active coils", &m.active)?,
+                free_length: Length::from_millimeters(length_mm("free length", &m.free_length, us)?),
+                end_type: parse_end_type(&m.end_type)?,
+            })
+        })()
+        .map_err(|e| SpringError::Member {
+            index: i,
+            source: Box::new(e),
+        })?;
+        members.push(member);
     }
     let loads: Vec<Force> = loads_n(&form.loads, us)?
         .into_iter()
@@ -267,6 +274,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.members[1].material_name, "Stainless 302");
+    }
+
+    /// A blank `wire_dia` on member index 1 is a GUI-layer parse failure
+    /// (before `solve_assembly`) — it must be attributed as `Member { index: 1 }`,
+    /// not emitted as a bare `InconsistentInputs`.
+    ///
+    /// Revert-probe: remove the `enumerate`/`Member`-wrap from the member loop →
+    /// this test fails (got `InconsistentInputs`, not `Member`) → restore → green.
+    #[test]
+    fn gui_parse_error_on_member_is_member_attributed() {
+        let mut f = two_member_form();
+        // Blank wire_dia on member 1 → length_mm fails with InconsistentInputs
+        // BEFORE the solve path; must arrive wrapped in Member { index: 1 }.
+        f.members[1].wire_dia = String::new();
+        let err = parse_and_solve(
+            &f,
+            UnitSystem::Metric,
+            &store(),
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, springcore::SpringError::Member { index: 1, .. }),
+            "GUI parse error on member 1 must be Member {{ index: 1 }}, got: {err:?}"
+        );
+        // Display must start "member 2:" (1-based).
+        assert!(
+            err.to_string().starts_with("member 2:"),
+            "Display must start 'member 2:', got: {err}"
+        );
     }
 
     #[test]
