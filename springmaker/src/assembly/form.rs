@@ -99,7 +99,11 @@ pub fn parse_and_solve(
                 wire_dia: Length::from_millimeters(length_mm("wire diameter", &m.wire_dia, us)?),
                 mean_dia: Length::from_millimeters(length_mm("mean diameter", &m.mean_dia, us)?),
                 active_coils: positive_num("active coils", &m.active)?,
-                free_length: Length::from_millimeters(length_mm("free length", &m.free_length, us)?),
+                free_length: Length::from_millimeters(length_mm(
+                    "free length",
+                    &m.free_length,
+                    us,
+                )?),
                 end_type: parse_end_type(&m.end_type)?,
             })
         })()

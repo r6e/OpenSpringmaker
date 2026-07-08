@@ -1843,8 +1843,12 @@ mod tests {
         use crate::assembly::form::AsmMemberForm;
         let mut app = test_app();
         // Seed three members (default starts with one blank; push two more).
-        app.assembly.members.push(AsmMemberForm::blank("Music Wire"));
-        app.assembly.members.push(AsmMemberForm::blank("Music Wire"));
+        app.assembly
+            .members
+            .push(AsmMemberForm::blank("Music Wire"));
+        app.assembly
+            .members
+            .push(AsmMemberForm::blank("Music Wire"));
         assert_eq!(app.assembly.members.len(), 3);
 
         // OOB index (5 on a 3-element vec) must be a no-op, not a panic.
