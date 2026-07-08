@@ -1,18 +1,20 @@
 //! Assembly humble view (ADR 0008): renders presenter output, no logic.
-//!
-//! Skeleton: Task 2 adds the Populated results panel.
 
 use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
 use crate::assembly::form::{AsmMemberForm, MemberField};
-use crate::assembly::view_model::{asm_results_view, AsmResultsView};
+use crate::assembly::view_model::{
+    asm_results_view, AsmMemberResultView, AsmPopulatedResults, AsmResultsView,
+};
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
+use crate::presenter::LoadTable;
 use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
-    material_picker_for_member, panel_container, results_empty, results_error, section_divider,
-    section_heading, styled_pick_list, SZ_LABEL,
+    material_picker_for_member, panel_container, render_governing_rate, results_empty,
+    results_error, rows_section, section_divider, section_heading, styled_pick_list, SZ_CAPTION,
+    SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -80,14 +82,189 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
-    let view = asm_results_view(app);
-    let inner: Element<'_, Message> = match view {
+    let inner: Element<'_, Message> = match asm_results_view(app) {
         AsmResultsView::Error(msg) => results_error(msg),
         AsmResultsView::Empty => results_empty(),
+        AsmResultsView::Populated(p) => render_populated(&p),
     };
     container(panel_container(inner))
         .width(Length::FillPortion(1))
         .into()
+}
+
+// --------------------------------------------------------------------------
+// Populated results rendering
+// --------------------------------------------------------------------------
+
+/// Render the populated assembly results: hero rate → Summary section →
+/// assembly load table → per-member sections. Status is handled by the
+/// calculator's shared status panel (not rendered here — see ADR 0008).
+fn render_populated(p: &AsmPopulatedResults) -> Element<'static, Message> {
+    let mut col = column![
+        section_heading("Results"),
+        section_divider(),
+        render_governing_rate(&p.governing_rate),
+        section_divider(),
+        rows_section("Summary", &p.summary),
+        section_divider(),
+        render_asm_load_table(&p.assembly_loads),
+    ]
+    .spacing(6);
+
+    for member in &p.members {
+        col = col.push(section_divider());
+        col = col.push(render_member_section(member));
+    }
+
+    col.into()
+}
+
+/// Assembly-level load table: 4 columns (Pt / Force / Deflection / Length).
+/// The assembly `LoadTable` has no stress — `stress_unit` is empty and the
+/// stress/%MTS columns are omitted.
+fn render_asm_load_table(lt: &LoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading("Assembly load points")].spacing(4);
+
+    col = col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+        ]
+        .spacing(4),
+    );
+
+    for lp in &lt.rows {
+        col = col.push(
+            row![
+                text(lp.point.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::MUTED)
+                    .width(Length::Fixed(24.0)),
+                text(lp.force.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.deflection.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.length.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+            ]
+            .spacing(4),
+        );
+    }
+
+    col.into()
+}
+
+/// Per-member section: heading + geometry rows + 6-column load table.
+fn render_member_section(m: &AsmMemberResultView) -> Element<'static, Message> {
+    let heading = text(m.heading.clone()).size(SZ_LABEL).color(C::TEXT);
+
+    let mut col = column![heading].spacing(6);
+    col = col.push(rows_section("", &m.rows));
+    if !m.loads.rows.is_empty() {
+        col = col.push(render_member_load_table(&m.loads));
+    }
+
+    col.into()
+}
+
+/// Per-member load table: 6 columns (Pt / Force / Deflection / Length /
+/// Stress(unit) / %MTS). Mirrors `render_con_load_table` in the conical view.
+fn render_member_load_table(lt: &LoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading("Member load points")].spacing(4);
+
+    col = col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Stress ({})", lt.stress_unit))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("%MTS")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4),
+    );
+
+    for lp in &lt.rows {
+        col = col.push(
+            row![
+                text(lp.point.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::MUTED)
+                    .width(Length::Fixed(24.0)),
+                text(lp.force.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.deflection.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.length.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.stress.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.pct_mts.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(1)),
+            ]
+            .spacing(4),
+        );
+    }
+
+    col.into()
 }
 
 // --------------------------------------------------------------------------
