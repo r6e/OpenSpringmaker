@@ -80,6 +80,18 @@ impl AsmFormState {
     }
 }
 
+/// Run a member's field-parse closure, attributing any failure to member
+/// `index` (rendered 1-based) via [`SpringError::Member`]. Shared by both
+/// member-parse paths — `parse_and_solve` (engine input) and `build_spec`
+/// (persisted spec, the Save path) — so an invalid member field is attributed
+/// identically whether the user solves or saves.
+fn parse_member<T>(index: usize, build: impl FnOnce() -> Result<T>) -> Result<T> {
+    build().map_err(|e| SpringError::Member {
+        index,
+        source: Box::new(e),
+    })
+}
+
 /// Parse the whole form and solve. Wires `parse_topology`/`parse_fixity`
 /// (the topology-rejection pin lands here) and threads the app-global
 /// curvature correction (the compression pattern).
@@ -93,7 +105,7 @@ pub fn parse_and_solve(
     let fixity = parse_fixity(&form.fixity)?;
     let mut members = Vec::with_capacity(form.members.len());
     for (i, m) in form.members.iter().enumerate() {
-        let member = (|| -> Result<AssemblyMember> {
+        members.push(parse_member(i, || {
             Ok(AssemblyMember {
                 material_name: m.material.clone(),
                 wire_dia: Length::from_millimeters(length_mm("wire diameter", &m.wire_dia, us)?),
@@ -106,12 +118,7 @@ pub fn parse_and_solve(
                 )?),
                 end_type: parse_end_type(&m.end_type)?,
             })
-        })()
-        .map_err(|e| SpringError::Member {
-            index: i,
-            source: Box::new(e),
-        })?;
-        members.push(member);
+        })?);
     }
     let loads: Vec<Force> = loads_n(&form.loads, us)?
         .into_iter()
@@ -131,14 +138,17 @@ pub fn build_spec(form: &AsmFormState, us: UnitSystem) -> Result<AssemblySpec> {
     let members = form
         .members
         .iter()
-        .map(|m| {
-            Ok(AssemblyMemberSpec {
-                material_name: m.material.clone(),
-                end_type: m.end_type.clone(),
-                wire_dia_mm: length_mm("wire diameter", &m.wire_dia, us)?,
-                mean_dia_mm: length_mm("mean diameter", &m.mean_dia, us)?,
-                active: positive_num("active coils", &m.active)?,
-                free_length_mm: length_mm("free length", &m.free_length, us)?,
+        .enumerate()
+        .map(|(i, m)| {
+            parse_member(i, || {
+                Ok(AssemblyMemberSpec {
+                    material_name: m.material.clone(),
+                    end_type: m.end_type.clone(),
+                    wire_dia_mm: length_mm("wire diameter", &m.wire_dia, us)?,
+                    mean_dia_mm: length_mm("mean diameter", &m.mean_dia, us)?,
+                    active: positive_num("active coils", &m.active)?,
+                    free_length_mm: length_mm("free length", &m.free_length, us)?,
+                })
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -304,6 +314,29 @@ mod tests {
             "GUI parse error on member 1 must be Member {{ index: 1 }}, got: {err:?}"
         );
         // Display must start "member 2:" (1-based).
+        assert!(
+            err.to_string().starts_with("member 2:"),
+            "Display must start 'member 2:', got: {err}"
+        );
+    }
+
+    /// The persistence path (`build_spec`, reached on Save) must attribute a
+    /// member field parse failure identically to `parse_and_solve` — the
+    /// sibling defect the R2 architect swept (Save showed a bare
+    /// `inconsistent inputs:` while Solve showed `member 2:`). Blank `wire_dia`
+    /// on member index 1 → `Member { index: 1 }`, not a bare `InconsistentInputs`.
+    ///
+    /// Revert-probe: drop the `enumerate`/`parse_member` wrap from `build_spec`
+    /// → this test fails (got `InconsistentInputs`, not `Member`) → restore → green.
+    #[test]
+    fn build_spec_parse_error_on_member_is_member_attributed() {
+        let mut f = two_member_form();
+        f.members[1].wire_dia = String::new();
+        let err = build_spec(&f, UnitSystem::Metric).unwrap_err();
+        assert!(
+            matches!(err, springcore::SpringError::Member { index: 1, .. }),
+            "build_spec parse error on member 1 must be Member {{ index: 1 }}, got: {err:?}"
+        );
         assert!(
             err.to_string().starts_with("member 2:"),
             "Display must start 'member 2:', got: {err}"
