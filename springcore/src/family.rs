@@ -9,6 +9,7 @@ pub enum Family {
     Extension,
     Torsion,
     Conical,
+    Assembly,
 }
 
 impl std::fmt::Display for Family {
@@ -18,6 +19,7 @@ impl std::fmt::Display for Family {
             Family::Extension => "Extension",
             Family::Torsion => "Torsion",
             Family::Conical => "Conical",
+            Family::Assembly => "Assembly",
         })
     }
 }
@@ -28,6 +30,7 @@ pub const ALL_FAMILIES: &[Family] = &[
     Family::Extension,
     Family::Torsion,
     Family::Conical,
+    Family::Assembly,
 ];
 
 #[cfg(test)]
@@ -51,5 +54,10 @@ mod tests {
     fn conical_display_and_in_all_families() {
         assert_eq!(Family::Conical.to_string(), "Conical");
         assert!(ALL_FAMILIES.contains(&Family::Conical));
+    }
+    #[test]
+    fn assembly_display_and_in_all_families() {
+        assert_eq!(Family::Assembly.to_string(), "Assembly");
+        assert!(ALL_FAMILIES.contains(&Family::Assembly));
     }
 }

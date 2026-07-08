@@ -25,6 +25,13 @@ pub enum SpringError {
     MaterialNotFound(String),
     /// Material/persistence data file could not be read or parsed.
     DataFile(String),
+    /// An error attributed to a specific member in a spring assembly.
+    Member {
+        /// Zero-based index of the member that failed.
+        index: usize,
+        /// The underlying error from that member's calculation.
+        source: Box<SpringError>,
+    },
 }
 
 impl fmt::Display for SpringError {
@@ -50,6 +57,13 @@ impl fmt::Display for SpringError {
             Self::NoFatigueData(m) => write!(f, "no fatigue data available for {m}"),
             Self::MaterialNotFound(m) => write!(f, "material not found: {m}"),
             Self::DataFile(m) => write!(f, "data file error: {m}"),
+            Self::Member { index, source } => {
+                let inner = match source.as_ref() {
+                    Self::InconsistentInputs(m) => m.clone(),
+                    other => other.to_string(),
+                };
+                write!(f, "member {}: {inner}", index + 1)
+            }
         }
     }
 }
@@ -78,5 +92,26 @@ mod tests {
     fn is_std_error() {
         fn assert_error<E: std::error::Error>(_: &E) {}
         assert_error(&SpringError::InvalidBracket);
+    }
+
+    #[test]
+    fn member_display_is_byte_identical_to_the_old_flatten() {
+        // InconsistentInputs source: the RAW inner message, no doubled prefix.
+        let e = SpringError::Member {
+            index: 1,
+            source: Box::new(SpringError::InconsistentInputs(
+                "mean diameter must be greater than wire diameter".into(),
+            )),
+        };
+        assert_eq!(
+            e.to_string(),
+            "member 2: mean diameter must be greater than wire diameter"
+        );
+        // Non-InconsistentInputs source flattens via its own Display.
+        let e = SpringError::Member {
+            index: 0,
+            source: Box::new(SpringError::MaterialNotFound("Unobtainium".into())),
+        };
+        assert_eq!(e.to_string(), "member 1: material not found: Unobtainium");
     }
 }

@@ -81,18 +81,16 @@ pub struct AssemblyDesign {
     pub load_points: Vec<AssemblyLoadPoint>,
 }
 
-/// Wrap a member-level error with its 1-based member attribution.
-/// `InconsistentInputs` keeps its inner message (avoiding a doubled
-/// "inconsistent inputs:" prefix); every other variant is flattened through
-/// its `Display`. CAVEAT (spec §A): `DiameterOutOfRange` loses the GUI's
-/// unit-aware re-formatting — member attribution beats unit localization
-/// for v1; recorded for the GUI increment.
+/// Wrap a member-level error with its 1-based attribution, preserving the
+/// inner error's structure (a UI layer re-localizes `DiameterOutOfRange`).
+/// The `Member` variant's `Display` reproduces the previous flattened string
+/// byte-for-byte, so error *messages* are unchanged; only the *structure* is
+/// richer.
 fn member_error(index: usize, err: SpringError) -> SpringError {
-    let inner = match err {
-        SpringError::InconsistentInputs(m) => m,
-        other => other.to_string(),
-    };
-    SpringError::InconsistentInputs(format!("member {}: {inner}", index + 1))
+    SpringError::Member {
+        index,
+        source: Box::new(err),
+    }
 }
 
 pub fn solve_assembly(
@@ -754,7 +752,14 @@ mod tests {
     fn msg(result: crate::Result<AssemblyDesign>) -> String {
         match result {
             Err(crate::SpringError::InconsistentInputs(m)) => m,
-            other => panic!("expected InconsistentInputs, got {other:?}"),
+            Err(crate::SpringError::Member { index, source }) => {
+                let inner = match *source {
+                    crate::SpringError::InconsistentInputs(m) => m,
+                    other => other.to_string(),
+                };
+                format!("member {}: {inner}", index + 1)
+            }
+            other => panic!("expected InconsistentInputs or Member, got {other:?}"),
         }
     }
 
@@ -1027,6 +1032,24 @@ mod tests {
             !has_message(&status, "load point 1 stress"),
             "stress well below allowable must not warn"
         );
+    }
+
+    #[test]
+    fn member_error_preserves_structure_for_relocalization() {
+        // A member DiameterOutOfRange must arrive as Member{ DiameterOutOfRange },
+        // not a flattened InconsistentInputs — the GUI relies on the structure.
+        let fat = AssemblyMember {
+            wire_dia: Length::from_millimeters(10.0),
+            mean_dia: Length::from_millimeters(80.0),
+            free_length: Length::from_millimeters(200.0),
+            ..baseline_member()
+        };
+        let err = solve(Topology::Series, vec![fat], &[10.0]).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::SpringError::Member { index: 0, ref source }
+                if matches!(**source, crate::SpringError::DiameterOutOfRange { .. })
+        ));
     }
 
     #[test]
