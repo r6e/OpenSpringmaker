@@ -372,22 +372,45 @@ pub(crate) fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Mess
 // ── Labeled input ────────────────────────────────────────────────────────────
 
 /// A labeled text input: muted label above a styled monospace input. The caller
-/// supplies the stable widget id and the message constructor, so both families
-/// reuse this (compression emits `Message::CompField`, extension `Message::ExtField`).
+/// supplies the widget id and the message constructor, so all families reuse this.
+/// `id` accepts any type that converts to [`iced::widget::Id`]: `&'static str`,
+/// `String`, or a pre-built `Id`. Existing `&'static str` callers are unaffected.
 pub(crate) fn labeled_input<'a>(
     label: &str,
     value: &str,
-    id: &'static str,
+    id: impl Into<iced::widget::Id>,
     on_input: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message> {
     column![
         field_label(label),
         text_input("", value)
-            .id(id)
+            .id(id.into())
             .on_input(on_input)
             .size(SZ_BODY)
             .font(Font::MONOSPACE)
             .style(text_input_style),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// Material picker scoped to a single assembly member.
+///
+/// Renders a `field_label("Material")` + pick-list for member at `index`.
+/// The selected value is taken from `app.assembly.members[index].material`.
+pub(crate) fn material_picker_for_member(app: &App, index: usize) -> Element<'_, Message> {
+    let names: Vec<String> = app
+        .materials
+        .names()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let selected = app.assembly.members.get(index).map(|m| m.material.clone());
+    column![
+        field_label("Material"),
+        styled_pick_list(names, selected, move |m| Message::AsmMemberMaterial(
+            index, m
+        )),
     ]
     .spacing(4)
     .into()

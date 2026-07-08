@@ -1,0 +1,348 @@
+//! Assembly humble view (ADR 0008): renders presenter output, no logic.
+
+use iced::widget::{button, column, container, row, text};
+use iced::{Element, Font, Length};
+
+use crate::app::{App, Message, C};
+use crate::assembly::form::{AsmMemberForm, MemberField};
+use crate::assembly::view_model::{
+    asm_results_view, AsmMemberResultView, AsmPopulatedResults, AsmResultsView,
+};
+use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
+use crate::presenter::LoadTable;
+use crate::widgets::{
+    danger_button_style, field_label, ghost_button_style, labeled_input,
+    material_picker_for_member, panel_container, render_governing_rate, render_result_row,
+    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
+    SZ_CAPTION, SZ_LABEL,
+};
+
+// --------------------------------------------------------------------------
+// Design (left) panel
+// --------------------------------------------------------------------------
+
+pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
+    let selected_topology = find_by_key(TOPOLOGIES, &app.assembly.topology).copied();
+    let selected_fixity = find_by_key(FIXITIES, &app.assembly.fixity).copied();
+
+    let setup_group = column![
+        section_heading("Setup"),
+        column![
+            field_label("Topology"),
+            styled_pick_list(TOPOLOGIES, selected_topology, |kl: KeyLabel| {
+                Message::AsmTopology(kl.key.to_string())
+            }),
+        ]
+        .spacing(4),
+        column![
+            field_label("Fixity"),
+            styled_pick_list(FIXITIES, selected_fixity, |kl: KeyLabel| {
+                Message::AsmFixity(kl.key.to_string())
+            }),
+        ]
+        .spacing(4),
+    ]
+    .spacing(10);
+
+    let loads_group = column![
+        section_heading("Loads"),
+        labeled_input("Loads", &app.assembly.loads, "asm-loads", |v| {
+            Message::AsmLoads(v)
+        }),
+    ]
+    .spacing(8);
+
+    let mut members_col = column![section_heading("Members")].spacing(12);
+    for (index, m) in app.assembly.members.iter().enumerate() {
+        members_col = members_col.push(member_card(app, index, m));
+    }
+
+    let add_btn = button(text("+ Add member").size(SZ_LABEL).color(C::TEXT))
+        .style(ghost_button_style)
+        .on_press(Message::AsmMemberAdd);
+
+    let inner = column![
+        setup_group,
+        section_divider(),
+        loads_group,
+        section_divider(),
+        members_col,
+        add_btn,
+    ]
+    .spacing(16);
+
+    container(panel_container(inner))
+        .width(Length::FillPortion(1))
+        .into()
+}
+
+// --------------------------------------------------------------------------
+// Results (right) panel
+// --------------------------------------------------------------------------
+
+pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let inner: Element<'_, Message> = match asm_results_view(app) {
+        AsmResultsView::Error(msg) => results_error(msg),
+        AsmResultsView::Empty => results_empty(),
+        AsmResultsView::Populated(p) => render_populated(&p),
+    };
+    container(panel_container(inner))
+        .width(Length::FillPortion(1))
+        .into()
+}
+
+// --------------------------------------------------------------------------
+// Populated results rendering
+// --------------------------------------------------------------------------
+
+/// Render the populated assembly results: hero rate → Summary section →
+/// assembly load table → per-member sections. Status is handled by the
+/// calculator's shared status panel (not rendered here — see ADR 0008).
+fn render_populated(p: &AsmPopulatedResults) -> Element<'static, Message> {
+    let mut col = column![
+        section_heading("Results"),
+        section_divider(),
+        render_governing_rate(&p.governing_rate),
+        section_divider(),
+        rows_section("Summary", &p.summary),
+        section_divider(),
+        render_asm_load_table(&p.assembly_loads),
+    ]
+    .spacing(6);
+
+    for member in &p.members {
+        col = col.push(section_divider());
+        col = col.push(render_member_section(member));
+    }
+
+    col.into()
+}
+
+/// Assembly-level load table: 4 columns (Pt / Force / Deflection / Length).
+/// The assembly `LoadTable` has no stress — `stress_unit` is empty and the
+/// stress/%MTS columns are omitted.
+fn render_asm_load_table(lt: &LoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading("Assembly load points")].spacing(4);
+
+    col = col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+        ]
+        .spacing(4),
+    );
+
+    for lp in &lt.rows {
+        col = col.push(
+            row![
+                text(lp.point.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::MUTED)
+                    .width(Length::Fixed(24.0)),
+                text(lp.force.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.deflection.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.length.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+            ]
+            .spacing(4),
+        );
+    }
+
+    col.into()
+}
+
+/// Per-member section: heading + geometry rows + 6-column load table.
+///
+/// Rows are pushed directly into the column (no empty section heading above
+/// them) to avoid the blank-line visual artifact from `rows_section("")`.
+fn render_member_section(m: &AsmMemberResultView) -> Element<'static, Message> {
+    let heading = text(m.heading.clone()).size(SZ_LABEL).color(C::TEXT);
+
+    let mut col = column![heading].spacing(6);
+    for r in &m.rows {
+        col = col.push(render_result_row(r));
+    }
+    if !m.loads.rows.is_empty() {
+        col = col.push(render_member_load_table(&m.loads));
+    }
+
+    col.into()
+}
+
+/// Per-member load table: 6 columns (Pt / Force / Deflection / Length /
+/// Stress(unit) / %MTS). Mirrors `render_con_load_table` in the conical view.
+fn render_member_load_table(lt: &LoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading("Member load points")].spacing(4);
+
+    col = col.push(
+        row![
+            text("Pt")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::Fixed(24.0)),
+            text("Force")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Deflection")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("Length")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text(format!("Stress ({})", lt.stress_unit))
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(2)),
+            text("%MTS")
+                .size(SZ_CAPTION)
+                .color(C::MUTED)
+                .width(Length::FillPortion(1)),
+        ]
+        .spacing(4),
+    );
+
+    for lp in &lt.rows {
+        col = col.push(
+            row![
+                text(lp.point.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::MUTED)
+                    .width(Length::Fixed(24.0)),
+                text(lp.force.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.deflection.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.length.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.stress.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(2)),
+                text(lp.pct_mts.clone())
+                    .font(Font::MONOSPACE)
+                    .size(SZ_LABEL)
+                    .color(C::TEXT)
+                    .width(Length::FillPortion(1)),
+            ]
+            .spacing(4),
+        );
+    }
+
+    col.into()
+}
+
+// --------------------------------------------------------------------------
+// Member field widget id
+// --------------------------------------------------------------------------
+
+/// Stable widget id for a member's text input. Runtime `String` — the
+/// `labeled_input` `id` param was widened to `impl Into<iced::widget::Id>`
+/// so existing `&'static str` callers are unaffected.
+pub(crate) fn asm_member_field_id(index: usize, field: MemberField) -> String {
+    use MemberField::*;
+    let leaf = match field {
+        WireDia => "wire-dia",
+        MeanDia => "mean-dia",
+        Active => "active",
+        FreeLength => "free-length",
+    };
+    format!("asm-member-{index}-{leaf}")
+}
+
+// --------------------------------------------------------------------------
+// Member card
+// --------------------------------------------------------------------------
+
+fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<'a, Message> {
+    use MemberField as F;
+
+    let header_text = text(format!("Member {}", index + 1)).size(SZ_LABEL);
+    let mut header = row![header_text].spacing(8);
+    if app.assembly.members.len() > 1 {
+        let remove_btn = button(text("Remove").size(SZ_LABEL).color(C::DANGER))
+            .style(danger_button_style)
+            .on_press(Message::AsmMemberRemove(index));
+        header = header.push(remove_btn);
+    }
+
+    let selected_end = find_by_key(END_TYPES, &m.end_type).copied();
+
+    column![
+        header,
+        material_picker_for_member(app, index),
+        column![
+            field_label("End type"),
+            styled_pick_list(END_TYPES, selected_end, move |kl: KeyLabel| {
+                Message::AsmMemberEndType(index, kl.key.to_string())
+            }),
+        ]
+        .spacing(4),
+        labeled_input(
+            "Wire dia",
+            &m.wire_dia,
+            asm_member_field_id(index, F::WireDia),
+            move |v| Message::AsmField(index, F::WireDia, v)
+        ),
+        labeled_input(
+            "Mean dia",
+            &m.mean_dia,
+            asm_member_field_id(index, F::MeanDia),
+            move |v| Message::AsmField(index, F::MeanDia, v)
+        ),
+        labeled_input(
+            "Active coils",
+            &m.active,
+            asm_member_field_id(index, F::Active),
+            move |v| Message::AsmField(index, F::Active, v)
+        ),
+        labeled_input(
+            "Free length",
+            &m.free_length,
+            asm_member_field_id(index, F::FreeLength),
+            move |v| Message::AsmField(index, F::FreeLength, v)
+        ),
+    ]
+    .spacing(6)
+    .padding(8)
+    .into()
+}

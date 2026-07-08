@@ -165,6 +165,15 @@ pub enum Message {
     // Calculator screen — conical
     ConField(crate::conical::form::Field, String),
     ConEndType(String),
+    // Calculator screen — assembly
+    AsmTopology(String),
+    AsmFixity(String),
+    AsmLoads(String),
+    AsmField(usize, crate::assembly::form::MemberField, String),
+    AsmMemberMaterial(usize, String),
+    AsmMemberEndType(usize, String),
+    AsmMemberAdd,
+    AsmMemberRemove(usize),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -201,6 +210,10 @@ pub struct App {
     pub conical: ConFormState,
     /// Solved conical outcome; `None` until a valid conical form is solved.
     pub con_outcome: Option<ConFormOutcome>,
+    /// Assembly form inputs (dynamic member list).
+    pub assembly: crate::assembly::form::AsmFormState,
+    /// Solved assembly outcome; `None` until a valid assembly form is solved.
+    pub asm_outcome: Option<springcore::assembly::AssemblyDesign>,
     /// Selected material name (shared across families). Lifted out of `FormState`.
     pub material: String,
     /// Active unit system (shared across families). Lifted out of `FormState`.
@@ -256,6 +269,8 @@ impl App {
             tor_outcome: None,
             conical: ConFormState::default(),
             con_outcome: None,
+            assembly: crate::assembly::form::AsmFormState::with_default_material("Music Wire"),
+            asm_outcome: None,
             material: "Music Wire".into(),
             unit_system: UnitSystem::Metric,
             materials,
@@ -290,10 +305,11 @@ impl App {
         self.action_error = None;
         match self.family {
             Family::Compression => {
-                // Stale extension/torsion/conical outcomes from a prior solve are no longer active.
+                // Stale extension/torsion/conical/assembly outcomes from a prior solve are no longer active.
                 self.ext_outcome = None;
                 self.tor_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 // If the user has entered none of the active scenario's required
                 // inputs (e.g. switched families on an untouched form), treat this
                 // as the initial state rather than surfacing a parse error. Once any
@@ -322,10 +338,11 @@ impl App {
                 }
             }
             Family::Extension => {
-                // Stale compression/torsion/conical outcomes from a prior solve are no longer active.
+                // Stale compression/torsion/conical/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.tor_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 // If the user has entered none of the PowerUser required inputs
                 // (e.g. switched families on an untouched form), treat this as the
                 // initial state rather than surfacing a parse error. Once any
@@ -354,10 +371,11 @@ impl App {
                 }
             }
             Family::Torsion => {
-                // Stale compression/extension/conical outcomes from a prior solve are no longer active.
+                // Stale compression/extension/conical/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
                 self.con_outcome = None;
+                self.asm_outcome = None;
                 if self.torsion.is_blank() {
                     self.error = None;
                     self.tor_outcome = None;
@@ -380,10 +398,11 @@ impl App {
                 }
             }
             Family::Conical => {
-                // Stale compression/extension/torsion outcomes from a prior solve are no longer active.
+                // Stale compression/extension/torsion/assembly outcomes from a prior solve are no longer active.
                 self.outcome = None;
                 self.ext_outcome = None;
                 self.tor_outcome = None;
+                self.asm_outcome = None;
                 if self.conical.is_blank() {
                     self.error = None;
                     self.con_outcome = None;
@@ -402,6 +421,33 @@ impl App {
                     }
                     Err(e) => {
                         self.con_outcome = None;
+                        self.error = Some(format_error(&e, self.unit_system));
+                    }
+                }
+            }
+            Family::Assembly => {
+                // Stale outcomes from other families are no longer active.
+                self.outcome = None;
+                self.ext_outcome = None;
+                self.tor_outcome = None;
+                self.con_outcome = None;
+                if self.assembly.is_blank() {
+                    self.error = None;
+                    self.asm_outcome = None;
+                    return;
+                }
+                match crate::assembly::form::parse_and_solve(
+                    &self.assembly,
+                    self.unit_system,
+                    &self.materials,
+                    self.correction,
+                ) {
+                    Ok(out) => {
+                        self.asm_outcome = Some(out);
+                        self.error = None;
+                    }
+                    Err(e) => {
+                        self.asm_outcome = None;
                         self.error = Some(format_error(&e, self.unit_system));
                     }
                 }
@@ -478,6 +524,69 @@ impl App {
             Message::ConEndType(e) => {
                 self.conical.end_type = e;
                 true
+            }
+            Message::AsmTopology(t) => {
+                self.assembly.topology = t;
+                true
+            }
+            Message::AsmFixity(f) => {
+                self.assembly.fixity = f;
+                true
+            }
+            Message::AsmLoads(v) => {
+                self.assembly.loads = v;
+                true
+            }
+            Message::AsmField(i, field, v) => {
+                // Return whether a field was actually written: an out-of-bounds
+                // index (not UI-reachable, but defensively possible via direct
+                // message dispatch) is a no-op and must NOT trigger a recompute
+                // that would clear `action_error`.
+                if let Some(m) = self.assembly.members.get_mut(i) {
+                    use crate::assembly::form::MemberField as F;
+                    match field {
+                        F::WireDia => m.wire_dia = v,
+                        F::MeanDia => m.mean_dia = v,
+                        F::Active => m.active = v,
+                        F::FreeLength => m.free_length = v,
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            Message::AsmMemberMaterial(i, mat) => {
+                if let Some(m) = self.assembly.members.get_mut(i) {
+                    m.material = mat;
+                    true
+                } else {
+                    false
+                }
+            }
+            Message::AsmMemberEndType(i, et) => {
+                if let Some(m) = self.assembly.members.get_mut(i) {
+                    m.end_type = et;
+                    true
+                } else {
+                    false
+                }
+            }
+            Message::AsmMemberAdd => {
+                self.assembly
+                    .members
+                    .push(crate::assembly::form::AsmMemberForm::blank(&self.material));
+                true
+            }
+            Message::AsmMemberRemove(i) => {
+                // A no-op removal (min-one floor or out-of-bounds index) must not
+                // recompute — that would clear `action_error` though nothing changed.
+                let len = self.assembly.members.len();
+                if len > 1 && i < len {
+                    self.assembly.members.remove(i);
+                    true
+                } else {
+                    false
+                }
             }
             Message::Material(m) => {
                 self.material = m;
@@ -876,6 +985,15 @@ impl App {
                     }
                 }
             }
+            Family::Assembly => {
+                match crate::assembly::form::build_spec(&self.assembly, self.unit_system) {
+                    Ok(s) => springcore::DesignSpec::Assembly(s),
+                    Err(e) => {
+                        self.action_error = Some(e.to_string());
+                        return;
+                    }
+                }
+            }
         };
         let saved = SavedDesign {
             material: self.material.clone(),
@@ -912,21 +1030,13 @@ impl App {
         }
     }
 
-    /// Apply a loaded design to the app. Returns `false` when the design's
-    /// family has no GUI yet (nothing is applied and `action_error` is set)
-    /// so `load_from` can skip the recompute that would wipe the error —
-    /// the load-path invariant from the conical increment. (The conical GUI
-    /// spec's Decision-5 reversal note anticipated this signal returning
-    /// with the next placeholder; here it is.)
+    /// Apply a loaded design. Returns `false` when the design's family has no
+    /// GUI yet (nothing applied, `action_error` set) so `load_from` can skip
+    /// the recompute that would wipe the error. Always `true` today — every
+    /// family populates — but the signature is RETAINED permanently so the
+    /// next family placeholder (see the conical Decision-5 reversal note) does
+    /// not flip it again. The `()`↔`bool` pendulum ends here.
     fn apply_saved(&mut self, saved: SavedDesign) -> bool {
-        if matches!(saved.design, springcore::DesignSpec::Assembly(_)) {
-            self.action_error = Some(
-                "assembly designs are not supported by this build yet (the assembly GUI \
-                 ships in the next increment)"
-                    .into(),
-            );
-            return false;
-        }
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -962,7 +1072,15 @@ impl App {
                     self.unit_system,
                 );
             }
-            springcore::DesignSpec::Assembly(_) => unreachable!("handled above"),
+            springcore::DesignSpec::Assembly(spec) => {
+                self.family = Family::Assembly;
+                crate::assembly::form::populate_from_spec(
+                    &mut self.assembly,
+                    &spec,
+                    self.unit_system,
+                    &self.material,
+                );
+            }
         }
         true
     }
@@ -1703,72 +1821,163 @@ mod tests {
         assert!(app.action_error.is_none());
     }
 
-    // ── Assembly placeholder: load_from rejects and preserves state ───────────
+    // ── Assembly family: apply_saved integration test ─────────────────────────
 
     #[test]
-    fn loading_an_assembly_design_rejects_and_preserves_form() {
-        use springcore::{AssemblyMemberSpec, AssemblySpec, DesignSpec, SavedDesign, UnitSystem};
-
+    fn loading_an_assembly_design_populates_the_assembly_form() {
         let mut app = test_app();
-        // Pre-seed values that differ from the assembly TOML's `material`
-        // ("Music Wire") and `unit_system` (Metric), so the unchanged assertions
-        // can't pass vacuously if `apply_saved` mutates before returning false.
-        app.material = "Chrome-Vanadium".to_string();
-        app.unit_system = springcore::UnitSystem::Us;
-
-        // Write an assembly TOML to a real temp file.
-        let assembly_design = SavedDesign {
+        let applied = app.apply_saved(springcore::SavedDesign {
             material: "Music Wire".to_string(),
-            unit_system: UnitSystem::Metric,
-            design: DesignSpec::Assembly(AssemblySpec::PowerUser {
-                topology: "nested".to_string(),
-                fixity: "fixed_fixed".to_string(),
-                loads_n: vec![10.0, 25.0],
-                members: vec![AssemblyMemberSpec {
-                    material_name: "Music Wire".to_string(),
-                    end_type: "squared_ground".to_string(),
+            unit_system: springcore::UnitSystem::Metric,
+            design: springcore::DesignSpec::Assembly(springcore::AssemblySpec::PowerUser {
+                topology: "nested".into(),
+                fixity: "fixed_fixed".into(),
+                loads_n: vec![10.0],
+                members: vec![springcore::AssemblyMemberSpec {
+                    material_name: "Music Wire".into(),
+                    end_type: "squared_ground".into(),
                     wire_dia_mm: 2.0,
                     mean_dia_mm: 20.0,
                     active: 10.0,
                     free_length_mm: 60.0,
                 }],
             }),
+        });
+        assert!(applied);
+        assert_eq!(app.family, springcore::Family::Assembly);
+        assert_eq!(app.assembly.members.len(), 1);
+        assert_eq!(app.assembly.members[0].wire_dia, "2");
+        assert!(app.action_error.is_none());
+    }
+
+    /// AsmMemberRemove with an out-of-bounds or at-boundary index must be a no-op,
+    /// not a Vec::remove panic — AND side-effect-free: a no-op must not trigger the
+    /// recompute that clears `action_error` (nothing changed, so nothing to resolve).
+    /// Revert-probe (panic): remove the `i < len` guard → this test panics.
+    /// Revert-probe (side effect): make the no-op arm return `true` → recompute clears
+    /// `action_error` → the preservation asserts fail → restore → green.
+    #[test]
+    fn asm_member_remove_oob_is_noop() {
+        use crate::assembly::form::AsmMemberForm;
+        let mut app = test_app();
+        // Seed three members (default starts with one blank; push two more).
+        app.assembly
+            .members
+            .push(AsmMemberForm::blank("Music Wire"));
+        app.assembly
+            .members
+            .push(AsmMemberForm::blank("Music Wire"));
+        assert_eq!(app.assembly.members.len(), 3);
+
+        // Seed a status message a prior failed save would have set. A genuine no-op
+        // must leave it intact (only a real state change recomputes and clears it).
+        app.action_error = Some("prior status".to_string());
+
+        // OOB index (5 on a 3-element vec) must be a no-op, not a panic.
+        app.update(Message::AsmMemberRemove(5));
+        assert_eq!(
+            app.assembly.members.len(),
+            3,
+            "OOB AsmMemberRemove(5) must not change length"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "a no-op OOB removal must not recompute and clear action_error"
+        );
+
+        // Exact boundary: i == len (3) must also be a no-op.
+        app.update(Message::AsmMemberRemove(3));
+        assert_eq!(
+            app.assembly.members.len(),
+            3,
+            "AsmMemberRemove(i==len) must be a no-op"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "a boundary no-op removal must not clear action_error"
+        );
+    }
+
+    /// The three member-attribute arms (`AsmField`/`AsmMemberMaterial`/
+    /// `AsmMemberEndType`) share the no-op-is-side-effect-free contract: an
+    /// out-of-bounds index writes nothing, so it must not recompute and clear
+    /// `action_error`. Locks the sibling sweep alongside `AsmMemberRemove`.
+    /// Revert-probe: make any of the three arms return `true` on the `None`
+    /// branch → recompute clears action_error → the matching assert fails.
+    #[test]
+    fn asm_member_attribute_oob_is_side_effect_free() {
+        use crate::assembly::form::MemberField;
+        let mut app = test_app();
+        assert_eq!(app.assembly.members.len(), 1); // default: one blank member
+        let oob = 7; // well past the single member
+
+        app.action_error = Some("prior status".to_string());
+        app.update(Message::AsmField(
+            oob,
+            MemberField::WireDia,
+            "3".to_string(),
+        ));
+        app.update(Message::AsmMemberMaterial(oob, "Stainless 302".to_string()));
+        app.update(Message::AsmMemberEndType(oob, "closed_ground".to_string()));
+
+        assert_eq!(
+            app.assembly.members.len(),
+            1,
+            "OOB member-attribute writes must not alter the member list"
+        );
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("prior status"),
+            "OOB member-attribute writes are no-ops and must not clear action_error"
+        );
+    }
+
+    /// Switching away from Assembly must clear the asm_outcome so the results
+    /// panel can never show stale data when another family is active.
+    /// Revert-probe: comment out `self.asm_outcome = None` in a non-Assembly arm
+    /// (Compression, Extension, Torsion, or Conical) → this test FAILS → restore → green.
+    #[test]
+    fn switching_away_from_assembly_clears_asm_outcome() {
+        use crate::assembly::form::{parse_and_solve as asm_parse_and_solve, AsmFormState};
+        use springcore::{CurvatureCorrection, Family, UnitSystem};
+
+        let mut app = test_app();
+
+        // Prime a real assembly outcome by solving directly.
+        let asm_form = AsmFormState {
+            topology: "nested".into(),
+            fixity: "fixed_fixed".into(),
+            loads: "10".into(),
+            members: vec![crate::assembly::form::AsmMemberForm {
+                material: "Music Wire".into(),
+                end_type: "squared_ground".into(),
+                wire_dia: "2".into(),
+                mean_dia: "20".into(),
+                active: "10".into(),
+                free_length: "60".into(),
+            }],
         };
-        let path =
-            std::env::temp_dir().join(format!("osm_assembly_reject_{}.toml", std::process::id()));
-        assembly_design
-            .save(&path)
-            .expect("write temp assembly TOML");
+        let asm_out = asm_parse_and_solve(
+            &asm_form,
+            UnitSystem::Metric,
+            &app.materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        app.asm_outcome = Some(asm_out);
+        assert!(
+            app.asm_outcome.is_some(),
+            "pre-condition: asm_outcome must be Some before switching"
+        );
 
-        // load_from returns false — the false suppresses the caller's recompute.
-        let result = app.load_from(&path);
-        let _ = std::fs::remove_file(&path);
-
-        // Mirror `update`'s contract: `if app.load_from(&path) { app.recompute(); }`
-        // The false return means recompute was NOT called, so the error survives.
-        if result {
-            app.recompute();
-        }
+        // Switch to Compression — the Compression arm of recompute() must clear asm_outcome.
+        app.update(Message::SelectFamily(Family::Compression));
 
         assert!(
-            !result,
-            "load_from must return false for an assembly design"
-        );
-        assert!(
-            app.action_error
-                .as_deref()
-                .is_some_and(|m| m.contains("assembly designs are not supported")),
-            "action_error must contain the rejection message, got: {:?}",
-            app.action_error
-        );
-        assert_eq!(
-            app.material, "Chrome-Vanadium",
-            "material must be unchanged (reject must happen before any mutation)"
-        );
-        assert_eq!(
-            app.unit_system,
-            springcore::UnitSystem::Us,
-            "unit_system must be unchanged"
+            app.asm_outcome.is_none(),
+            "switching away from Assembly must clear asm_outcome"
         );
     }
 }

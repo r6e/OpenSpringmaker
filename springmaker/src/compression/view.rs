@@ -11,37 +11,13 @@ use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
     inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
 };
-use crate::picker::{find_by_key, KeyLabel, END_TYPES};
+use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES};
 use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
     SZ_CAPTION, SZ_LABEL,
 };
-
-// --------------------------------------------------------------------------
-// Fixity pick-list items (compression-only; end-types are shared via picker)
-// --------------------------------------------------------------------------
-
-/// All fixity options in display order.
-const FIXITIES: &[KeyLabel] = &[
-    KeyLabel {
-        key: "fixed_fixed",
-        label: "Fixed-Fixed",
-    },
-    KeyLabel {
-        key: "fixed_pinned",
-        label: "Fixed-Pinned",
-    },
-    KeyLabel {
-        key: "pinned_pinned",
-        label: "Pinned-Pinned",
-    },
-    KeyLabel {
-        key: "fixed_free",
-        label: "Fixed-Free",
-    },
-];
 
 // --------------------------------------------------------------------------
 // Style helpers

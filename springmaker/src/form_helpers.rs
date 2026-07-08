@@ -38,6 +38,14 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
                 format!("wire diameter {d:.3} in is outside the valid range [{lo:.3}, {hi:.3}] in")
             }
         },
+        SpringError::Member { index, source } => {
+            let inner = match source.as_ref() {
+                SpringError::DiameterOutOfRange { .. } => format_error(source, units),
+                SpringError::InconsistentInputs(m) => m.clone(),
+                other => other.to_string(),
+            };
+            format!("member {}: {inner}", index + 1)
+        }
         // All other variants carry unit-neutral messages.
         other => other.to_string(),
     }
@@ -438,5 +446,41 @@ mod tests {
             max_relative = 1e-9
         );
         assert!(non_negative_moment_nmm("fatigue min", "nan", UnitSystem::Metric).is_err());
+    }
+
+    #[test]
+    fn format_error_relocalizes_a_member_diameter_error() {
+        let inner = SpringError::DiameterOutOfRange {
+            diameter_m: 0.010,
+            min_m: 0.0002,
+            max_m: 0.0064,
+        };
+        let e = SpringError::Member {
+            index: 0,
+            source: Box::new(inner),
+        };
+        // US: inches, member-prefixed.
+        let us = format_error(&e, UnitSystem::Us);
+        assert!(
+            us.starts_with("member 1: wire diameter") && us.contains(" in "),
+            "got: {us}"
+        );
+        // Metric: mm.
+        let m = format_error(&e, UnitSystem::Metric);
+        assert!(
+            m.starts_with("member 1: wire diameter") && m.contains(" mm "),
+            "got: {m}"
+        );
+        // An InconsistentInputs member source: raw message, no doubled prefix.
+        let e = SpringError::Member {
+            index: 1,
+            source: Box::new(SpringError::InconsistentInputs(
+                "mean diameter must be greater".into(),
+            )),
+        };
+        assert_eq!(
+            format_error(&e, UnitSystem::Us),
+            "member 2: mean diameter must be greater"
+        );
     }
 }

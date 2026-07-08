@@ -40,6 +40,38 @@ pub(crate) const END_TYPES: &[KeyLabel] = &[
     },
 ];
 
+/// All end-fixity options in display order (buckling boundary condition).
+pub(crate) const FIXITIES: &[KeyLabel] = &[
+    KeyLabel {
+        key: "fixed_fixed",
+        label: "Fixed-Fixed",
+    },
+    KeyLabel {
+        key: "fixed_pinned",
+        label: "Fixed-Pinned",
+    },
+    KeyLabel {
+        key: "pinned_pinned",
+        label: "Pinned-Pinned",
+    },
+    KeyLabel {
+        key: "fixed_free",
+        label: "Fixed-Free",
+    },
+];
+
+/// All topology options in display order.
+pub(crate) const TOPOLOGIES: &[KeyLabel] = &[
+    KeyLabel {
+        key: "nested",
+        label: "Nested",
+    },
+    KeyLabel {
+        key: "series",
+        label: "Series",
+    },
+];
+
 /// Find a `KeyLabel` by its stored key string. Returns `None` if the key is
 /// unrecognised (e.g. a future format loaded into an older binary).
 pub(crate) fn find_by_key<'a>(options: &'a [KeyLabel], key: &str) -> Option<&'a KeyLabel> {

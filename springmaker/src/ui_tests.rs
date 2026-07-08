@@ -936,3 +936,175 @@ fn conical_save_load_round_trip() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ── Assembly E2E ──────────────────────────────────────────────────────────────
+
+/// Focus an assembly member field by its runtime-indexed widget id and type
+/// `text`, then apply every resulting message.
+///
+/// Assembly member fields use runtime-generated `String` ids
+/// (`asm_member_field_id(index, field)`) rather than `&'static str` ids.
+/// The `labeled_input` `id` param accepts `impl Into<iced::widget::Id>`, and
+/// `iced_core::widget::Id` implements `From<String>`, so `Id::from(String)` is
+/// the correct construction — `Id::new` takes `&'static str` only.
+fn type_into_asm_member(
+    app: &mut App,
+    index: usize,
+    field: crate::assembly::form::MemberField,
+    text: &str,
+) {
+    let id =
+        iced_test::core::widget::Id::from(crate::assembly::view::asm_member_field_id(index, field));
+    let mut sim = ui(app);
+    sim.click(id)
+        .unwrap_or_else(|e| panic!("member {index} field {field:?}: {e}"));
+    sim.typewrite(text);
+    for message in sim.into_messages() {
+        app.update(message);
+    }
+}
+
+/// Filling a two-member assembly via runtime-indexed widget IDs must solve,
+/// render the Summary section and per-member headings, and allow removing a
+/// member.
+#[test]
+fn assembly_e2e_dynamic_members_and_results() {
+    use crate::assembly::form::MemberField as F;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+
+    // Member 0 is present by default.
+    type_into_asm_member(&mut app, 0, F::WireDia, "2");
+    type_into_asm_member(&mut app, 0, F::MeanDia, "20");
+    type_into_asm_member(&mut app, 0, F::Active, "10");
+    type_into_asm_member(&mut app, 0, F::FreeLength, "60");
+
+    // Add member 1 — its indexed ids must resolve on the new row.
+    app.update(Message::AsmMemberAdd);
+    type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
+    type_into_asm_member(&mut app, 1, F::MeanDia, "16");
+    type_into_asm_member(&mut app, 1, F::Active, "8");
+    type_into_asm_member(&mut app, 1, F::FreeLength, "60");
+
+    app.update(Message::AsmLoads("10, 25".into()));
+    assert!(app.asm_outcome.is_some(), "two-member assembly must solve");
+
+    // Summary section, assembly load table, and both member headings must be
+    // present in the render.
+    assert!(
+        shows(&app, "Summary"),
+        "populated results must show Summary"
+    );
+    assert!(
+        shows(&app, "Assembly load points"),
+        "assembly load table heading must render"
+    );
+    assert!(
+        shows(&app, "Member 1 (Music Wire)"),
+        "member 1 heading must render"
+    );
+    assert!(
+        shows(&app, "Member 2 (Music Wire)"),
+        "member 2 heading must render"
+    );
+
+    // Remove member 2 → back to a single-member form.
+    app.update(Message::AsmMemberRemove(1));
+    assert_eq!(app.assembly.members.len(), 1, "one member after remove");
+}
+
+/// In US mode, a member wire diameter that is out of range for its material
+/// must produce an error that identifies the member and reports the measurement
+/// in inches (not mm). Tests that the full dispatch path from `type_into_asm_member`
+/// through `AsmField → recompute → format_error(US)` works end-to-end.
+///
+/// Note: `find`/`shows` performs exact text matching; member errors are
+/// verified via `app.error` directly (the error text is long and its precise
+/// phrasing is already pinned in `form_helpers` unit tests).
+#[test]
+fn assembly_us_member_diameter_error_renders_in_inches() {
+    use crate::assembly::form::MemberField as F;
+    let mut app = test_app();
+    app.update(Message::Units(springcore::UnitSystem::Us));
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+
+    // 0.4 in ≈ 10.16 mm — outside Music Wire's valid range (max ≈ 0.256 in / 6.5 mm).
+    type_into_asm_member(&mut app, 0, F::WireDia, "0.4");
+    type_into_asm_member(&mut app, 0, F::MeanDia, "3.0");
+    type_into_asm_member(&mut app, 0, F::Active, "10");
+    type_into_asm_member(&mut app, 0, F::FreeLength, "8");
+    app.update(Message::AsmLoads("2".into()));
+
+    // The formatted error must name the member and render the diameter in inches.
+    let err = app
+        .error
+        .as_deref()
+        .expect("must produce an error for out-of-range diameter");
+    assert!(
+        err.contains("member 1: wire diameter"),
+        "error must be scoped to member 1; got: {err:?}"
+    );
+    assert!(
+        err.contains(" in "),
+        "error must report diameter in inches (US mode); got: {err:?}"
+    );
+}
+
+/// Fill a two-member assembly, save_to a temp file, load_from a fresh app,
+/// and recompute — the family, member count, and a field value must be
+/// restored, and the recompute must yield a solved `asm_outcome`.
+#[test]
+fn assembly_save_load_round_trip() {
+    use crate::assembly::form::MemberField as F;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+
+    // Build a solved two-member assembly via Simulator clicks on indexed ids.
+    type_into_asm_member(&mut app, 0, F::WireDia, "2");
+    type_into_asm_member(&mut app, 0, F::MeanDia, "20");
+    type_into_asm_member(&mut app, 0, F::Active, "10");
+    type_into_asm_member(&mut app, 0, F::FreeLength, "60");
+    app.update(Message::AsmMemberAdd);
+    type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
+    type_into_asm_member(&mut app, 1, F::MeanDia, "16");
+    type_into_asm_member(&mut app, 1, F::Active, "8");
+    type_into_asm_member(&mut app, 1, F::FreeLength, "60");
+    app.update(Message::AsmLoads("10, 25".into()));
+    assert!(app.asm_outcome.is_some(), "must solve before save");
+
+    // Mirror the conical save/load round-trip's temp-dir + save_to/load_from idiom.
+    let dir = std::env::temp_dir().join(format!("osm_asm_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("design.toml");
+    app.save_to(&path);
+    assert!(
+        app.action_error.is_none(),
+        "save must succeed without error"
+    );
+
+    let mut app2 = test_app();
+    assert!(app2.load_from(&path), "load_from must return true");
+    assert_eq!(
+        app2.family,
+        springcore::Family::Assembly,
+        "family restores to Assembly"
+    );
+    assert_eq!(
+        app2.assembly.members.len(),
+        2,
+        "two members must be restored"
+    );
+    assert_eq!(
+        app2.assembly.members[1].mean_dia, "16",
+        "member 2 mean_dia must round-trip"
+    );
+
+    // Recompute on the loaded form must yield a solved assembly outcome.
+    app2.recompute();
+    assert!(
+        app2.asm_outcome.is_some(),
+        "recompute after load must produce an asm_outcome"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
