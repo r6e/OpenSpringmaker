@@ -299,6 +299,11 @@ pub fn solve_forward(
         correction,
     );
 
+    // Bound once and shared between the guard and the returned struct, so the
+    // guard checks the very values the caller receives.
+    let outer_dia = Length::from_meters(dm + radial);
+    let inner_dia = Length::from_meters(dm - radial);
+
     // Output-finiteness guard (the cross-family hardening standard): a
     // finite-input overflow anywhere in the chain must never escape as Ok.
     // `at_solid.deflection` is included: with no load points the per-load chain
@@ -320,8 +325,8 @@ pub fn solve_forward(
         total_coils,
         solid_length.meters(),
         mts.pascals(),
-        dm + radial, // outer_dia
-        dm - radial, // inner_dia
+        outer_dia.meters(),
+        inner_dia.meters(),
     ]
     .into_iter()
     .chain(
@@ -338,8 +343,8 @@ pub fn solve_forward(
     }
 
     Ok(RectangularDesign {
-        outer_dia: Length::from_meters(dm + radial),
-        inner_dia: Length::from_meters(dm - radial),
+        outer_dia,
+        inner_dia,
         aspect_ratio: aspect,
         alpha,
         beta,

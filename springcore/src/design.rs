@@ -195,6 +195,11 @@ pub fn solve_forward(
         correction,
     );
 
+    // Bound once and shared between the guard and the returned struct, so the
+    // guard checks the very values the caller receives.
+    let outer_dia = Length::from_meters(mean_dia.meters() + wire_dia.meters());
+    let inner_dia = Length::from_meters(mean_dia.meters() - wire_dia.meters());
+
     // Output-finiteness guard (the cross-family standard): a finite-input
     // overflow anywhere in the chain must never escape as Ok. EVERY derived
     // field of the returned struct is checked — fields whose denominators are
@@ -211,8 +216,8 @@ pub fn solve_forward(
         total_coils,
         solid_length.meters(),
         mts.pascals(),
-        mean_dia.meters() + wire_dia.meters(), // outer_dia
-        mean_dia.meters() - wire_dia.meters(), // inner_dia
+        outer_dia.meters(),
+        inner_dia.meters(),
     ]
     .into_iter()
     .chain(
@@ -237,8 +242,8 @@ pub fn solve_forward(
         free_length,
         solid_length,
         pitch,
-        outer_dia: Length::from_meters(mean_dia.meters() + wire_dia.meters()),
-        inner_dia: Length::from_meters(mean_dia.meters() - wire_dia.meters()),
+        outer_dia,
+        inner_dia,
         min_tensile_strength: mts,
         natural_frequency: nat_freq,
         buckling_stable: stable,

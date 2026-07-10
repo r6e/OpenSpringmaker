@@ -208,7 +208,13 @@ pub fn solve_forward(
         correction,
     );
 
+    // Bound once and shared between the guard and the returned struct, so the
+    // guard checks the very values the caller receives.
     let taper_per_coil = Length::from_meters((dl - ds) / inputs.active_coils);
+    let large_outer_dia = Length::from_meters(dl + d);
+    let large_inner_dia = Length::from_meters(dl - d);
+    let small_outer_dia = Length::from_meters(ds + d);
+    let small_inner_dia = Length::from_meters(ds - d);
 
     // Output-finiteness guard (the cross-family hardening standard): a
     // finite-input overflow anywhere in the chain must never escape as Ok.
@@ -230,10 +236,10 @@ pub fn solve_forward(
         total_coils,
         solid_length.meters(),
         mts.pascals(),
-        dl + d, // large_outer_dia
-        dl - d, // large_inner_dia
-        ds + d, // small_outer_dia
-        ds - d, // small_inner_dia
+        large_outer_dia.meters(),
+        large_inner_dia.meters(),
+        small_outer_dia.meters(),
+        small_inner_dia.meters(),
     ]
     .into_iter()
     .chain(
@@ -250,10 +256,10 @@ pub fn solve_forward(
     }
 
     Ok(ConicalDesign {
-        large_outer_dia: Length::from_meters(dl + d),
-        large_inner_dia: Length::from_meters(dl - d),
-        small_outer_dia: Length::from_meters(ds + d),
-        small_inner_dia: Length::from_meters(ds - d),
+        large_outer_dia,
+        large_inner_dia,
+        small_outer_dia,
+        small_inner_dia,
         index_large,
         index_small,
         taper_per_coil,
