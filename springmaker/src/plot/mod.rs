@@ -21,7 +21,7 @@ const Y_LABEL_AREA_SIZE: u32 = 64;
 
 /// Bundled font (DejaVu Sans, permissive license — see assets/LICENSE-DejaVu.txt),
 /// registered under the "sans-serif" family so the chart needs no system fonts.
-static FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
+static FONT_BYTES: &[u8] = include_bytes!("../../assets/DejaVuSans.ttf");
 
 /// Register the bundled font once (ab_glyph has no built-in fonts).
 fn ensure_font() {
