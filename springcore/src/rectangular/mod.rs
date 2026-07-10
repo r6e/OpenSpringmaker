@@ -18,8 +18,9 @@
 //!
 //! **Deliberate omissions** (none fabricated):
 //! - **Buckling** — the coil-column criterion needs an end-fixity input that
-//!   `RectangularInputs` does not carry; deferred to the GUI increment (the
-//!   conical family omits it for the same reason).
+//!   `RectangularInputs` does not carry; deferred to the GUI increment.
+//!   (Conical likewise omits buckling, though for its own reason — see that
+//!   module's docs.)
 //! - **Natural frequency** — the cylindrical surge formula assumes a round
 //!   section; no cited rectangular-wire replacement in-house.
 

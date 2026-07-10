@@ -83,7 +83,9 @@ const RECT_TORSION_TABLE: &[(f64, f64, f64)] = &[
 /// Linearly interpolate (α, β) at side ratio `aspect` (b/c ≥ 1). Clamps to the
 /// first row at/below 1.0 (unreachable — orientation guarantees b/c ≥ 1 — but
 /// defensive) and to the last row at/above 10.0 (conservative: α, β < 1/3 ⇒
-/// higher stress, lower rate; the caller flags `aspect_clamped`).
+/// higher stress, lower rate; the caller flags `aspect_clamped` only strictly
+/// ABOVE 10.0 — at exactly 10.0 the clamp returns the tabulated row, not an
+/// approximation, so no flag is warranted).
 fn rect_torsion_coeffs(aspect: f64) -> (f64, f64) {
     let first = RECT_TORSION_TABLE[0];
     let last = RECT_TORSION_TABLE[RECT_TORSION_TABLE.len() - 1];
@@ -301,11 +303,25 @@ pub fn solve_forward(
     // finite-input overflow anywhere in the chain must never escape as Ok.
     // `at_solid.deflection` is included: with no load points the per-load chain
     // is vacuous, and a diameter overflow makes rate → 0 and
-    // at_solid.deflection = 0/0 = NaN — it must be caught here.
+    // at_solid.deflection = 0/0 = NaN — it must be caught here. EVERY derived
+    // field of the returned struct is checked — a field whose denominator is a
+    // strict subset of rate's (pitch divides by Na alone, rate by π·D³·Na) can
+    // overflow while rate stays finite when a huge D cancels a tiny Na, so
+    // checking rate/at_solid alone is not enough.
     if [
         rate.newtons_per_meter(),
         at_solid.shear_stress.pascals(),
         at_solid.deflection.meters(),
+        pitch.meters(),
+        index,
+        aspect,
+        alpha,
+        beta,
+        total_coils,
+        solid_length.meters(),
+        mts.pascals(),
+        dm + radial, // outer_dia
+        dm - radial, // inner_dia
     ]
     .into_iter()
     .chain(
@@ -425,9 +441,29 @@ mod tests {
 
     #[test]
     fn rect_torsion_coeffs_pins_the_table() {
-        assert_eq!(rect_torsion_coeffs(1.0), (0.208, 0.141));
-        assert_eq!(rect_torsion_coeffs(2.0), (0.246, 0.228));
-        assert_eq!(rect_torsion_coeffs(10.0), (0.313, 0.313));
+        // EVERY row pinned against an independent re-transcription of Shigley
+        // §3-14 (both the raw constant and the function's exact-ratio lookup).
+        // The expectation array is deliberately a second copy of the source
+        // table: a corrupted digit in EITHER copy fails here. Asserting
+        // `rect_torsion_coeffs(r) == (a, b)` with r/a/b read from the
+        // production table itself would be tautological — a corrupted cell
+        // corrupts the expectation too.
+        let source_rows = [
+            (1.00, 0.208, 0.141),
+            (1.50, 0.231, 0.196),
+            (1.75, 0.239, 0.214),
+            (2.00, 0.246, 0.228),
+            (2.50, 0.258, 0.249),
+            (3.00, 0.267, 0.263),
+            (4.00, 0.282, 0.281),
+            (6.00, 0.299, 0.299),
+            (8.00, 0.307, 0.307),
+            (10.00, 0.313, 0.313),
+        ];
+        assert_eq!(RECT_TORSION_TABLE, &source_rows);
+        for &(r, a, b) in &source_rows {
+            assert_eq!(rect_torsion_coeffs(r), (a, b), "row b/c = {r}");
+        }
         // Between rows: b/c = 1.25 is the linear mean of the 1.00 and 1.50 rows.
         let (a, b) = rect_torsion_coeffs(1.25);
         assert_relative_eq!(a, (0.208 + 0.231) / 2.0, max_relative = 1e-12);
@@ -817,6 +853,33 @@ mod tests {
             end_type: EndType::SquaredGround,
         };
         let result = solve_forward(&music_wire(), &i, &[], CurvatureCorrection::Bergstrasser);
+        assert_eq!(
+            msg(result),
+            "rectangular solve produced a non-finite result (inputs exceed the representable range)"
+        );
+    }
+
+    /// pitch = (L0 − 2·axial)/Na overflows to +Inf while every other guarded
+    /// field stays finite: the huge mean diameter cancels the tiny active-coil
+    /// count in the RATE denominator (π·D³·Na → rate ≈ 1e120, finite), but
+    /// pitch's denominator is Na ALONE (3e158/1e-150 → +Inf). Found by the R3
+    /// input-domain adversary — pitch must be in the output guard.
+    #[test]
+    fn pitch_overflow_trips_the_output_guard() {
+        let i = RectangularInputs {
+            wire_axial: Length::from_millimeters(3.0),
+            wire_radial: Length::from_millimeters(3.0),
+            mean_dia: Length::from_meters(1e10),
+            active_coils: 1e-150,
+            free_length: Length::from_meters(3e158),
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(
+            &music_wire(),
+            &i,
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        );
         assert_eq!(
             msg(result),
             "rectangular solve produced a non-finite result (inputs exceed the representable range)"

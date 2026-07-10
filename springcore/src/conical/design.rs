@@ -208,15 +208,32 @@ pub fn solve_forward(
         correction,
     );
 
+    let taper_per_coil = Length::from_meters((dl - ds) / inputs.active_coils);
+
     // Output-finiteness guard (the cross-family hardening standard): a
     // finite-input overflow anywhere in the chain must never escape as Ok.
     // `at_solid.deflection` is included: with no load points the per-load
     // chain is vacuous, and rate=0 (from a diameter overflow) makes
-    // at_solid.deflection = 0/0 = NaN — it must be caught here.
+    // at_solid.deflection = 0/0 = NaN — it must be caught here. EVERY derived
+    // field of the returned struct is checked — fields whose denominators are
+    // a strict subset of rate's (pitch and taper_per_coil divide by Na alone,
+    // rate by Na·D³) can overflow while rate stays finite when huge diameters
+    // cancel a tiny Na, so checking rate/at_solid alone is not enough.
     if [
         rate.newtons_per_meter(),
         at_solid.shear_stress.pascals(),
         at_solid.deflection.meters(),
+        pitch.meters(),
+        taper_per_coil.meters(),
+        index_large,
+        index_small,
+        total_coils,
+        solid_length.meters(),
+        mts.pascals(),
+        dl + d, // large_outer_dia
+        dl - d, // large_inner_dia
+        ds + d, // small_outer_dia
+        ds - d, // small_inner_dia
     ]
     .into_iter()
     .chain(
@@ -239,7 +256,7 @@ pub fn solve_forward(
         small_inner_dia: Length::from_meters(ds - d),
         index_large,
         index_small,
-        taper_per_coil: Length::from_meters((dl - ds) / inputs.active_coils),
+        taper_per_coil,
         total_coils,
         rate,
         solid_length,
@@ -652,6 +669,57 @@ mod tests {
             &m,
             &inputs(20.0, 12.0),
             &[Force::from_newtons(1e305)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert_eq!(
+            msg(result),
+            "conical solve produced a non-finite result (inputs exceed the representable range)"
+        );
+    }
+
+    /// taper_per_coil = (D_l − D_s)/Na overflows to +Inf while rate stays
+    /// finite: taper/rate ≈ 2·D_l⁴/(G·d⁴) ≈ 2e4 at D_l = 10 m, so rate ≈ 2e304
+    /// (finite) puts taper past f64::MAX. L0 = 2d makes pitch exactly 0
+    /// (finite), proving this escape is independent of the pitch one. Same
+    /// guard-bypass class — every derived field must be in the output guard.
+    #[test]
+    fn taper_overflow_trips_the_output_guard() {
+        let m = crate::test_support::music_wire();
+        let i = ConicalInputs {
+            wire_dia: Length::from_millimeters(2.0),
+            large_mean_dia: Length::from_meters(10.0),
+            small_mean_dia: Length::from_millimeters(10.0),
+            active_coils: 3.2e-308,
+            free_length: Length::from_millimeters(4.0), // == 2d ⇒ pitch = 0
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(&m, &i, &[], crate::CurvatureCorrection::Bergstrasser);
+        assert_eq!(
+            msg(result),
+            "conical solve produced a non-finite result (inputs exceed the representable range)"
+        );
+    }
+
+    /// pitch = (L0 − 2d)/Na overflows to +Inf while every other guarded field
+    /// stays finite: the huge mean diameters cancel the tiny active-coil count
+    /// in the RATE denominator (rate stays finite ≈ 1e120), but pitch's
+    /// denominator is Na ALONE (3e158/1e-150 → +Inf). Sibling of the
+    /// rectangular R3 input-domain finding — pitch must be in the output guard.
+    #[test]
+    fn pitch_overflow_trips_the_output_guard() {
+        let m = crate::test_support::music_wire();
+        let i = ConicalInputs {
+            wire_dia: Length::from_millimeters(2.0),
+            large_mean_dia: Length::from_meters(1e10),
+            small_mean_dia: Length::from_meters(1e9),
+            active_coils: 1e-150,
+            free_length: Length::from_meters(3e158),
+            end_type: EndType::SquaredGround,
+        };
+        let result = solve_forward(
+            &m,
+            &i,
+            &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
         );
         assert_eq!(
