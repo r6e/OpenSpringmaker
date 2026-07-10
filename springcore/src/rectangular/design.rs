@@ -584,6 +584,32 @@ mod tests {
         assert!(!d.aspect_clamped);
     }
 
+    /// Load-point deflection/length/pct_mts pinned at a NON-zero load (zero load
+    /// can't distinguish `F/k` from `F%k`, `free−y` from `free+y`, etc.).
+    /// Kills the `rect_load_point` arithmetic mutants (/→%, −→+, /→*).
+    #[test]
+    fn load_point_values_are_exact() {
+        let d = solve_forward(
+            &music_wire(),
+            &square_inputs(),
+            &[Force::from_newtons(20.0)],
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        let lp = &d.load_points[0];
+        let y = 20.0 / d.rate.newtons_per_meter();
+        assert_relative_eq!(lp.deflection.meters(), y, max_relative = 1e-12);
+        assert_relative_eq!(lp.length.meters(), 0.040 - y, max_relative = 1e-9);
+        assert_relative_eq!(
+            lp.pct_mts,
+            lp.shear_stress.pascals() / d.min_tensile_strength.pascals(),
+            max_relative = 1e-12
+        );
+        // Sanity: 20 N on a ~5.4 kN/m spring deflects a few millimetres, well
+        // under the free length (so length stays positive — distinguishes −/+).
+        assert!(lp.deflection.millimeters() > 0.0 && lp.length.millimeters() < 40.0);
+    }
+
     // ── Guard matrix ─────────────────────────────────────────────────────────
 
     fn msg(result: Result<RectangularDesign>) -> String {
@@ -672,6 +698,19 @@ mod tests {
         assert_eq!(
             msg(solve_inputs(&i)),
             "mean diameter must exceed the larger wire dimension (spring index must exceed 1)"
+        );
+    }
+
+    /// mean = 0 gives the "positive finite" message, NOT the "must exceed" one
+    /// (kills `dm > 0.0` → `dm >= 0.0`, which would fall through to the mean>b
+    /// guard and report the wrong message).
+    #[test]
+    fn mean_zero_is_positive_finite_message() {
+        let mut i = square_inputs();
+        i.mean_dia = Length::from_millimeters(0.0);
+        assert_eq!(
+            msg(solve_inputs(&i)),
+            "mean diameter must be a positive finite number"
         );
     }
 
