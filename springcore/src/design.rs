@@ -195,12 +195,32 @@ pub fn solve_forward(
         correction,
     );
 
+    // Bound once and shared between the guard and the returned struct, so the
+    // guard checks the very values the caller receives.
+    let outer_dia = Length::from_meters(mean_dia.meters() + wire_dia.meters());
+    let inner_dia = Length::from_meters(mean_dia.meters() - wire_dia.meters());
+
     // Output-finiteness guard (the cross-family standard): a finite-input
-    // overflow anywhere in the chain must never escape as Ok.
+    // overflow anywhere in the chain must never escape as Ok. Every derived
+    // field of the returned struct is either in this list or entailed finite
+    // by it (LoadPoint's force and length are witnessed by the checked
+    // deflection/stress; pct_mts additionally relies on mts being bounded away
+    // from zero by the diameter-range check). Fields whose denominators are
+    // a strict subset of rate's (pitch and natural_frequency divide by Na and
+    // Na·D², rate by D³·Na) can overflow while rate stays finite when a huge
+    // D cancels a tiny Na, so checking rate/at_solid alone is not enough.
     if [
         rate.newtons_per_meter(),
         at_solid.shear_stress.pascals(),
         at_solid.deflection.meters(),
+        pitch.meters(),
+        nat_freq.hertz(),
+        index,
+        total_coils,
+        solid_length.meters(),
+        mts.pascals(),
+        outer_dia.meters(),
+        inner_dia.meters(),
     ]
     .into_iter()
     .chain(
@@ -225,8 +245,8 @@ pub fn solve_forward(
         free_length,
         solid_length,
         pitch,
-        outer_dia: Length::from_meters(mean_dia.meters() + wire_dia.meters()),
-        inner_dia: Length::from_meters(mean_dia.meters() - wire_dia.meters()),
+        outer_dia,
+        inner_dia,
         min_tensile_strength: mts,
         natural_frequency: nat_freq,
         buckling_stable: stable,
@@ -1096,6 +1116,65 @@ mod tests {
             10.0,
             Length::from_millimeters(60.0),
             &[],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "solve produced a non-finite result (inputs exceed the representable range)"
+            ),
+            "expected output-guard error, got {result:?}"
+        );
+    }
+
+    /// natural_frequency = d/(2π·Na·D²)·√(G/32ρ) overflows to +Inf while every
+    /// other guarded field stays finite: freq ≈ 1.13·D·rate for 2 mm music
+    /// wire, so D = 100 m with rate ≈ 2e306 (finite) pushes freq past
+    /// f64::MAX. L0 = 2d makes pitch exactly 0 (finite), proving this escape
+    /// is independent of the pitch one. Same guard-bypass class as pitch —
+    /// every derived field must be in the output guard.
+    #[test]
+    fn natural_frequency_overflow_trips_the_output_guard() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_meters(100.0),
+            7.9e-314,
+            Length::from_millimeters(4.0), // == 2d ⇒ pitch = 0, L0 == Ls
+            &[],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(
+                result,
+                Err(crate::SpringError::InconsistentInputs(ref m))
+                    if m == "solve produced a non-finite result (inputs exceed the representable range)"
+            ),
+            "expected output-guard error, got {result:?}"
+        );
+    }
+
+    /// pitch = (L0 − 2d)/Na overflows to +Inf while every other guarded field
+    /// stays finite: the huge mean diameter cancels the tiny active-coil count
+    /// in the RATE denominator (8·D³·Na → rate ≈ 1e119, finite), but pitch's
+    /// denominator is Na ALONE (3e158/1e-150 → +Inf). Sibling of the
+    /// rectangular R3 input-domain finding — pitch must be in the output guard.
+    #[test]
+    fn pitch_overflow_trips_the_output_guard() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_meters(1e10),
+            1e-150,
+            Length::from_meters(3e158),
+            &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
         );
         assert!(

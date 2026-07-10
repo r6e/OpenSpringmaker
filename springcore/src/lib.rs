@@ -25,6 +25,7 @@ pub(crate) mod mechanics;
 pub(crate) mod numeric;
 pub(crate) mod optimize;
 pub(crate) mod persistence;
+pub mod rectangular;
 pub(crate) mod scenario;
 pub mod torsion;
 pub mod units;
@@ -49,8 +50,8 @@ pub use mechanics::{CurvatureCorrection, EndFixity};
 pub use optimize::{solve_min_weight, BindingConstraint, MinWeightRequest, MinWeightSolution};
 pub use persistence::{
     min_weight_request_from_spec, parse_end_type, parse_fixity, parse_topology, AssemblyMemberSpec,
-    AssemblySpec, ConicalSpec, DesignSpec, ExtScenarioSpec, HookSpecSpec, SavedDesign,
-    ScenarioSpec, TorsionSpec, UnitSystem,
+    AssemblySpec, ConicalSpec, DesignSpec, ExtScenarioSpec, HookSpecSpec, RectangularSpec,
+    SavedDesign, ScenarioSpec, TorsionSpec, UnitSystem,
 };
 pub use scenario::{Dimensional, PowerUser, RateBased, Scenario, TwoLoad};
 pub use units::{

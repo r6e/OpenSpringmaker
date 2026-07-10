@@ -257,11 +257,17 @@ pub fn solve_assembly(
         })
         .collect();
 
-    // Output-finiteness guard (the cross-family standard).
+    // Output-finiteness guard (the cross-family standard). free_length and
+    // solid_length are assembly-level AGGREGATES (Series sums them across
+    // members), so each member passing its own guard does not bound them: two
+    // members with individually-finite free lengths near f64::MAX sum to +inf
+    // while every member field and the travel fields stay finite.
     if [
         k_total,
         travel_limit_deflection.meters(),
         travel_limit_force.newtons(),
+        free_length.meters(),
+        solid_length.meters(),
     ]
     .into_iter()
     .chain(
@@ -1102,6 +1108,55 @@ mod tests {
         );
         // Two members: the Nested sum overflows → assembly guard fires.
         let m = msg(solve(Topology::Nested, vec![huge.clone(), huge], &[0.0]));
+        assert_eq!(
+            m,
+            "assembly solve produced a non-finite result (inputs exceed the representable range)"
+        );
+    }
+
+    #[test]
+    fn series_free_length_sum_overflow_trips_the_assembly_guard() {
+        // Each member individually solves Ok (finite free length ≈ MAX/2); the
+        // Series free length Σ L0ᵢ overflows to +inf. free_length/solid_length
+        // are assembly-level aggregates absent from the member guards, so the
+        // ASSEMBLY guard must check them. The escape is independent of the
+        // already-guarded travel fields: travel_limit_deflection = Σ(L0ᵢ − Lsᵢ)
+        // = ΣL0 − ΣLs stays FINITE (the per-member solid lengths pull it back
+        // under f64::MAX), and loads must be EMPTY — any load point would carry
+        // length = ΣL0 − y = +inf into the already-guarded per-load chain.
+        //
+        // Fixture derivation: L0 each = 8.99e307 m → sum 1.798e308 > MAX →
+        // +inf. Na = 1e308 keeps the member's own guard clear (rate ≈ 2e-304
+        // finite, pitch = L0/Na ≈ 0.9 m, Ls = d·(Na+2) = 2e305 m ≤ L0), and
+        // deflection = sum − 2·Ls ≈ 1.794e308 < MAX stays finite.
+        let free_m = 8.99e307_f64;
+        let na = 1e308_f64;
+        let d_m = 0.002_f64;
+        let ls_m = d_m * (na + 2.0);
+        // Sanity: the free-length sum overflows while the travel sum does not.
+        assert!(
+            (free_m + free_m).is_infinite(),
+            "fixture: free-length sum must overflow to +inf"
+        );
+        assert!(
+            (2.0 * (free_m - ls_m)).is_finite(),
+            "fixture: travel deflection must stay finite"
+        );
+        let huge = AssemblyMember {
+            material_name: "Music Wire".to_string(),
+            wire_dia: Length::from_meters(d_m),
+            mean_dia: Length::from_meters(0.020),
+            active_coils: na,
+            free_length: Length::from_meters(free_m),
+            end_type: EndType::SquaredGround,
+        };
+        // One such member alone must solve Ok — pins that the overflow is
+        // produced solely by the SUM, not by any single-member non-finiteness.
+        assert!(
+            solve(Topology::Series, vec![huge.clone()], &[]).is_ok(),
+            "fixture: a single huge member must solve Ok"
+        );
+        let m = msg(solve(Topology::Series, vec![huge.clone(), huge], &[]));
         assert_eq!(
             m,
             "assembly solve produced a non-finite result (inputs exceed the representable range)"

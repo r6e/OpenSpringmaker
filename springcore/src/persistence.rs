@@ -104,6 +104,10 @@ pub enum DesignSpec {
     /// The two fields are intentionally independent — the file-level material is
     /// NOT rewritten to match members, and they may differ.
     Assembly(AssemblySpec),
+    /// Rectangular- (or square-) wire compression spring. Engine-only for now:
+    /// the family loads/saves but has no GUI yet (assembly-pattern placeholder —
+    /// `Family::Rectangular` lands with the GUI increment).
+    Rectangular(RectangularSpec),
 }
 
 /// Torsion scenario inputs (SI millimetres / newton-millimetres, as stored).
@@ -196,6 +200,25 @@ pub enum ConicalSpec {
         wire_dia_mm: f64,
         large_mean_dia_mm: f64,
         small_mean_dia_mm: f64,
+        active: f64,
+        free_length_mm: f64,
+        loads_n: Vec<f64>,
+    },
+}
+
+/// Rectangular-wire compression scenarios (v1: direct geometry only). The wire
+/// section is orientation-explicit: `wire_axial_mm` (along the coil axis, sets
+/// solid length) and `wire_radial_mm` (radial, sets OD/ID). Every field is
+/// required — no `#[serde(default)]` — so a misspelled key surfaces as
+/// "missing field" rather than silently defaulting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum RectangularSpec {
+    PowerUser {
+        end_type: String,
+        wire_axial_mm: f64,
+        wire_radial_mm: f64,
+        mean_dia_mm: f64,
         active: f64,
         free_length_mm: f64,
         loads_n: Vec<f64>,
@@ -650,6 +673,11 @@ impl SavedDesign {
             DesignSpec::Assembly(_) => Err(SpringError::InconsistentInputs(
                 "SavedDesign::solve handles compression designs; assembly designs are solved \
                  via the assembly scenario"
+                    .into(),
+            )),
+            DesignSpec::Rectangular(_) => Err(SpringError::InconsistentInputs(
+                "SavedDesign::solve handles compression designs; rectangular designs are solved \
+                 via the rectangular scenario"
                     .into(),
             )),
         }
@@ -2222,5 +2250,106 @@ members = []
         } else {
             panic!("expected Assembly variant");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2 (rectangular): RectangularSpec persistence tests
+    // -----------------------------------------------------------------------
+
+    // Base TOML for rectangular raw-string tests — layout verified against
+    // actual `to_toml()` output so the negative tests below can't pass
+    // vacuously on a layout mistake.
+    const VALID_RECTANGULAR_TOML: &str = r#"material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Rectangular"
+type = "PowerUser"
+end_type = "squared_ground"
+wire_axial_mm = 3.0
+wire_radial_mm = 2.0
+mean_dia_mm = 30.0
+active = 8.0
+free_length_mm = 40.0
+loads_n = [10.0]
+"#;
+
+    #[test]
+    fn rectangular_round_trips_through_toml() {
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Rectangular(RectangularSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_axial_mm: 3.0,
+                wire_radial_mm: 2.0,
+                mean_dia_mm: 30.0,
+                active: 8.0,
+                free_length_mm: 40.0,
+                loads_n: vec![10.0, 25.0],
+            }),
+        };
+        let toml = saved.to_toml().unwrap();
+        let back = SavedDesign::from_toml(&toml).unwrap();
+        assert_eq!(back, saved);
+    }
+
+    #[test]
+    fn from_toml_rejects_non_finite_rectangular_float() {
+        // Anchor: the base TOML must parse Ok, proving the layout is correct and
+        // the Err below is caused by `inf`, not a layout mistake.
+        assert!(
+            SavedDesign::from_toml(VALID_RECTANGULAR_TOML).is_ok(),
+            "base VALID_RECTANGULAR_TOML must parse Ok"
+        );
+        // Mutate one float to `inf` — reject_non_finite must catch it.
+        let toml = VALID_RECTANGULAR_TOML.replace("wire_axial_mm = 3.0", "wire_axial_mm = inf");
+        assert!(matches!(
+            SavedDesign::from_toml(&toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn from_toml_rejects_unknown_rectangular_type() {
+        // Anchor: the base TOML must parse Ok, proving the layout is correct and
+        // the Err below is caused by the bad type tag, not a layout mistake.
+        assert!(
+            SavedDesign::from_toml(VALID_RECTANGULAR_TOML).is_ok(),
+            "base VALID_RECTANGULAR_TOML must parse Ok"
+        );
+        // Mutate the type tag — the serde internally-tagged enum must reject unknown variants.
+        let toml = VALID_RECTANGULAR_TOML.replace("type = \"PowerUser\"", "type = \"PowerUsr\"");
+        assert!(matches!(
+            SavedDesign::from_toml(&toml),
+            Err(SpringError::DataFile(_))
+        ));
+    }
+
+    #[test]
+    fn solve_with_material_rejects_rectangular_design() {
+        let m = crate::test_support::music_wire();
+        let saved = SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: UnitSystem::Metric,
+            design: DesignSpec::Rectangular(RectangularSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_axial_mm: 3.0,
+                wire_radial_mm: 2.0,
+                mean_dia_mm: 30.0,
+                active: 8.0,
+                free_length_mm: 40.0,
+                loads_n: vec![10.0],
+            }),
+        };
+        let err = saved
+            .solve_with_material(&m, CurvatureCorrection::Bergstrasser)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SpringError::InconsistentInputs(ref msg)
+                if msg == "SavedDesign::solve handles compression designs; rectangular designs \
+                           are solved via the rectangular scenario"
+        ));
     }
 }
