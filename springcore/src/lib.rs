@@ -25,6 +25,7 @@ pub(crate) mod mechanics;
 pub(crate) mod numeric;
 pub(crate) mod optimize;
 pub(crate) mod persistence;
+pub mod rectangular;
 pub(crate) mod scenario;
 pub mod torsion;
 pub mod units;
