@@ -201,8 +201,11 @@ pub fn solve_forward(
     let inner_dia = Length::from_meters(mean_dia.meters() - wire_dia.meters());
 
     // Output-finiteness guard (the cross-family standard): a finite-input
-    // overflow anywhere in the chain must never escape as Ok. EVERY derived
-    // field of the returned struct is checked — fields whose denominators are
+    // overflow anywhere in the chain must never escape as Ok. Every derived
+    // field of the returned struct is either in this list or entailed finite
+    // by it (LoadPoint's force and length are witnessed by the checked
+    // deflection/stress; pct_mts additionally relies on mts being bounded away
+    // from zero by the diameter-range check). Fields whose denominators are
     // a strict subset of rate's (pitch and natural_frequency divide by Na and
     // Na·D², rate by D³·Na) can overflow while rate stays finite when a huge
     // D cancels a tiny Na, so checking rate/at_solid alone is not enough.

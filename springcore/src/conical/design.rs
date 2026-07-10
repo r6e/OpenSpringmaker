@@ -220,8 +220,11 @@ pub fn solve_forward(
     // finite-input overflow anywhere in the chain must never escape as Ok.
     // `at_solid.deflection` is included: with no load points the per-load
     // chain is vacuous, and rate=0 (from a diameter overflow) makes
-    // at_solid.deflection = 0/0 = NaN — it must be caught here. EVERY derived
-    // field of the returned struct is checked — fields whose denominators are
+    // at_solid.deflection = 0/0 = NaN — it must be caught here. Every derived
+    // field of the returned struct is either in this list or entailed finite
+    // by it (LoadPoint's force and length are witnessed by the checked
+    // deflection/stress; pct_mts additionally relies on mts being bounded away
+    // from zero by the diameter-range check). Fields whose denominators are
     // a strict subset of rate's (pitch and taper_per_coil divide by Na alone,
     // rate by Na·D³) can overflow while rate stays finite when huge diameters
     // cancel a tiny Na, so checking rate/at_solid alone is not enough.
