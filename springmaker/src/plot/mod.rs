@@ -12,6 +12,7 @@ use plotters::style::{register_font, FontStyle};
 use springcore::{SpringDesign, UnitSystem};
 
 pub mod mapping;
+pub mod render;
 
 /// Fixed render resolution for the chart bitmap; iced scales it to fit the panel.
 pub(crate) const CHART_W: u32 = 760;
@@ -29,7 +30,7 @@ pub(crate) const Y_LABEL_AREA: u32 = 64;
 static FONT_BYTES: &[u8] = include_bytes!("../../assets/DejaVuSans.ttf");
 
 /// Register the bundled font once (ab_glyph has no built-in fonts).
-fn ensure_font() {
+pub(crate) fn ensure_font() {
     use std::sync::Once;
     static REGISTER: Once = Once::new();
     REGISTER.call_once(|| {
@@ -45,7 +46,7 @@ fn ensure_font() {
 /// Each channel is multiplied by 255 and rounded; the result is clamped to
 /// the valid `u8` range so values from the token struct (which are guaranteed
 /// to be in [0, 1]) round-trip cleanly.
-fn to_rgb(c: iced::Color) -> RGBColor {
+pub(crate) fn to_rgb(c: iced::Color) -> RGBColor {
     let ch = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
     RGBColor(ch(c.r), ch(c.g), ch(c.b))
 }
@@ -58,7 +59,6 @@ fn to_rgb(c: iced::Color) -> RGBColor {
 /// - `label`: plotters axis description including unit (e.g., "deflection (mm)")
 /// - `symbol`: hover readout symbol (e.g., "y")
 /// - `unit`: hover readout unit (e.g., "mm")
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct AxisMeta {
     pub label: &'static str,
     pub symbol: &'static str,
@@ -87,7 +87,6 @@ pub enum LineRole {
 /// - `points`: vertices of the line
 /// - `role`: stroke style (Primary, Member, Envelope, LoadLine)
 /// - `name`: put in legend if `Some`
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct Line {
     pub points: Vec<(f64, f64)>,
     pub role: LineRole,
@@ -100,14 +99,12 @@ pub struct Line {
 /// - `Operating`: an operating point
 /// - `Limit`: a limit point (travel limit, fatigue strength amplitude)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub enum MarkerKind {
     Operating,
     Limit,
 }
 
 /// A point marker.
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct Marker {
     pub x: f64,
     pub y: f64,
@@ -115,7 +112,6 @@ pub struct Marker {
 }
 
 /// The pure contract between family presenters and the chart core.
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct ChartData {
     pub x_axis: AxisMeta,
     pub y_axis: AxisMeta,
@@ -125,7 +121,6 @@ pub struct ChartData {
 
 /// Finite-positive extent across every line point and marker. `None` means the
 /// chart is degenerate and must not reach plotters (non-finite ranges panic).
-#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
     let pts = data
         .lines
