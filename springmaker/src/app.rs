@@ -1032,11 +1032,20 @@ impl App {
 
     /// Apply a loaded design. Returns `false` when the design's family has no
     /// GUI yet (nothing applied, `action_error` set) so `load_from` can skip
-    /// the recompute that would wipe the error. Always `true` today — every
-    /// family populates — but the signature is RETAINED permanently so the
-    /// next family placeholder (see the conical Decision-5 reversal note) does
-    /// not flip it again. The `()`↔`bool` pendulum ends here.
+    /// the recompute that would wipe the error — currently the rectangular
+    /// placeholder (engine shipped, GUI in a later increment). The signature
+    /// is RETAINED permanently so each family placeholder (see the conical
+    /// Decision-5 reversal note) does not flip it again. The `()`↔`bool`
+    /// pendulum ends here.
     fn apply_saved(&mut self, saved: SavedDesign) -> bool {
+        if matches!(saved.design, springcore::DesignSpec::Rectangular(_)) {
+            self.action_error = Some(
+                "rectangular designs are not supported by this build yet (the rectangular \
+                 GUI ships in a later increment)"
+                    .into(),
+            );
+            return false;
+        }
         self.material = saved.material;
         self.unit_system = saved.unit_system;
         match saved.design {
@@ -1081,6 +1090,7 @@ impl App {
                     &self.material,
                 );
             }
+            springcore::DesignSpec::Rectangular(_) => unreachable!("handled above"),
         }
         true
     }
@@ -1848,6 +1858,59 @@ mod tests {
         assert_eq!(app.assembly.members.len(), 1);
         assert_eq!(app.assembly.members[0].wire_dia, "2");
         assert!(app.action_error.is_none());
+    }
+
+    // ── Rectangular placeholder: apply_saved rejects and preserves state ──────
+
+    /// The rectangular family persists but has no GUI yet (assembly-pattern
+    /// placeholder). `apply_saved` must reject BEFORE any mutation and return
+    /// `false` so `load_from`'s caller skips the recompute that would wipe the
+    /// error — the load-path invariant from the conical/assembly increments.
+    #[test]
+    fn loading_a_rectangular_design_rejects_and_preserves_form() {
+        let mut app = test_app();
+        // Pre-seed values that differ from the design's `material` ("Music
+        // Wire") and `unit_system` (Metric), so the unchanged assertions can't
+        // pass vacuously if `apply_saved` mutates before returning false.
+        app.material = "Chrome-Vanadium".to_string();
+        app.unit_system = springcore::UnitSystem::Us;
+        let seeded_family = app.family;
+
+        let applied = app.apply_saved(springcore::SavedDesign {
+            material: "Music Wire".to_string(),
+            unit_system: springcore::UnitSystem::Metric,
+            design: springcore::DesignSpec::Rectangular(springcore::RectangularSpec::PowerUser {
+                end_type: "squared_ground".to_string(),
+                wire_axial_mm: 3.0,
+                wire_radial_mm: 2.0,
+                mean_dia_mm: 30.0,
+                active: 8.0,
+                free_length_mm: 40.0,
+                loads_n: vec![10.0],
+            }),
+        });
+
+        assert!(
+            !applied,
+            "apply_saved must return false for a rectangular design"
+        );
+        assert!(
+            app.action_error
+                .as_deref()
+                .is_some_and(|m| m.contains("rectangular designs are not supported")),
+            "action_error must contain the rejection message, got: {:?}",
+            app.action_error
+        );
+        assert_eq!(
+            app.material, "Chrome-Vanadium",
+            "material must be unchanged (reject must happen before any mutation)"
+        );
+        assert_eq!(
+            app.unit_system,
+            springcore::UnitSystem::Us,
+            "unit_system must be unchanged"
+        );
+        assert_eq!(app.family, seeded_family, "family must be unchanged");
     }
 
     /// AsmMemberRemove with an out-of-bounds or at-boundary index must be a no-op,

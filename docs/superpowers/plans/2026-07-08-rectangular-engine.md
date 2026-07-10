@@ -169,28 +169,29 @@ Run → PASS. Commit.
 
 ---
 
-### Task 2: Persistence + `Family::Rectangular` + springmaker placeholders
+### Task 2: Persistence + springmaker load rejection (assembly pattern)
+
+> **AMENDED 2026-07-09 (user decision):** Task 2 follows the **assembly placeholder pattern**
+> (`d0a36fc`), not the conical one originally written here. `Family::Rectangular` is **deferred to
+> the GUI increment** (it lands when the family becomes selectable, exactly as `Family::Assembly`
+> did in `c5b16ef`). This increment adds only the persistence variant + a load-time rejection in
+> springmaker — no picker entry, no placeholder panels, no `family.rs` change.
 
 **Files:**
-- Modify: `springcore/src/persistence.rs` (`DesignSpec::Rectangular`, `RectangularSpec`, the `SavedDesign::solve` arm, dispatch)
-- Modify: `springcore/src/family.rs` (`Family::Rectangular` + `ALL_FAMILIES` + `Display`)
-- Modify: `springmaker/src/app.rs` (four wildcard-free `Family` matches: calculator ×2, recompute, save_to — placeholder arms; load-dispatch placeholder error)
+- Modify: `springcore/src/persistence.rs` (`DesignSpec::Rectangular`, `RectangularSpec`, the `SavedDesign::solve_with_material` arm)
+- Modify: `springmaker/src/app.rs` (`apply_saved` rejects rectangular designs before mutating, returns `false`; `unreachable!` arm in the family match below the early reject)
 
 **Interfaces:**
-- Consumes: `RectangularSpec` (new), the existing `parse_end_type`/`reject_non_finite`/`forces` persistence helpers.
-- Produces: `DesignSpec::Rectangular(RectangularSpec)`; `Family::Rectangular`.
+- Consumes: `RectangularSpec` (new), the existing persistence validation helpers.
+- Produces: `DesignSpec::Rectangular(RectangularSpec)`.
 
-- [ ] **Step 1 (TDD): `Family::Rectangular` exact-string tests.** In `family.rs` tests: `ALL_FAMILIES.contains(&Family::Rectangular)`; `Family::Rectangular.to_string() == "Rectangular"`; display order places it last. Run red.
+- [ ] **Step 1 (TDD): `RectangularSpec` round-trip + reject.** In `persistence.rs` tests, model on the `ConicalSpec` set (~line 1903): a `RectangularSpec::PowerUser { end_type, wire_axial_mm, wire_radial_mm, mean_dia_mm, active, free_length_mm, loads_n }` round-trips through TOML (`family = "Rectangular"`); a non-finite field is rejected on load (existing non-finite validation treatment); an unknown `type` tag is rejected; `solve_with_material` rejects a rectangular design with the "solved via the rectangular scenario" message. Run red.
 
-- [ ] **Step 2: Add `Family::Rectangular`.** Add the variant (after `Assembly`), the `Display` arm (`"Rectangular"`), and the `ALL_FAMILIES` entry. Run family tests → green. `cargo build -p springcore`. Commit.
+- [ ] **Step 2: Add `RectangularSpec` + `DesignSpec::Rectangular` + dispatch.** Add the `#[serde(tag = "type")]` enum (per spec §B, every field required), the `DesignSpec::Rectangular(RectangularSpec)` variant, and the `SavedDesign::solve_with_material` arm mirroring the other non-compression families: `DesignSpec::Rectangular(_) => Err(SpringError::InconsistentInputs("SavedDesign::solve handles compression designs; rectangular designs are solved via the rectangular scenario".into()))`. Wire the non-finite validation the other specs get. Run persistence tests → green. Commit.
 
-- [ ] **Step 3 (TDD): `RectangularSpec` round-trip + reject.** In `persistence.rs` tests, model on the `ConicalSpec` set (~line 1903): a `RectangularSpec::PowerUser { end_type, wire_axial_mm, wire_radial_mm, mean_dia_mm, active, free_length_mm, loads_n }` round-trips through TOML (`family = "Rectangular"`); a non-finite field is rejected on load (existing `reject_non_finite` treatment); an unknown `type` tag is rejected. Run red.
+- [ ] **Step 3 (TDD): springmaker load rejection.** The new `DesignSpec::Rectangular` breaks springmaker's exhaustive `apply_saved` match. Mirror `d0a36fc` exactly: early `matches!` reject setting `action_error = "rectangular designs are not supported by this build yet (the rectangular GUI ships in a later increment)"` and returning `false` (suppresses the caller's recompute); `unreachable!("handled above")` arm in the design match. Add a springmaker test mirroring `loading_an_assembly_design_rejects_and_preserves_form` (pre-seed differing material/unit_system, assert unchanged + error surfaced + `false` return). Run red → implement → green.
 
-- [ ] **Step 4: Add `RectangularSpec` + `DesignSpec::Rectangular` + dispatch.** Add the `#[serde(tag = "type")]` enum (per spec §B, every field required), the `DesignSpec::Rectangular(RectangularSpec)` variant, and the `SavedDesign::solve` arm mirroring the other non-compression families: `DesignSpec::Rectangular(_) => Err(SpringError::InconsistentInputs("SavedDesign::solve handles compression designs; rectangular designs are solved via the rectangular scenario".into()))`. Wire the load/dispatch match arms `reject_non_finite` covers. Run persistence tests → green. Commit.
-
-- [ ] **Step 5 (TDD): springmaker placeholder arms.** The new `DesignSpec::Rectangular` + `Family::Rectangular` break springmaker's exhaustive matches. Add the MINIMAL arms (mirroring how conical's placeholder was added in its engine increment — check git history of `app.rs` for the conical placeholder commit if needed): the four wildcard-free `Family` matches (calculator ×2, recompute with `self.correction`, save_to) get placeholder arms, and the load-dispatch surfaces `"rectangular-wire designs are not supported by this build yet (GUI ships in the next increment)"` (finalize exact wording against the existing load-error render path). Add a springmaker test that loading a `Rectangular` design surfaces that action error. Run red → implement → green.
-
-- [ ] **Step 6: Full gate.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`, `typos`, and the in-diff mutation gate on the springcore surface (Family + RectangularSpec + dispatch): **0 missed**. Commit.
+- [ ] **Step 4: Full gate.** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`, `typos`, and the in-diff mutation gate on the springcore surface (RectangularSpec + dispatch): **0 missed**. Commit.
 
 ---
 
