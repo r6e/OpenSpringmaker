@@ -80,11 +80,13 @@ const RECT_TORSION_TABLE: &[(f64, f64, f64)] = &[
     (MAX_TABULATED_ASPECT, 0.313, 0.313),
 ];
 
-/// Linearly interpolate (α, β) at side ratio `aspect` (b/c ≥ 1). Clamps to the
-/// first row at/below 1.0 (unreachable — orientation guarantees b/c ≥ 1 — but
-/// defensive) and to the last row at/above 10.0 (conservative: α, β < 1/3 ⇒
-/// higher stress, lower rate; the caller flags `aspect_clamped` only strictly
-/// ABOVE 10.0 — at exactly 10.0 the clamp returns the tabulated row, not an
+/// Linearly interpolate (α, β) at side ratio `aspect` (b/c ≥ 1). The first-row
+/// branch serves two cases: `aspect == 1.0` — the square anchor case, which
+/// legitimately resolves here rather than via interpolation — and `aspect < 1.0`,
+/// which is unreachable (orientation guarantees b/c ≥ 1) but kept defensive.
+/// Clamps to the last row at/above 10.0 (conservative: α, β < 1/3 ⇒ higher
+/// stress, lower rate; the caller flags `aspect_clamped` only strictly ABOVE
+/// 10.0 — at exactly 10.0 the clamp returns the tabulated row, not an
 /// approximation, so no flag is warranted).
 fn rect_torsion_coeffs(aspect: f64) -> (f64, f64) {
     let first = RECT_TORSION_TABLE[0];
