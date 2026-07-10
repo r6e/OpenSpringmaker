@@ -53,6 +53,14 @@ pub struct RectangularDesign {
 /// β governs angle of twist (Eq. 3-41, θ = T·l/(β·b·c³·G)). Footnoted in Shigley
 /// to Timoshenko, *Strength of Materials*, Part I, 3rd ed. (1955), p. 290.
 /// The b/c → ∞ limit is α = β = 1/3 (documented asymptote, not a table row).
+///
+/// Every row below was verified cell-by-cell against the printed table (both the
+/// α and β rows, all ten b/c columns plus the ∞ = 1/3 column). This transcription
+/// is the load-bearing constant for all non-square results — the square case
+/// (b/c = 1) is independently anchored to the AF manual, but rows b/c > 1 inherit
+/// correctness from the formula structure *and* these numbers, so they are pinned
+/// against the source here, not merely against the code (which mutation testing
+/// alone cannot validate).
 const RECT_TORSION_TABLE: &[(f64, f64, f64)] = &[
     (1.00, 0.208, 0.141),
     (1.50, 0.231, 0.196),
