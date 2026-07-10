@@ -45,6 +45,75 @@ fn to_rgb(c: iced::Color) -> RGBColor {
     RGBColor(ch(c.r), ch(c.g), ch(c.b))
 }
 
+// ── ChartData: the pure contract between family presenters and the chart core ──
+
+pub struct AxisMeta {
+    pub label: &'static str,
+    pub symbol: &'static str,
+    pub unit: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LineRole {
+    Primary,
+    Member,
+    Envelope,
+    LoadLine,
+}
+
+pub struct Line {
+    pub points: Vec<(f64, f64)>,
+    pub role: LineRole,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MarkerKind {
+    Operating,
+    Limit,
+}
+
+pub struct Marker {
+    pub x: f64,
+    pub y: f64,
+    pub kind: MarkerKind,
+}
+
+pub struct ChartData {
+    pub x_axis: AxisMeta,
+    pub y_axis: AxisMeta,
+    pub lines: Vec<Line>,
+    pub markers: Vec<Marker>,
+}
+
+/// Finite-positive extent across every line point and marker. `None` means the
+/// chart is degenerate and must not reach plotters (non-finite ranges panic).
+pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
+    let pts = data
+        .lines
+        .iter()
+        .flat_map(|l| l.points.iter().copied())
+        .chain(data.markers.iter().map(|m| (m.x, m.y)));
+    let (x_max, y_max) = pts.filter(|(x, y)| x.is_finite() && y.is_finite()).fold(
+        (f64::NEG_INFINITY, f64::NEG_INFINITY),
+        |(xm, ym), (x, y)| (xm.max(x), ym.max(y)),
+    );
+    (x_max.is_finite() && x_max > 0.0 && y_max.is_finite() && y_max > 0.0).then_some((x_max, y_max))
+}
+
+/// Hover readout line, e.g. `y = 12.30 mm · F = 45.60 N`.
+pub fn hover_readout(data: &ChartData, x: f64, y: f64) -> String {
+    format!(
+        "{} = {} {} · {} = {} {}",
+        data.x_axis.symbol,
+        crate::presenter::fmt_row_value(x, 2),
+        data.x_axis.unit,
+        data.y_axis.symbol,
+        crate::presenter::fmt_row_value(y, 2),
+        data.y_axis.unit,
+    )
+}
+
 /// Force–deflection points (deflection x, force y) in the display unit system.
 ///
 /// The spring rate is constant, so the line is linear; two endpoints suffice.
@@ -369,5 +438,67 @@ mod tests {
         let (x_max, y_max) = extent.unwrap();
         assert_relative_eq!(x_max, 5.0, max_relative = 1e-12);
         assert_relative_eq!(y_max, 10.0, max_relative = 1e-12);
+    }
+
+    fn axis(sym: &'static str, unit: &'static str) -> AxisMeta {
+        AxisMeta {
+            label: "test",
+            symbol: sym,
+            unit,
+        }
+    }
+
+    fn data_with(lines: Vec<Line>, markers: Vec<Marker>) -> ChartData {
+        ChartData {
+            x_axis: axis("y", "mm"),
+            y_axis: axis("F", "N"),
+            lines,
+            markers,
+        }
+    }
+
+    #[test]
+    fn chart_extent_spans_all_lines_and_markers() {
+        let d = data_with(
+            vec![
+                Line {
+                    points: vec![(0.0, 0.0), (10.0, 5.0)],
+                    role: LineRole::Primary,
+                    name: None,
+                },
+                Line {
+                    points: vec![(0.0, 0.0), (4.0, 20.0)],
+                    role: LineRole::Member,
+                    name: None,
+                },
+            ],
+            vec![Marker {
+                x: 12.0,
+                y: 8.0,
+                kind: MarkerKind::Limit,
+            }],
+        );
+        let (x, y) = chart_extent(&d).unwrap();
+        assert_relative_eq!(x, 12.0, max_relative = 1e-12); // marker wins x
+        assert_relative_eq!(y, 20.0, max_relative = 1e-12); // member line wins y
+    }
+
+    #[test]
+    fn chart_extent_ignores_non_finite_and_requires_positive() {
+        let d = data_with(
+            vec![Line {
+                points: vec![(0.0, 0.0), (f64::INFINITY, 5.0)],
+                role: LineRole::Primary,
+                name: None,
+            }],
+            vec![],
+        );
+        assert!(chart_extent(&d).is_none()); // only finite point is the origin → no positive extent
+    }
+
+    #[test]
+    fn hover_readout_formats_both_axes() {
+        let d = data_with(vec![], vec![]);
+        assert_eq!(hover_readout(&d, 12.3, 45.6), "y = 12.30 mm · F = 45.60 N");
     }
 }
