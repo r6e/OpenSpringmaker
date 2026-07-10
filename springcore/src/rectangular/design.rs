@@ -48,6 +48,12 @@ pub struct RectangularDesign {
     pub at_solid: LoadPoint,
 }
 
+/// The largest tabulated side ratio (the final `RECT_TORSION_TABLE` row's
+/// ratio). Above it the coefficients are clamped to that row (and
+/// `solve_forward` flags `aspect_clamped`) — a single constant so the clamp
+/// boundary and the table's extent cannot decouple.
+const MAX_TABULATED_ASPECT: f64 = 10.0;
+
 /// Shigley 10th ed. §3-14 torsion-of-rectangular-bar coefficients vs the side
 /// ratio b/c (b = longer side). α governs max shear (Eq. 3-40, τ₀ = T/(α·b·c²));
 /// β governs angle of twist (Eq. 3-41, θ = T·l/(β·b·c³·G)). Footnoted in Shigley
@@ -71,7 +77,7 @@ const RECT_TORSION_TABLE: &[(f64, f64, f64)] = &[
     (4.00, 0.282, 0.281),
     (6.00, 0.299, 0.299),
     (8.00, 0.307, 0.307),
-    (10.00, 0.313, 0.313),
+    (MAX_TABULATED_ASPECT, 0.313, 0.313),
 ];
 
 /// Linearly interpolate (α, β) at side ratio `aspect` (b/c ≥ 1). Clamps to the
@@ -234,7 +240,7 @@ pub fn solve_forward(
 
     let aspect = b / c;
     let (alpha, beta) = rect_torsion_coeffs(aspect);
-    let aspect_clamped = aspect > 10.0;
+    let aspect_clamped = aspect > MAX_TABULATED_ASPECT;
     let index = spring_index(inputs.mean_dia, b_len);
     let rate = rectangular_rate(
         material.shear_modulus,
@@ -449,7 +455,7 @@ mod tests {
             0.141,
             8.0,
         );
-        // AF's 44.5 is a 3-sig-fig rounding of 2π/0.141 = 44.563, ~0.14% off — the
+        // AF's 44.5 is a 3-sig-fig rounding of 2π/0.141 = 44.56, ~0.14% off — the
         // tolerance reflects the source's rounding, not our arithmetic.
         assert_relative_eq!(ours.newtons_per_meter(), af, max_relative = 3e-3);
     }
@@ -658,9 +664,12 @@ mod tests {
             "mean diameter must be a positive finite number"
         );
 
-        // Mean must exceed the larger side (b = 3mm here).
+        // Mean below the larger side (b = 3mm here). Strictly below — the
+        // `== b` boundary case is owned exclusively by
+        // `mean_equal_to_larger_side_rejected` (conical's non-overlapping
+        // matrix/boundary split).
         let mut i = base.clone();
-        i.mean_dia = Length::from_millimeters(3.0); // == b → index 1
+        i.mean_dia = Length::from_millimeters(2.9); // < b
         assert_eq!(
             msg(solve_inputs(&i)),
             "mean diameter must exceed the larger wire dimension (spring index must exceed 1)"
@@ -722,15 +731,14 @@ mod tests {
         );
     }
 
-    /// Zero axial / radial rejected (kills `> 0.0` → `>= 0.0`).
+    /// Zero radial rejected (kills the radial `> 0.0` → `>= 0.0` — the guard
+    /// matrix's radial case uses NaN, which only pins the `is_finite` half).
+    /// The axial twin needs no dedicated test: the matrix's axial-first case
+    /// sets axial = 0 with radial/mean also bad, so under the `>=` mutant it
+    /// falls through to the radial guard and fails the pinned-message assert
+    /// (conical's first-guard pattern).
     #[test]
-    fn zero_wire_dimensions_rejected() {
-        let mut i = square_inputs();
-        i.wire_axial = Length::from_millimeters(0.0);
-        assert_eq!(
-            msg(solve_inputs(&i)),
-            "wire axial dimension must be a positive finite number"
-        );
+    fn wire_radial_zero_rejected() {
         let mut i = square_inputs();
         i.wire_radial = Length::from_millimeters(0.0);
         assert_eq!(
