@@ -47,13 +47,28 @@ fn to_rgb(c: iced::Color) -> RGBColor {
 
 // ── ChartData: the pure contract between family presenters and the chart core ──
 
+/// Axis metadata that a family presenter fills.
+///
+/// # Fields
+/// - `label`: plotters axis description including unit (e.g., "deflection (mm)")
+/// - `symbol`: hover readout symbol (e.g., "y")
+/// - `unit`: hover readout unit (e.g., "mm")
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct AxisMeta {
     pub label: &'static str,
     pub symbol: &'static str,
     pub unit: &'static str,
 }
 
+/// Line role; maps to stroke style in the renderer only.
+///
+/// # Variants
+/// - `Primary`: the family's main line
+/// - `Member`: an assembly member overlay
+/// - `Envelope`: a fatigue failure envelope
+/// - `LoadLine`: a fatigue load line from the origin
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub enum LineRole {
     Primary,
     Member,
@@ -61,24 +76,41 @@ pub enum LineRole {
     LoadLine,
 }
 
+/// A polyline.
+///
+/// # Fields
+/// - `points`: vertices of the line
+/// - `role`: stroke style (Primary, Member, Envelope, LoadLine)
+/// - `name`: put in legend if `Some`
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct Line {
     pub points: Vec<(f64, f64)>,
     pub role: LineRole,
     pub name: Option<String>,
 }
 
+/// Marker kind; determines visual representation.
+///
+/// # Variants
+/// - `Operating`: an operating point
+/// - `Limit`: a limit point (travel limit, fatigue strength amplitude)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub enum MarkerKind {
     Operating,
     Limit,
 }
 
+/// A point marker.
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct Marker {
     pub x: f64,
     pub y: f64,
     pub kind: MarkerKind,
 }
 
+/// The pure contract between family presenters and the chart core.
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub struct ChartData {
     pub x_axis: AxisMeta,
     pub y_axis: AxisMeta,
@@ -88,6 +120,7 @@ pub struct ChartData {
 
 /// Finite-positive extent across every line point and marker. `None` means the
 /// chart is degenerate and must not reach plotters (non-finite ranges panic).
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
     let pts = data
         .lines
@@ -102,6 +135,7 @@ pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
 }
 
 /// Hover readout line, e.g. `y = 12.30 mm · F = 45.60 N`.
+#[allow(dead_code)] // consumed from Task 3 (renderer) / Task 4 (canvas); remove this allow then
 pub fn hover_readout(data: &ChartData, x: f64, y: f64) -> String {
     format!(
         "{} = {} {} · {} = {} {}",
