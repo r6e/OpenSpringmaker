@@ -11,13 +11,18 @@ use plotters::prelude::*;
 use plotters::style::{register_font, FontStyle};
 use springcore::{SpringDesign, UnitSystem};
 
+pub mod mapping;
+
 /// Fixed render resolution for the chart bitmap; iced scales it to fit the panel.
-const CHART_W: u32 = 760;
-const CHART_H: u32 = 300;
+pub(crate) const CHART_W: u32 = 760;
+pub(crate) const CHART_H: u32 = 300;
+/// Top/bottom margin and bottom x-axis label band width.
+pub(crate) const MARGIN: u32 = 24;
+pub(crate) const X_LABEL_AREA: u32 = 44;
 /// Width of the left y-axis label band. Plot geometry sits right of it
 /// (margin + this), so this column range contains only axis text — relied on by
 /// the render test to confirm the bundled font rasterizes.
-const Y_LABEL_AREA_SIZE: u32 = 64;
+pub(crate) const Y_LABEL_AREA: u32 = 64;
 
 /// Bundled font (DejaVu Sans, permissive license — see assets/LICENSE-DejaVu.txt),
 /// registered under the "sans-serif" family so the chart needs no system fonts.
@@ -252,9 +257,9 @@ fn draw_chart<DB: DrawingBackend>(
     };
 
     let mut chart = builder
-        .margin(24)
-        .x_label_area_size(44)
-        .y_label_area_size(Y_LABEL_AREA_SIZE as i32)
+        .margin(MARGIN as i32)
+        .x_label_area_size(X_LABEL_AREA as i32)
+        .y_label_area_size(Y_LABEL_AREA as i32)
         .build_cartesian_2d(0.0..x_max, 0.0..y_max)
         .expect("chart axes");
 
@@ -454,11 +459,11 @@ mod tests {
 
         // Glyphs specifically: the left y-label band holds only axis text — the
         // plot line, mesh, and markers all sit right of the y-axis (margin +
-        // Y_LABEL_AREA_SIZE). Content there proves the bundled font actually
+        // Y_LABEL_AREA). Content there proves the bundled font actually
         // rasterized, not merely that lines drew. Sharing the const (not a
         // hardcoded width) keeps this guard valid if the label area is resized.
         assert!(
-            (0..Y_LABEL_AREA_SIZE).any(|c| (0..CHART_H).any(|r| differs(c, r))),
+            (0..Y_LABEL_AREA).any(|c| (0..CHART_H).any(|r| differs(c, r))),
             "axis labels (bundled font) must rasterize in the y-label band"
         );
     }
