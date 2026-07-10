@@ -481,17 +481,16 @@ mod tests {
     }
 
     /// Provenance: the square case recovers BOTH AF magic numbers from the
-    /// Shigley α=0.208, β=0.141 rows. Locks the source chain in code.
+    /// table's b/c = 1 row — through `rect_torsion_coeffs`, so a mistranscribed
+    /// first row breaks this AF derivation, not just the literal-pinning test.
+    /// Locks the source chain in code.
     #[test]
     fn provenance_square_reproduces_af_coefficients() {
-        // Rate coefficient: 2π/β should be ~44.5.
-        assert_relative_eq!(
-            2.0 * std::f64::consts::PI / 0.141,
-            44.5,
-            max_relative = 2e-3
-        );
-        // Stress coefficient: 1/α should be ~4.80.
-        assert_relative_eq!(1.0 / 0.208, 4.80, max_relative = 2e-3);
+        let (alpha, beta) = rect_torsion_coeffs(1.0);
+        // Rate coefficient: 2π/β should be ~44.5 (AF Eq. 1-90).
+        assert_relative_eq!(2.0 * std::f64::consts::PI / beta, 44.5, max_relative = 2e-3);
+        // Stress coefficient: 1/α should be ~4.80 (AF Eq. 1-84).
+        assert_relative_eq!(1.0 / alpha, 4.80, max_relative = 2e-3);
     }
 
     // ── Rectangular golden (b/c = 2), hand-computed from Shigley α/β ─────────
