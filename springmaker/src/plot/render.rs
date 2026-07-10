@@ -3,8 +3,8 @@
 
 use super::mapping::ChartMapping;
 use super::{
-    chart_extent, ensure_font, to_rgb, AxisMeta, ChartData, LineRole, MarkerKind, CHART_H, CHART_W,
-    MARGIN, X_LABEL_AREA, Y_LABEL_AREA,
+    chart_extent, ensure_font, to_rgb, ChartData, LineRole, MarkerKind, CHART_H, CHART_W, MARGIN,
+    X_LABEL_AREA, Y_LABEL_AREA,
 };
 use crate::app::C;
 use plotters::prelude::*;
@@ -129,7 +129,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Line, Marker};
+    use super::super::{AxisMeta, Line, Marker};
     use super::*;
     use approx::assert_relative_eq;
 

@@ -99,6 +99,7 @@ pub struct Line {
 /// - `Operating`: an operating point
 /// - `Limit`: a limit point (travel limit, fatigue strength amplitude)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)] // variants constructed from Task 4+ family presenters; remove this allow then
 pub enum MarkerKind {
     Operating,
     Limit,
