@@ -20,11 +20,11 @@ pub use canvas3d::scene_element;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneRole {
     Wire,
-    /// Not yet constructed (Tasks 5-6 add assembly/member-composite scenes).
-    #[allow(dead_code)] // constructed from Tasks 5-6; remove this allow then
+    /// Not yet constructed (Task 6 adds assembly/member-composite scenes).
+    #[allow(dead_code)] // constructed from Task 6; remove this allow then
     Member,
-    /// Not yet constructed (Tasks 5-6 add hooks/legs detail geometry).
-    #[allow(dead_code)] // constructed from Tasks 5-6; remove this allow then
+    /// Hooks (extension) and legs (torsion); constructed by
+    /// `extension::scene_model`/`torsion::scene_model` (Task 5).
     Detail,
 }
 
