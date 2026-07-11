@@ -88,7 +88,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
                 .points
                 .iter()
                 .copied()
-                .filter(|(x, y)| x.is_finite() && y.is_finite())
+                .filter(|&(x, y)| super::plottable(x, y))
                 .collect();
             let series = chart
                 .draw_series(LineSeries::new(pts, style))
@@ -114,7 +114,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
             .draw_series(
                 data.markers
                     .iter()
-                    .filter(|m| m.x.is_finite() && m.y.is_finite())
+                    .filter(|m| super::plottable(m.x, m.y))
                     .map(|m| Circle::new((m.x, m.y), 5, marker_style(m.kind))),
             )
             .expect("markers");
@@ -157,6 +157,31 @@ mod tests {
                 kind: MarkerKind::Operating,
             }],
         }
+    }
+
+    /// Negative coordinates are never drawn: axes are always 0-based, so a
+    /// negative point would render outside the plot area (defense in depth —
+    /// presenters emit non-negative values from engine-guarded designs).
+    /// Pinned by buffer equality: injecting a negative line point and a
+    /// negative marker must not change a single pixel.
+    #[test]
+    fn negative_coordinates_are_filtered_before_plotters() {
+        let clean = simple_data(false);
+        let (clean_pixels, _) = render_chart(&clean).unwrap();
+
+        let mut dirty = simple_data(false);
+        dirty.lines[0].points.push((-5.0, -10.0));
+        dirty.markers.push(Marker {
+            x: -3.0,
+            y: 8.0,
+            kind: MarkerKind::Operating,
+        });
+        let (dirty_pixels, _) = render_chart(&dirty).unwrap();
+
+        assert_eq!(
+            clean_pixels, dirty_pixels,
+            "negative-coordinate points/markers must be filtered, not drawn"
+        );
     }
 
     #[test]

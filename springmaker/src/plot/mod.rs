@@ -128,10 +128,21 @@ pub struct ChartData {
     pub markers: Vec<Marker>,
 }
 
+/// Whether a point may be drawn: finite AND non-negative in both coordinates.
+/// Chart axes are always 0-based, so a negative coordinate would render
+/// outside the plot area; the renderer and `chart_extent` share this exact
+/// predicate so a point is either visible and counted, or neither (defense in
+/// depth — presenters emit non-negative values from engine-guarded designs).
+pub(crate) fn plottable(x: f64, y: f64) -> bool {
+    x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0
+}
+
 /// Extent across every line point and marker: y must be finite-positive; x
 /// must be finite and non-negative. x == 0 is deliberately allowed — it is
 /// how the extension family's initial-tension jump (a vertical line at
 /// x = 0 from (0, 0) to (0, Fi)) renders when every load is at or below Fi.
+/// Points that are not [`plottable`] (non-finite or negative in either
+/// coordinate) are ignored, exactly as the renderer ignores them.
 /// `None` means the chart is degenerate and must not reach plotters
 /// (non-finite ranges panic).
 pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
@@ -140,7 +151,7 @@ pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
         .iter()
         .flat_map(|l| l.points.iter().copied())
         .chain(data.markers.iter().map(|m| (m.x, m.y)));
-    let (x_max, y_max) = pts.filter(|(x, y)| x.is_finite() && y.is_finite()).fold(
+    let (x_max, y_max) = pts.filter(|&(x, y)| plottable(x, y)).fold(
         (f64::NEG_INFINITY, f64::NEG_INFINITY),
         |(xm, ym), (x, y)| (xm.max(x), ym.max(y)),
     );
@@ -400,6 +411,27 @@ mod tests {
             vec![],
         );
         assert!(chart_extent(&d).is_none()); // only finite point is the origin → no positive extent
+    }
+
+    /// Negative coordinates are excluded by the same `plottable` predicate the
+    /// renderer uses: a chart whose only positive-y content sits at a negative
+    /// coordinate is degenerate (the renderer would not draw that point, so
+    /// the extent must not count it either).
+    #[test]
+    fn chart_extent_ignores_negative_coordinates() {
+        let d = data_with(
+            vec![Line {
+                points: vec![(0.0, 0.0), (-4.0, 30.0)],
+                role: LineRole::Primary,
+                name: None,
+            }],
+            vec![Marker {
+                x: 5.0,
+                y: -2.0,
+                kind: MarkerKind::Operating,
+            }],
+        );
+        assert!(chart_extent(&d).is_none());
     }
 
     #[test]
