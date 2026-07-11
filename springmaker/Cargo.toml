@@ -13,7 +13,7 @@ springcore = { path = "../springcore" }
 serde = { workspace = true }
 toml = { workspace = true }
 directories = { workspace = true }
-iced = { version = "0.14", features = ["image-without-codecs"] }
+iced = { version = "0.14", features = ["image-without-codecs", "canvas"] }
 # Chart is rendered to an in-memory bitmap (no iced-coupled backend, so no
 # plotters-iced version lag) with a bundled font (ab_glyph) to avoid any
 # system-font lookup. default-features off drops font-kit/svg/image/gif/chrono.

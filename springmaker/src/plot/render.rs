@@ -37,7 +37,6 @@ fn marker_style(kind: MarkerKind) -> ShapeStyle {
 
 /// Render `data` to an RGBA bitmap. `None` iff the chart has no finite
 /// positive extent (plotters must never see a non-finite range).
-#[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
 pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
     let (x_raw, y_raw) = chart_extent(data)?;
     // Headroom, with the legacy floor so tiny ranges don't degenerate.

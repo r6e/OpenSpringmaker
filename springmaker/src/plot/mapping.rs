@@ -4,7 +4,12 @@
 
 use super::{CHART_H, CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA};
 
-#[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
+/// Floor applied to the letterbox scale so a transient zero/degenerate widget
+/// bounds (iced may report these for a single layout pass) can never divide
+/// `widget_to_bitmap`/`bitmap_to_widget` by zero and produce NaN/∞. Any real
+/// layout pass uses a scale several orders of magnitude above this.
+const MIN_SCALE: f32 = 1e-6;
+
 pub struct ChartMapping {
     /// Data ranges plotters was given (AFTER the 1.1 headroom factor).
     pub x_max: f64,
@@ -13,7 +18,6 @@ pub struct ChartMapping {
 
 impl ChartMapping {
     /// (x0, y0, x1, y1) of the plot area inside the bitmap, in pixels.
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn plot_rect() -> (f32, f32, f32, f32) {
         (
             (MARGIN + Y_LABEL_AREA) as f32,
@@ -23,13 +27,11 @@ impl ChartMapping {
         )
     }
 
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn in_plot_rect(px: f32, py: f32) -> bool {
         let (x0, y0, x1, y1) = Self::plot_rect();
         (x0..=x1).contains(&px) && (y0..=y1).contains(&py)
     }
 
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn pixel_to_data(&self, px: f32, py: f32) -> (f64, f64) {
         let (x0, y0, x1, y1) = Self::plot_rect();
         let fx = f64::from((px - x0) / (x1 - x0));
@@ -37,7 +39,7 @@ impl ChartMapping {
         (fx * self.x_max, fy * self.y_max)
     }
 
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
+    #[allow(dead_code)] // symmetric inverse of pixel_to_data; consumed once a family overlays a data-space point (e.g. fatigue envelope, Task 8); remove then
     pub fn data_to_pixel(&self, x: f64, y: f64) -> (f32, f32) {
         let (x0, y0, x1, y1) = Self::plot_rect();
         let px = x0 + ((x / self.x_max) as f32) * (x1 - x0);
@@ -47,7 +49,6 @@ impl ChartMapping {
 
     /// Which side of the cursor the readout box goes: past the horizontal
     /// midline it flips left; above the vertical midline it flips below.
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn readout_flips(px: f32, py: f32) -> (bool, bool) {
         let (x0, y0, x1, y1) = Self::plot_rect();
         (px > (x0 + x1) / 2.0, py < (y0 + y1) / 2.0)
@@ -55,16 +56,19 @@ impl ChartMapping {
 }
 
 /// Uniform-scale centered fit of the bitmap into the widget bounds.
-#[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
 pub struct Letterbox {
     pub scale: f32,
     pub offset_x: f32,
     pub offset_y: f32,
 }
 
-#[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
+/// Computes the letterbox fit for `bounds_w` × `bounds_h`. The scale is
+/// floored at `MIN_SCALE` so a zero (or NaN, since `f32::max` ignores a NaN
+/// operand) width/height never yields a zero scale — `widget_to_bitmap` and
+/// `bitmap_to_widget` divide/multiply by `scale` and must stay finite even
+/// when iced hands the canvas a transient degenerate bounds.
 pub fn letterbox(bounds_w: f32, bounds_h: f32) -> Letterbox {
-    let scale = (bounds_w / CHART_W as f32).min(bounds_h / CHART_H as f32);
+    let scale = ((bounds_w / CHART_W as f32).min(bounds_h / CHART_H as f32)).max(MIN_SCALE);
     Letterbox {
         scale,
         offset_x: (bounds_w - CHART_W as f32 * scale) / 2.0,
@@ -73,7 +77,6 @@ pub fn letterbox(bounds_w: f32, bounds_h: f32) -> Letterbox {
 }
 
 impl Letterbox {
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn widget_to_bitmap(&self, wx: f32, wy: f32) -> (f32, f32) {
         (
             (wx - self.offset_x) / self.scale,
@@ -81,7 +84,6 @@ impl Letterbox {
         )
     }
 
-    #[allow(dead_code)] // consumed from Task 4 (canvas); remove this allow then
     pub fn bitmap_to_widget(&self, bx: f32, by: f32) -> (f32, f32) {
         (
             bx * self.scale + self.offset_x,
@@ -153,5 +155,32 @@ mod tests {
         let (wx, wy) = lb.bitmap_to_widget(88.0, 24.0);
         assert_relative_eq!(wx, 468.0, max_relative = 1e-6);
         assert_relative_eq!(wy, 24.0, max_relative = 1e-6);
+    }
+
+    /// Pins the chosen guard (Task 2 review, binding): a zero/degenerate
+    /// widget bounds must never produce a zero scale, so
+    /// `widget_to_bitmap`/`bitmap_to_widget` stay finite (no NaN/∞ reaching
+    /// `ChartMapping::in_plot_rect`).
+    #[test]
+    fn letterbox_zero_bounds_is_safe() {
+        for (w, h) in [(0.0_f32, 300.0_f32), (760.0, 0.0), (0.0, 0.0)] {
+            let lb = letterbox(w, h);
+            assert!(
+                lb.scale.is_finite() && lb.scale > 0.0,
+                "scale must be a finite positive floor for bounds ({w}, {h})"
+            );
+
+            let (bx, by) = lb.widget_to_bitmap(0.0, 0.0);
+            assert!(
+                bx.is_finite() && by.is_finite(),
+                "widget_to_bitmap must stay finite for bounds ({w}, {h})"
+            );
+
+            let (wx, wy) = lb.bitmap_to_widget(0.0, 0.0);
+            assert!(
+                wx.is_finite() && wy.is_finite(),
+                "bitmap_to_widget must stay finite for bounds ({w}, {h})"
+            );
+        }
     }
 }

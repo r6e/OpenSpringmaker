@@ -277,7 +277,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let chart = app
                 .outcome
                 .as_ref()
-                .map(|o| crate::plot::results_chart(&o.design, us))
+                .map(|o| {
+                    crate::plot::chart_element(crate::compression::plot_model::compression_chart(
+                        &o.design, us,
+                    ))
+                })
                 .expect("ResultsView::Populated implies app.outcome is Some");
 
             render_populated(&p, chart)
