@@ -90,10 +90,25 @@ pub(crate) fn con_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
     let content: Element<'_, Message> = match con_results_view(app) {
         ConResultsView::Error(msg) => results_error(msg),
         ConResultsView::Empty => results_empty(),
-        ConResultsView::Populated(p) => render_populated(&p),
+        ConResultsView::Populated(p) => {
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            let chart = app
+                .con_outcome
+                .as_ref()
+                .map(|o| {
+                    crate::plot::chart_element(crate::conical::plot_model::conical_chart(
+                        &o.design, us,
+                    ))
+                })
+                .expect("ConResultsView::Populated implies app.con_outcome is Some");
+
+            render_populated(&p, chart)
+        }
     };
 
     container(panel_container(content))
@@ -102,9 +117,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Render the populated conical results: hero rate → Geometry → load table →
-/// footer note. Status is handled by the calculator's shared status panel
+/// chart → footer note. Status is handled by the calculator's shared status panel
 /// (as siblings do — see `calculator::status_panel`).
-fn render_populated(p: &ConPopulatedResults) -> Element<'static, Message> {
+fn render_populated<'a>(
+    p: &ConPopulatedResults,
+    chart: Element<'a, Message>,
+) -> Element<'a, Message> {
     column![
         section_heading("Results"),
         section_divider(),
@@ -113,6 +131,8 @@ fn render_populated(p: &ConPopulatedResults) -> Element<'static, Message> {
         rows_section("Geometry", &p.geometry),
         section_divider(),
         render_con_load_table(&p.load_table),
+        section_divider(),
+        chart,
         render_linear_model_footer(),
     ]
     .spacing(6)
