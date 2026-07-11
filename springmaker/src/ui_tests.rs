@@ -8,6 +8,9 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
+use std::env;
+use std::fs;
+
 use crate::app::{App, Message, Screen, VisualMode};
 use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
@@ -220,6 +223,85 @@ fn settings_changes_correction_and_recomputes() {
     assert!(
         after > before,
         "Wahl raises body shear vs the Bergsträsser default at C=10"
+    );
+}
+
+/// Snapshot the app's current render via `Simulator::snapshot`, hash it with
+/// `Snapshot::matches_hash` (which writes `<dir>/<stem>-<renderer>.sha256`
+/// since no file exists there yet, and — per its doc comment — always
+/// returns `Ok(true)` on that first write), then read the written hash back
+/// so the caller can compare two renders directly. This is a differential
+/// pin: no golden file is stored in the repo, just a scratch directory the
+/// caller creates and removes around a pair of these calls.
+fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &str) -> String {
+    let mut sim = ui(app);
+    let snapshot = sim
+        .snapshot(theme)
+        .unwrap_or_else(|e| panic!("headless snapshot failed for {stem:?}: {e}"));
+    let base = dir.join(stem);
+    assert!(
+        snapshot
+            .matches_hash(&base)
+            .unwrap_or_else(|e| panic!("hash write/compare failed for {stem:?}: {e}")),
+        "the first write of a hash file always reports a match"
+    );
+    let hash_file = fs::read_dir(dir)
+        .expect("read temp snapshot dir")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy().into_owned();
+            name.starts_with(stem) && name.ends_with(".sha256")
+        })
+        .unwrap_or_else(|| panic!("no hash file written for stem {stem:?}"));
+    fs::read_to_string(hash_file.path()).expect("read hash file")
+}
+
+/// Differential snapshot pin for `widgets::segmented_style`'s selection
+/// highlight. The Settings screen with the default Bergsträsser correction
+/// selected vs. after `Message::SetCorrection(Wahl)` differs ONLY in which
+/// option button is highlighted — same screen, same text, same layout, same
+/// widget tree shape. There is no stored golden image/hash here (see
+/// `snapshot_hash`); the two renders are hashed and compared to each other
+/// directly. If they hash equal, the highlight isn't affecting pixels at
+/// all — exactly the mutant (`segmented_style` ignoring its `selected`
+/// parameter) that survived the Task 4 revert-probe because no test could
+/// observe rendered style before this one.
+#[test]
+fn segmented_selection_highlight_renders_differently() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser
+    );
+
+    let dir = env::temp_dir().join(format!(
+        "openspringmaker-segmented-selection-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let theme = app.theme();
+    let hash_bergstrasser = snapshot_hash(&app, &theme, &dir, "bergstrasser");
+
+    app.update(Message::SetCorrection(
+        springcore::CurvatureCorrection::Wahl,
+    ));
+    assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+
+    let hash_wahl = snapshot_hash(&app, &theme, &dir, "wahl");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        hash_bergstrasser, hash_wahl,
+        "the Settings screen rendered identically for Bergsträsser and Wahl; \
+         the only visual difference between these two app states is which \
+         segmented option button `segmented_style` highlights, so equal \
+         renders mean the selection styling is dead"
     );
 }
 
