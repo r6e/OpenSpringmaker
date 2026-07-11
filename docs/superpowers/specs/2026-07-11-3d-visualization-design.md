@@ -91,11 +91,14 @@ depth (the 3D extension of the chart's `plottable` discipline).
 
 - Drag *tracking* (press origin, last position) is ephemeral canvas `State`.
 - Committed angles are App state: `App.orbit: Orbit { yaw: f32, pitch: f32 }`
-  (global, defaults to a pleasing three-quarter view), updated via
-  `Message::Orbit(Orbit)` published from the canvas
-  (`canvas::Action::publish`) during drags; `view()` re-rasterizes with the
-  new projection — the same re-render-on-view cost profile as the shipped
-  chart pipeline.
+  (global, defaults to a pleasing three-quarter view). The canvas publishes
+  per-event drag DELTAS — `Message::Orbit(dx, dy)` via
+  `canvas::Action::publish` — and `App::update` accumulates them through the
+  pure `orbit_step` (`self.orbit = orbit_step(self.orbit, dx, dy)`), so
+  coalesced mouse events compose instead of overwriting each other (the
+  review panel rejected the earlier absolute-`Orbit` message for exactly
+  that reason); `view()` re-rasterizes with the new projection — the same
+  re-render-on-view cost profile as the shipped chart pipeline.
 - The pure `orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit` owns
   sensitivity and the pitch clamp (no pole-flip); unit-tested. Yaw wraps.
 - `mouse_interaction` shows the grab cursor over the canvas.
@@ -103,7 +106,7 @@ depth (the 3D extension of the chart's `plottable` discipline).
 ### Toggle
 
 `App.results_visual: VisualMode { Chart, Spring3d }` (defaults `Chart`) +
-`Message::VisualMode(VisualMode)`. Each results panel's Populated arm renders
+`Message::Visual(VisualMode)`. Each results panel's Populated arm renders
 a small two-option control and the selected visual; which visual renders is a
 presenter decision (pure fn over App state). No outcome → neither visual nor
 toggle (existing Populated gating).

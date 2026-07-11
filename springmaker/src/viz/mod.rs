@@ -54,8 +54,9 @@ pub struct SceneData {
 const MAX_RENDER_TURNS: f64 = 2_000.0;
 
 /// Sample a helix: `radius_at`/`height_at` are functions of t ∈ [0, 1] along
-/// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
-/// + 1` points (inclusive endpoint).
+/// the wire; the angle sweeps `turns · 2π`. Returns
+/// `⌈turns × samples_per_turn⌉ + 1` points (inclusive endpoint), with a floor
+/// of 3 points so tiny turn counts still draw a visible arc.
 ///
 /// Hostile `turns` (non-finite, negative, or beyond [`MAX_RENDER_TURNS`])
 /// returns an empty `Vec` instead of sampling, so the existing
