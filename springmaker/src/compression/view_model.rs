@@ -11,10 +11,10 @@ use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, Emphasis,
+    overstress_emphasis, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
     FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
-use springcore::{BindingConstraint, SpringDesign, UnitSystem};
+use springcore::{BindingConstraint, Material, SpringDesign, UnitSystem};
 
 // ── Results panel ───────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ pub enum ResultsView {
 /// matching the prior inline order (outcome checked first).
 pub fn results_view(app: &App) -> ResultsView {
     match &app.outcome {
-        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app.unit_system))),
+        Some(out) => ResultsView::Populated(Box::new(populated_results(out, app))),
         None => match &app.error {
             Some(err) => ResultsView::Error(err.clone()),
             None => ResultsView::Empty,
@@ -76,12 +76,17 @@ pub fn results_view(app: &App) -> ResultsView {
     }
 }
 
-fn populated_results(out: &FormOutcome, us: UnitSystem) -> PopulatedResults {
+fn populated_results(out: &FormOutcome, app: &App) -> PopulatedResults {
     let d = &out.design;
+    let us = app.unit_system;
+    // A present outcome means `app.material` already resolved during that
+    // solve (the conical precedent); `.ok()` degrades gracefully rather than
+    // panicking on the documented-unreachable race where it no longer does.
+    let material = app.materials.get(&app.material).ok();
     PopulatedResults {
         governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: geometry_rows(d, us),
-        load_table: load_table(d, us),
+        load_table: load_table(d, us, material),
         fatigue: fatigue_view(out, us),
         min_weight: min_weight_view(out),
     }
@@ -127,7 +132,7 @@ fn geometry_rows(d: &SpringDesign, us: UnitSystem) -> Vec<ResultRow> {
     ]
 }
 
-fn load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
+fn load_table(d: &SpringDesign, us: UnitSystem, material: Option<&Material>) -> LoadTable {
     let rows = d
         .load_points
         .iter()
@@ -153,11 +158,7 @@ fn load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
-                stress_emphasis: if lp.pct_mts > 1.0 {
-                    Emphasis::Danger
-                } else {
-                    Emphasis::Normal
-                },
+                stress_emphasis: overstress_emphasis(lp.pct_mts, material),
             }
         })
         .collect();
@@ -504,6 +505,21 @@ mod tests {
     fn normal_load_point_carries_normal_emphasis() {
         let p = populated(&app_with(rate_based_metric()));
         assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Normal);
+    }
+
+    /// Gap case: pct_mts (72.3%) sits between Music Wire's 45% allowable and
+    /// 100% MTS. The engine's own status warning already calls this
+    /// overstressed (`evaluate_status` fires at `pct_mts > allowable_pct_torsion`),
+    /// but the old `pct_mts > 1.0` rule rendered it Normal — a load point the
+    /// status panel flags as overstressed with no color in the load table.
+    #[test]
+    fn gap_case_overstressed_by_engine_carries_danger_emphasis() {
+        let form = FormState {
+            loads: "200".into(),
+            ..rate_based_metric()
+        };
+        let p = populated(&app_with(form));
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Danger);
     }
 
     // ── fatigue gating ──
