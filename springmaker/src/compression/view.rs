@@ -273,18 +273,6 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ResultsView::Error(msg) => results_error(msg),
         ResultsView::Empty => results_empty(),
         ResultsView::Populated(p) => {
-            // The chart is pure rendering of the design (no decision); build it
-            // from the outcome the Populated variant guarantees is present.
-            let chart = app
-                .outcome
-                .as_ref()
-                .map(|o| {
-                    crate::plot::chart_element(crate::compression::plot_model::compression_chart(
-                        &o.design, us,
-                    ))
-                })
-                .expect("ResultsView::Populated implies app.outcome is Some");
-
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only
             // renders the data it hands back.
@@ -295,19 +283,24 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .map(crate::plot::chart_element);
 
             // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`.
+            // scene, selected by `app.results_visual`. Each visual is pure
+            // rendering of the design (no decision), built from the outcome
+            // the Populated variant guarantees is present — and built ONLY in
+            // its own arm, so exactly one bitmap is rasterized per render
+            // (orbit drags re-render every frame; an eagerly-built chart
+            // would be thrown away each time).
+            let outcome = app
+                .outcome
+                .as_ref()
+                .expect("ResultsView::Populated implies app.outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => chart,
-                crate::app::VisualMode::Spring3d => app
-                    .outcome
-                    .as_ref()
-                    .map(|o| {
-                        crate::viz::scene_element(
-                            crate::compression::scene_model::compression_scene(&o.design),
-                            app.orbit,
-                        )
-                    })
-                    .expect("ResultsView::Populated implies app.outcome is Some"),
+                crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    crate::compression::plot_model::compression_chart(&outcome.design, us),
+                ),
+                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    crate::compression::scene_model::compression_scene(&outcome.design),
+                    app.orbit,
+                ),
             };
             let toggle: Element<'_, Message> = row![
                 radio(

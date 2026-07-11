@@ -2,29 +2,25 @@
 //! radius helix over the solved coil counts, dead end coils flattened to
 //! wire pitch (data-driven from total−active — correct for every EndType).
 
-use crate::viz::{coil_height_fn, helix, stroke_for, Polyline3, SceneData, SceneRole};
+use crate::viz::{scene_from_radius, SceneData};
 use springcore::SpringDesign;
 
 pub fn compression_scene(design: &SpringDesign) -> SceneData {
     let r = design.mean_dia.millimeters() / 2.0;
-    let wire = design.wire_dia.millimeters();
-    let total = design.total_coils;
-    let height = coil_height_fn(design.active_coils, total, design.pitch.millimeters(), wire);
-    let max_h = height(1.0);
-    let extent = (2.0 * r).max(max_h);
-    let points = helix(|_| r, height, total, 32);
-    SceneData {
-        polylines: vec![Polyline3 {
-            points,
-            role: SceneRole::Wire,
-            stroke_px: stroke_for(wire, extent),
-        }],
-    }
+    scene_from_radius(
+        |_| r,
+        r,
+        design.active_coils,
+        design.total_coils,
+        design.pitch.millimeters(),
+        design.wire_dia.millimeters(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::viz::SceneRole;
     use approx::assert_relative_eq;
     use springcore::units::{Force, Length};
     use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario};

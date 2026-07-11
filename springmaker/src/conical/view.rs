@@ -95,32 +95,25 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ConResultsView::Error(msg) => results_error(msg),
         ConResultsView::Empty => results_empty(),
         ConResultsView::Populated(p) => {
-            // The chart is pure rendering of the design (no decision); build it
-            // from the outcome the Populated variant guarantees is present.
-            let chart = app
+            // The results panel's shared visual slot: chart or orbitable 3D
+            // scene, selected by `app.results_visual`. Each visual is pure
+            // rendering of the design (no decision), built from the outcome
+            // the Populated variant guarantees is present — and built ONLY in
+            // its own arm, so exactly one bitmap is rasterized per render
+            // (orbit drags re-render every frame; an eagerly-built chart
+            // would be thrown away each time).
+            let outcome = app
                 .con_outcome
                 .as_ref()
-                .map(|o| {
-                    crate::plot::chart_element(crate::conical::plot_model::conical_chart(
-                        &o.design, us,
-                    ))
-                })
                 .expect("ConResultsView::Populated implies app.con_outcome is Some");
-
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`.
             let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => chart,
-                crate::app::VisualMode::Spring3d => app
-                    .con_outcome
-                    .as_ref()
-                    .map(|o| {
-                        crate::viz::scene_element(
-                            crate::conical::scene_model::conical_scene(&o.design),
-                            app.orbit,
-                        )
-                    })
-                    .expect("ConResultsView::Populated implies app.con_outcome is Some"),
+                crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    crate::conical::plot_model::conical_chart(&outcome.design, us),
+                ),
+                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    crate::conical::scene_model::conical_scene(&outcome.design),
+                    app.orbit,
+                ),
             };
             let toggle: Element<'_, Message> = row![
                 radio(

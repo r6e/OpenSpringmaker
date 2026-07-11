@@ -89,6 +89,35 @@ pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
     (ratio * 250.0).clamp(1.0, 8.0) as u32
 }
 
+/// Helix sampling density shared by every family scene.
+const SAMPLES_PER_TURN: usize = 32;
+
+/// Build the standard one-wire coil scene every helical family shares:
+/// `coil_height_fn` over the solved coil counts (dead end coils flattened to
+/// wire pitch), a [`SAMPLES_PER_TURN`]-per-turn helix with the given radius
+/// profile, and a stroke sized against the scene extent. `max_radius_mm` is
+/// the largest value `radius_at` attains (the closure hides it, so callers
+/// pass it explicitly); extent = max(2·max_radius, total height).
+pub fn scene_from_radius(
+    radius_at: impl Fn(f64) -> f64,
+    max_radius_mm: f64,
+    active: f64,
+    total: f64,
+    pitch_mm: f64,
+    wire_mm: f64,
+) -> SceneData {
+    let height = coil_height_fn(active, total, pitch_mm, wire_mm);
+    let extent = (2.0 * max_radius_mm).max(height(1.0));
+    let points = helix(radius_at, height, total, SAMPLES_PER_TURN);
+    SceneData {
+        polylines: vec![Polyline3 {
+            points,
+            role: SceneRole::Wire,
+            stroke_px: stroke_for(wire_mm, extent),
+        }],
+    }
+}
+
 /// 3D bounding extent: max radial distance from the y axis plus the axial
 /// span. `None` when no finite point exists (degenerate scene — must not
 /// reach the renderer). Coordinates are SIGNED (x/z span ±R); only
