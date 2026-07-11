@@ -1520,3 +1520,42 @@ fn every_family_renders_3d_after_solve() {
         );
     }
 }
+
+/// When a compression design's chart becomes degenerate (rate=0, making
+/// chart_extent None), the 3D scene remains valid (it derives only from
+/// mean_dia, active_coils, total_coils, pitch, wire_dia; not rate). This
+/// test discriminates the Spring3d arm dispatch: if it accidentally calls
+/// chart_element instead of scene_element, we'll see the CHART_PLACEHOLDER
+/// here. A correctly-dispatched Spring3d arm must call scene_element and
+/// render the live 3D scene.
+#[test]
+fn spring3d_arm_dispatches_scene_not_chart() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    // Mutate the rate to 0, making the chart degenerate while the 3D scene
+    // remains valid. If the Spring3d arm calls chart_element by mistake,
+    // the degenerate chart will cause CHART_PLACEHOLDER to appear here.
+    app.outcome.as_mut().unwrap().design.rate = springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "the 3D scene is still valid; Spring3d must dispatch to scene_element, which renders it"
+    );
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER here"
+    );
+}
