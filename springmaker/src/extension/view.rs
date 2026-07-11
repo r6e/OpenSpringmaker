@@ -10,7 +10,7 @@ use iced::{Element, Font, Length};
 use crate::app::{App, Message, C};
 use crate::extension::form::{ExtFormState, Field, HookMode, ALL_EXT_SCENARIOS};
 use crate::extension::view_model::{
-    ext_inputs_view, ext_results_view, ExtLoadTable, ExtResultsView,
+    ext_inputs_view, ext_results_view, ExtLoadTable, ExtPopulatedResults, ExtResultsView,
 };
 use crate::presenter::unit_length_label;
 use crate::widgets::{
@@ -292,28 +292,51 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
     let content: Element<'_, Message> = match ext_results_view(app) {
         ExtResultsView::Error(msg) => results_error(msg),
         ExtResultsView::Empty => results_empty(),
         ExtResultsView::Populated(p) => {
-            let mut col = column![
-                section_heading("Results"),
-                section_divider(),
-                render_governing_rate(&p.governing_rate),
-                section_divider(),
-                rows_section("Geometry", &p.geometry),
-                section_divider(),
-                render_ext_load_table(&p.load_table),
-            ]
-            .spacing(6);
-            if let Some(rows) = &p.min_weight {
-                col = col.push(divided_result_section("Min-weight optimisation", rows));
-            }
-            col.into()
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            let chart = app
+                .ext_outcome
+                .as_ref()
+                .map(|o| {
+                    crate::plot::chart_element(crate::extension::plot_model::extension_chart(
+                        &o.design, us,
+                    ))
+                })
+                .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
+
+            render_populated(&p, chart)
         }
     };
 
     container(panel_container(content))
         .width(Length::FillPortion(1))
         .into()
+}
+
+/// Assemble the populated results column from the presenter data plus the chart.
+fn render_populated<'a>(
+    p: &ExtPopulatedResults,
+    chart: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let mut col = column![
+        section_heading("Results"),
+        section_divider(),
+        render_governing_rate(&p.governing_rate),
+        section_divider(),
+        rows_section("Geometry", &p.geometry),
+        section_divider(),
+        render_ext_load_table(&p.load_table),
+        section_divider(),
+        chart,
+    ]
+    .spacing(6);
+    if let Some(rows) = &p.min_weight {
+        col = col.push(divided_result_section("Min-weight optimisation", rows));
+    }
+    col.into()
 }

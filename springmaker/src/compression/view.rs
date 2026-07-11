@@ -9,7 +9,8 @@ use iced::{Element, Font, Length};
 use crate::app::{App, Message, C};
 use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
-    inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
+    fatigue_chart_data, inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults,
+    ResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES};
 use crate::presenter::{FieldDescriptor, LoadTable};
@@ -277,10 +278,23 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let chart = app
                 .outcome
                 .as_ref()
-                .map(|o| crate::plot::results_chart(&o.design, us))
+                .map(|o| {
+                    crate::plot::chart_element(crate::compression::plot_model::compression_chart(
+                        &o.design, us,
+                    ))
+                })
                 .expect("ResultsView::Populated implies app.outcome is Some");
 
-            render_populated(&p, chart)
+            // The presenter decides whether a fatigue chart exists (it stays
+            // hidden with the fatigue rows on min-weight runs); the view only
+            // renders the data it hands back.
+            let fatigue_chart = app
+                .outcome
+                .as_ref()
+                .and_then(|o| fatigue_chart_data(o, us))
+                .map(crate::plot::chart_element);
+
+            render_populated(&p, chart, fatigue_chart)
         }
     };
 
@@ -290,8 +304,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Assemble the populated results column from the presenter data plus the chart.
-fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> Element<'a, Message> {
-    column![
+fn render_populated<'a>(
+    p: &PopulatedResults,
+    chart: Element<'a, Message>,
+    fatigue_chart: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut col = column![
         section_heading("Results"),
         section_divider(),
         render_governing_rate(&p.governing_rate),
@@ -299,11 +317,17 @@ fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> El
         rows_section("Geometry", &p.geometry),
         section_divider(),
         render_load_table(&p.load_table),
-        render_fatigue(&p.fatigue),
-        render_min_weight(&p.min_weight),
         section_divider(),
         chart,
+        render_fatigue(&p.fatigue),
     ]
-    .spacing(6)
-    .into()
+    .spacing(6);
+
+    if let Some(fc) = fatigue_chart {
+        col = col.push(fc);
+    }
+
+    col = col.push(render_min_weight(&p.min_weight));
+
+    col.into()
 }

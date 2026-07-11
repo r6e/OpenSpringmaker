@@ -193,6 +193,20 @@ fn fatigue_view(out: &FormOutcome, us: UnitSystem) -> FatigueView {
     }
 }
 
+/// Goodman chart for the fatigue section — emitted exactly when the fatigue
+/// rows are ([`FatigueView::Computed`]), so it inherits the min-weight Hidden
+/// gate and the NoData/Skipped note gates from [`fatigue_view`]. A min-weight
+/// run computes fatigue too; without this gate the chart would render orphaned
+/// (no heading or rows) above the min-weight results.
+pub fn fatigue_chart_data(out: &FormOutcome, us: UnitSystem) -> Option<crate::plot::ChartData> {
+    match (fatigue_view(out, us), &out.fatigue) {
+        (FatigueView::Computed(_), FatigueStatus::Computed(f)) => {
+            Some(crate::compression::plot_model::goodman_chart(f, us))
+        }
+        _ => None,
+    }
+}
+
 fn min_weight_view(out: &FormOutcome) -> MinWeightView {
     match &out.min_weight {
         Some(mw) => {
@@ -499,6 +513,36 @@ mod tests {
     fn fatigue_hidden_for_min_weight_run() {
         let p = populated(&app_with(min_weight_metric()));
         assert_eq!(p.fatigue, FatigueView::Hidden);
+    }
+
+    #[test]
+    fn fatigue_chart_suppressed_for_min_weight_even_when_computed() {
+        // Regression guard: a min-weight solve with cycle forces
+        // filled yields BOTH `min_weight: Some` and `fatigue: Computed`; the
+        // chart must follow the rows' Hidden gate, not the raw fatigue status,
+        // or it renders orphaned above the min-weight results.
+        let mut form = min_weight_metric();
+        form.fatigue_min = "10".into();
+        form.fatigue_max = "30".into();
+        let app = app_with(form);
+        let out = app.outcome.as_ref().expect("min-weight solve succeeds");
+        assert!(out.min_weight.is_some(), "fixture must be a min-weight run");
+        assert!(
+            matches!(out.fatigue, FatigueStatus::Computed(_)),
+            "fixture must have computed fatigue underneath"
+        );
+        assert!(fatigue_chart_data(out, UnitSystem::Metric).is_none());
+        // The rows agree: presenter hides the whole fatigue section.
+        assert_eq!(populated(&app).fatigue, FatigueView::Hidden);
+    }
+
+    #[test]
+    fn fatigue_chart_present_for_computed_non_min_weight() {
+        let app = app_with(rate_based_metric());
+        let out = app.outcome.as_ref().expect("solve succeeds");
+        let data = fatigue_chart_data(out, UnitSystem::Metric)
+            .expect("computed fatigue on a normal run yields a chart");
+        assert_eq!(data.lines.len(), 2); // envelope + load line
     }
 
     // ── min-weight section ──

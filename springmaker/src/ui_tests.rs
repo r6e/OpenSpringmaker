@@ -12,6 +12,7 @@ use crate::app::{App, Message, Screen};
 use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
+use crate::plot::CHART_PLACEHOLDER;
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
@@ -1107,4 +1108,193 @@ fn assembly_save_load_round_trip() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ── Chart + fatigue-chart wiring tests ──────────────────────────────────────
+
+/// Compression: drive the same PowerUser design as
+/// `typing_a_valid_power_user_design_renders_results` and confirm the chart
+/// placeholder is absent once the design solves.
+#[test]
+fn compression_chart_renders_after_solve() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    assert!(
+        shows(&app, "Spring rate"),
+        "results must be Populated for the placeholder-absence check to be meaningful"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a solved compression design must render a real chart, not the placeholder"
+    );
+}
+
+/// A solved design mutated post-solve into a degenerate state (zero rate —
+/// the compression presenter suppresses both lines and markers, so
+/// `chart_extent` is `None`) must fall back to the chart placeholder rather
+/// than panic or keep showing a stale chart.
+#[test]
+fn degenerate_design_shows_chart_placeholder() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.outcome.as_mut().unwrap().design.rate = springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    assert!(
+        shows(&app, CHART_PLACEHOLDER),
+        "a degenerate post-solve design must fall back to the chart placeholder"
+    );
+}
+
+/// Extension: drive the same PowerUser design as `ext_solve_flow_renders_results`.
+#[test]
+fn ext_chart_renders_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "10");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+
+    assert!(
+        matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
+        "results must be Populated for the placeholder-absence check to be meaningful"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a solved extension design must render a real chart, not the placeholder"
+    );
+}
+
+/// Torsion: drive the same design as `torsion_family_solves_end_to_end`.
+#[test]
+fn torsion_chart_renders_after_solve() {
+    use crate::torsion::form::Field as TF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+
+    assert!(app.tor_outcome.is_some(), "torsion design must solve");
+    assert!(
+        shows(&app, "Geometry"),
+        "results must be Populated for the placeholder-absence check to be meaningful"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a solved torsion design must render a real chart, not the placeholder"
+    );
+}
+
+/// Conical: drive the same design as `conical_e2e_solve_renders_results_and_footer`.
+#[test]
+fn conical_chart_renders_after_solve() {
+    use crate::conical::form::Field as CF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+
+    type_into_con(&mut app, CF::WireDia, "2");
+    type_into_con(&mut app, CF::LargeMeanDia, "20");
+    type_into_con(&mut app, CF::SmallMeanDia, "12");
+    type_into_con(&mut app, CF::Active, "10");
+    type_into_con(&mut app, CF::FreeLength, "60");
+    type_into_con(&mut app, CF::Loads, "10, 25");
+
+    assert!(app.con_outcome.is_some(), "solve must succeed");
+    assert!(
+        shows(&app, "Geometry"),
+        "results must be Populated for the placeholder-absence check to be meaningful"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a solved conical design must render a real chart, not the placeholder"
+    );
+}
+
+/// Assembly: drive the same two-member design as
+/// `assembly_e2e_dynamic_members_and_results`.
+#[test]
+fn assembly_chart_renders_after_solve() {
+    use crate::assembly::form::MemberField as F;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+
+    type_into_asm_member(&mut app, 0, F::WireDia, "2");
+    type_into_asm_member(&mut app, 0, F::MeanDia, "20");
+    type_into_asm_member(&mut app, 0, F::Active, "10");
+    type_into_asm_member(&mut app, 0, F::FreeLength, "60");
+    app.update(Message::AsmMemberAdd);
+    type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
+    type_into_asm_member(&mut app, 1, F::MeanDia, "16");
+    type_into_asm_member(&mut app, 1, F::Active, "8");
+    type_into_asm_member(&mut app, 1, F::FreeLength, "60");
+    app.update(Message::AsmLoads("10, 25".into()));
+
+    assert!(app.asm_outcome.is_some(), "two-member assembly must solve");
+    assert!(
+        shows(&app, "Summary"),
+        "results must be Populated for the placeholder-absence check to be meaningful"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a solved assembly design must render a real chart, not the placeholder"
+    );
+}
+
+/// Simulator-level pin for the compression fatigue chart's Computed gate
+/// (the presenter decides the polarity; this pins that the Simulator's
+/// wiring reacts to it): solving without cycle forces must show the Skipped
+/// note; filling the cycle-force fields and re-solving must both compute the
+/// fatigue rows (not fall through to NoData for the wrong reason) and clear
+/// the note.
+#[test]
+fn fatigue_chart_only_when_computed() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    assert!(
+        shows(&app, "Enter min and max cycle forces to compute fatigue."),
+        "the Skipped note must show before cycle forces are entered"
+    );
+
+    // Default material is Music Wire, which has cited endurance data — filling
+    // the cycle forces must reach Computed, not NoData (which would also clear
+    // the Skipped note, masking a broken gate).
+    type_into(&mut app, Field::FatigueMin, "10");
+    type_into(&mut app, Field::FatigueMax, "30");
+
+    assert!(
+        shows(&app, "Goodman FOS"),
+        "cycle forces must produce a Computed fatigue result, not NoData"
+    );
+    assert!(
+        !shows(&app, "Enter min and max cycle forces to compute fatigue."),
+        "the Skipped note must be gone once fatigue is Computed"
+    );
 }

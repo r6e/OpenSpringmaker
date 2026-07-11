@@ -62,6 +62,24 @@ fn tor_fatigue_view(out: &TorFormOutcome, us: springcore::UnitSystem) -> TorFati
     }
 }
 
+/// Gerber chart for the fatigue section — emitted exactly when the fatigue
+/// rows are ([`TorFatigueView::Computed`]), so it inherits the min-weight
+/// Hidden gate and the NoData/Skipped note gates from [`tor_fatigue_view`]
+/// (compression's `fatigue_chart_data` parity). A min-weight run computes
+/// fatigue too; without this gate the chart would render orphaned (no heading
+/// or rows).
+pub(crate) fn tor_fatigue_chart_data(
+    out: &TorFormOutcome,
+    us: springcore::UnitSystem,
+) -> Option<crate::plot::ChartData> {
+    match (tor_fatigue_view(out, us), &out.fatigue) {
+        (TorFatigueView::Computed(_), TorFatigueStatus::Computed(f)) => {
+            Some(crate::torsion::plot_model::gerber_chart(f, us))
+        }
+        _ => None,
+    }
+}
+
 // ── Torsion load-point table ─────────────────────────────────────────────────
 
 /// One row of the torsion load-points table, all fields pre-formatted.
@@ -1063,6 +1081,38 @@ mod tests {
         // MinWeight solves suppress the fatigue section entirely.
         let p = tor_populated(&app_with_tor(min_weight_form_fixture()));
         assert_eq!(p.fatigue, TorFatigueView::Hidden);
+    }
+
+    #[test]
+    fn tor_fatigue_chart_suppressed_when_hidden() {
+        // Regression twin of compression's min-weight orphan: a min-weight
+        // solve with cycle moments filled yields BOTH `min_weight: Some` and
+        // `fatigue: Computed`; the chart must follow the rows' Hidden gate,
+        // not the raw fatigue status.
+        let form = TorFormState {
+            fatigue_min: "100".into(),
+            fatigue_max: "500".into(),
+            ..min_weight_form_fixture()
+        };
+        let app = app_with_tor(form);
+        let out = app.tor_outcome.as_ref().expect("min-weight solve succeeds");
+        assert!(out.min_weight.is_some(), "fixture must be a min-weight run");
+        assert!(
+            matches!(out.fatigue, TorFatigueStatus::Computed(_)),
+            "fixture must have computed fatigue underneath"
+        );
+        assert!(tor_fatigue_chart_data(out, UnitSystem::Metric).is_none());
+        // The rows agree: presenter hides the whole fatigue section.
+        assert_eq!(tor_populated(&app).fatigue, TorFatigueView::Hidden);
+    }
+
+    #[test]
+    fn tor_fatigue_chart_present_for_computed() {
+        let app = app_with_tor_fatigue("100", "500");
+        let out = app.tor_outcome.as_ref().expect("solve succeeds");
+        let data = tor_fatigue_chart_data(out, UnitSystem::Metric)
+            .expect("computed fatigue on a normal run yields a chart");
+        assert_eq!(data.lines.len(), 2); // envelope + load line
     }
 
     #[test]

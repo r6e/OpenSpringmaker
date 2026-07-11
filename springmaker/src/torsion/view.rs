@@ -12,8 +12,8 @@ use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{
-    tor_fatigue_inputs_view, tor_inputs_view, tor_results_view, TorFatigueView, TorLoadTable,
-    TorResultsView,
+    tor_fatigue_chart_data, tor_fatigue_inputs_view, tor_inputs_view, tor_results_view,
+    TorFatigueView, TorLoadTable, TorResultsView,
 };
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
@@ -281,10 +281,32 @@ fn render_tor_load_table(lt: &TorLoadTable) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
     let content: Element<'_, Message> = match tor_results_view(app) {
         TorResultsView::Error(msg) => results_error(msg),
         TorResultsView::Empty => results_empty(),
         TorResultsView::Populated(p) => {
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            let chart = app
+                .tor_outcome
+                .as_ref()
+                .map(|o| {
+                    crate::plot::chart_element(crate::torsion::plot_model::torsion_chart(
+                        &o.design, us,
+                    ))
+                })
+                .expect("TorResultsView::Populated implies app.tor_outcome is Some");
+
+            // The presenter decides whether a fatigue chart exists (it stays
+            // hidden with the fatigue rows on min-weight runs); the view only
+            // renders the data it hands back.
+            let fatigue_chart = app
+                .tor_outcome
+                .as_ref()
+                .and_then(|o| tor_fatigue_chart_data(o, us))
+                .map(crate::plot::chart_element);
+
             // Angular rate section — two ResultRows (per-degree and per-revolution).
             let mut rate_col = column![section_heading("Angular rate")].spacing(6);
             rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
@@ -298,6 +320,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 rows_section("Geometry", &p.geometry),
                 section_divider(),
                 render_tor_load_table(&p.load_table),
+                section_divider(),
+                chart,
             ]
             .spacing(6);
 
@@ -316,6 +340,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                             .spacing(8),
                     );
                 }
+            }
+            // Directly beneath the fatigue rows; None whenever they are not
+            // Computed (the presenter gates both together).
+            if let Some(fc) = fatigue_chart {
+                col = col.push(fc);
             }
 
             col.into()
