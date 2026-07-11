@@ -20,13 +20,15 @@ through the shared system, and a Light/Dark/System theme.
      palette-struct pre-staging.
    - **PR 2 `feat/gui-light-theme`** — the theme system on top of the
      cleaned-up surface. PR 2 must not need to touch the five family views.
-3. **Theme architecture (Approach A):** `Palette` struct + theme-keyed
-   lookup. Style closures already receive `&Theme`, so `Palette::of(&Theme)`
-   costs zero signature changes; views and the two bitmap renderers get the
-   resolved palette from `App` (`app.pal()`). Explicit threading everywhere
-   (B) and iced stock themes (C) were declined — B churns every `.style()`
-   call site for no behavioral gain; C abandons the engineering-instrument
-   identity.
+3. **Theme architecture:** `Palette` struct resolved once per view build via
+   `app.pal()`; style fns are palette-parameterized closure factories (the
+   pre-existing `correction_option_style(selected)` precedent). The
+   brainstorm's original "Approach A" framing (`Palette::of(&Theme)`
+   theme-keyed lookup) was superseded during PR 1 implementation: views
+   re-run on every theme change, so build-time resolution is equally correct
+   and the factory precedent already existed in-tree — see §Resolution.
+   iced stock themes (Approach C) remain declined: they abandon the
+   engineering-instrument identity.
 
 ## PR 1 — Visual refresh
 
