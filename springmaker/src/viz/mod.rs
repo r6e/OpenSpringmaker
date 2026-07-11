@@ -57,18 +57,19 @@ const MAX_RENDER_TURNS: f64 = 2_000.0;
 /// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
 /// + 1` points (inclusive endpoint).
 ///
-/// Hostile `turns` (non-finite, or beyond [`MAX_RENDER_TURNS`]) returns an
-/// empty `Vec` instead of sampling, so the existing degenerate-scene
-/// discipline (`scene_extent` returning `None`, the caller showing the
-/// placeholder) fires rather than the allocation overflowing or blowing up
-/// the frame budget.
+/// Hostile `turns` (non-finite, negative, or beyond [`MAX_RENDER_TURNS`])
+/// returns an empty `Vec` instead of sampling, so the existing
+/// degenerate-scene discipline (`scene_extent` returning `None`, the caller
+/// showing the placeholder) fires rather than the allocation overflowing or
+/// blowing up the frame budget. Mirrors `scene_from_radius`'s entry guard so
+/// a direct caller gets the same contract.
 pub fn helix(
     radius_at: impl Fn(f64) -> f64,
     height_at: impl Fn(f64) -> f64,
     turns: f64,
     samples_per_turn: usize,
 ) -> Vec<(f64, f64, f64)> {
-    if !turns.is_finite() || turns > MAX_RENDER_TURNS {
+    if !(0.0..=MAX_RENDER_TURNS).contains(&turns) {
         return Vec::new();
     }
     let n = ((turns * samples_per_turn as f64).ceil() as usize).max(2);
@@ -308,6 +309,11 @@ mod tests {
         // A huge but finite turns count (form validation only checks
         // positive+finite) must also empty out, not allocate ~768MB/frame.
         assert!(helix(|_| 1.0, |_| 1.0, 1e18, 32).is_empty());
+        // Negative turns never panic (the float→usize cast saturates to 0,
+        // yielding a 3-point arc), but a helix with negative turns is
+        // meaningless — treat it as degenerate like scene_from_radius's
+        // entry guard does, so the two guards stay symmetric.
+        assert!(helix(|_| 1.0, |_| 1.0, -5.0, 32).is_empty());
     }
 
     #[test]
