@@ -137,6 +137,17 @@ pub enum MatField {
     MaxTemp,
 }
 
+/// Which visual occupies the results panel's shared slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VisualMode {
+    #[default]
+    Chart,
+    /// Not yet constructed by any live view (Tasks 4-6 add the results-panel
+    /// toggle); dead in the bin target until then.
+    #[allow(dead_code)] // consumed from Tasks 4-6; remove this allow then
+    Spring3d,
+}
+
 /// All UI events.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -174,6 +185,14 @@ pub enum Message {
     AsmMemberEndType(usize, String),
     AsmMemberAdd,
     AsmMemberRemove(usize),
+    // Results panel — 3D visualization (shared across families; orbit and
+    // visual-mode choice persist across family tabs, unlike per-family form
+    // state). Not yet dispatched by any live view (Tasks 4-6 wire the orbit
+    // canvas and visual toggle in); dead in the bin target until then.
+    #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
+    Orbit(crate::viz::Orbit),
+    #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
+    Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -231,6 +250,11 @@ pub struct App {
     /// or load is surfaced (in the status panel) without wiping the design the
     /// user is looking at. Cleared on the next save/load attempt and on recompute.
     pub action_error: Option<String>,
+    /// Committed 3D orbit angles for the results panel's `Spring3d` visual.
+    /// Shared across families so the orientation follows the user.
+    pub orbit: crate::viz::Orbit,
+    /// Which visual (chart or 3D) occupies the results panel's shared slot.
+    pub results_visual: VisualMode,
     // Screen routing
     pub screen: Screen,
     // Materials editor
@@ -278,6 +302,8 @@ impl App {
             outcome: None,
             error: None,
             action_error: None,
+            orbit: crate::viz::Orbit::default(),
+            results_visual: VisualMode::default(),
             screen: Screen::Calculator,
             mat_form: MaterialsFormState::default(),
             editing: None,
@@ -616,6 +642,18 @@ impl App {
             }
             // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+
+            // ── Results panel: 3D visualization ────────────────────────────
+            // Orbiting and switching visuals touch neither the solved outcome
+            // nor `action_error` — same non-recompute shape as `Message::Save`.
+            Message::Orbit(o) => {
+                self.orbit = o;
+                false
+            }
+            Message::Visual(v) => {
+                self.results_visual = v;
+                false
+            }
 
             // ── Settings ────────────────────────────────────────────────────
             Message::SetCorrection(c) => {
@@ -1137,6 +1175,28 @@ mod tests {
         assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
         // No save attempted → no error surfaced.
         assert!(app.settings_error.is_none());
+    }
+
+    #[test]
+    fn orbit_message_updates_angles_without_recompute() {
+        let mut app = test_app();
+        // Seed an action error; a non-recompute message must not clear it.
+        app.action_error = Some("sentinel".into());
+        let target = crate::viz::Orbit {
+            yaw: 1.2,
+            pitch: 0.4,
+        };
+        app.update(Message::Orbit(target));
+        assert_eq!(app.orbit, target);
+        assert_eq!(app.action_error.as_deref(), Some("sentinel"));
+    }
+
+    #[test]
+    fn visual_mode_message_toggles_and_defaults_to_chart() {
+        let mut app = test_app();
+        assert_eq!(app.results_visual, VisualMode::Chart);
+        app.update(Message::Visual(VisualMode::Spring3d));
+        assert_eq!(app.results_visual, VisualMode::Spring3d);
     }
 
     #[test]

@@ -7,7 +7,6 @@ use crate::app::C;
 use crate::plot::{ensure_font, to_rgb, CHART_H, CHART_W};
 use plotters::prelude::*;
 
-#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 fn role_color(role: SceneRole) -> RGBColor {
     match role {
         SceneRole::Wire => to_rgb(C::ACCENT),
@@ -18,7 +17,6 @@ fn role_color(role: SceneRole) -> RGBColor {
 
 /// Render the scene under the given orbit. `None` iff the scene has no
 /// finite extent (degenerate — the caller shows the placeholder).
-#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
     let extent = scene_extent(scene)?;
     let r = extent.radial * 1.15;

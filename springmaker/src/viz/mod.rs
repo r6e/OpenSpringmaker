@@ -10,7 +10,12 @@
 
 use std::f64::consts::TAU;
 
+pub mod canvas3d;
 pub mod render3d;
+
+// Not yet called from a live view (Tasks 4-6 wire it into the results panel).
+#[allow(unused_imports)] // consumed from Tasks 4-6; remove this allow then
+pub use canvas3d::scene_element;
 
 /// Stroke/color role of one polyline (mapped to palette tokens in the
 /// renderer only). `Detail` = hooks and legs.
@@ -74,10 +79,16 @@ pub fn coil_height_fn(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> i
 }
 
 /// Wire-diameter → stroke width: proportional to the wire's share of the
-/// scene's largest dimension, clamped to a legible pixel range.
+/// scene's largest dimension, clamped to a legible pixel range. A non-finite
+/// ratio (zero or non-finite `extent_mm`) floors to 1 rather than propagating
+/// NaN/inf through `as u32` (which would silently truncate to 0).
 #[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
-    ((wire_mm / extent_mm) * 250.0).clamp(1.0, 8.0) as u32
+    let ratio = wire_mm / extent_mm;
+    if !ratio.is_finite() {
+        return 1;
+    }
+    (ratio * 250.0).clamp(1.0, 8.0) as u32
 }
 
 /// 3D bounding extent: max radial distance from the y axis plus the axial
@@ -130,13 +141,29 @@ impl Default for Orbit {
 }
 
 /// Drag sensitivity in radians per pixel.
+#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 const ORBIT_SENSITIVITY: f32 = 0.01;
 /// Pitch clamp — stops short of the poles so the projection never flips.
+#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 const PITCH_LIMIT: f32 = 1.4;
 
 /// Apply a drag delta: yaw wraps into (-π, π], pitch clamps to ±`PITCH_LIMIT`.
-#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
+/// A non-finite delta (NaN/inf, e.g. a degenerate cursor-position subtraction)
+/// leaves `current` unchanged rather than poisoning the committed orbit with
+/// NaN, which would propagate forever (NaN + x = NaN on every future drag).
+//
+// Still dead in the bin target: `OrbitCanvas::update` (canvas3d.rs) is the
+// only non-test caller, and trait-impl methods are exempt from the dead-code
+// *report* but don't themselves count as reachability roots — since
+// `OrbitCanvas` is never constructed until Tasks 4-6 wire `scene_element`
+// into a live view, `update`'s body (and therefore this call) stays
+// unreached in that build. Verified empirically via `cargo clippy -p
+// springmaker -- -D warnings` (no `--all-targets`).
+#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
+    if !dx.is_finite() || !dy.is_finite() {
+        return current;
+    }
     use std::f32::consts::{PI, TAU};
     let mut yaw = current.yaw + dx * ORBIT_SENSITIVITY;
     yaw = yaw.rem_euclid(TAU);
@@ -199,6 +226,17 @@ mod tests {
         assert_eq!(stroke_for(2.0, 50.0), 8); // (2/50)*250 = 10 → clamped to 8
         assert_eq!(stroke_for(0.1, 500.0), 1); // 0.05 → clamped to 1
         assert_eq!(stroke_for(1.0, 50.0), 5); // exactly 5, unclamped
+    }
+
+    #[test]
+    fn stroke_for_zero_or_non_finite_extent_floors_to_one() {
+        // Zero extent: ratio is +inf (not NaN, since wire_mm > 0), but is still
+        // non-finite and must floor to 1 rather than clamp to the top of the range.
+        assert_eq!(stroke_for(2.0, 0.0), 1);
+        // A NaN extent propagates NaN through the ratio; `NaN.clamp(1.0, 8.0)` is
+        // a no-op (NaN compares false to both bounds), and `NaN as u32` truncates
+        // to 0 — silently violating the documented [1, 8] range.
+        assert_eq!(stroke_for(2.0, f64::NAN), 1);
     }
 
     #[test]
@@ -268,5 +306,17 @@ mod tests {
             3.24 - std::f32::consts::TAU,
             max_relative = 1e-4
         );
+    }
+
+    #[test]
+    fn orbit_step_ignores_non_finite_deltas() {
+        let current = Orbit {
+            yaw: 0.3,
+            pitch: -0.2,
+        };
+        assert_eq!(orbit_step(current, f32::NAN, 1.0), current);
+        assert_eq!(orbit_step(current, 1.0, f32::NAN), current);
+        assert_eq!(orbit_step(current, f32::INFINITY, 0.0), current);
+        assert_eq!(orbit_step(current, 0.0, f32::INFINITY), current);
     }
 }
