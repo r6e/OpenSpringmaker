@@ -16,7 +16,7 @@ use crate::presenter::unit_length_label;
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    SZ_CAPTION, SZ_LABEL,
+    visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -317,24 +317,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     app.orbit,
                 ),
             };
-            let toggle: Element<'_, Message> = row![
-                radio(
-                    "Chart",
-                    crate::app::VisualMode::Chart,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-                radio(
-                    "3D",
-                    crate::app::VisualMode::Spring3d,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-            ]
-            .spacing(12)
-            .into();
+            let toggle = visual_toggle(app.results_visual);
 
             render_populated(&p, toggle, visual)
         }

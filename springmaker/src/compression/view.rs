@@ -3,7 +3,7 @@
 //! All business logic lives in `form` and `springcore`. This module only
 //! assembles iced widgets from the current [`App`] state.
 
-use iced::widget::{column, container, radio, row, text};
+use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
@@ -17,7 +17,7 @@ use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    SZ_CAPTION, SZ_LABEL,
+    visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -273,22 +273,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ResultsView::Error(msg) => results_error(msg),
         ResultsView::Empty => results_empty(),
         ResultsView::Populated(p) => {
-            // The presenter decides whether a fatigue chart exists (it stays
-            // hidden with the fatigue rows on min-weight runs); the view only
-            // renders the data it hands back.
-            let fatigue_chart = app
-                .outcome
-                .as_ref()
-                .and_then(|o| fatigue_chart_data(o, us))
-                .map(crate::plot::chart_element);
-
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
             // rendering of the design (no decision), built from the outcome
             // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one bitmap is rasterized per render
-            // (orbit drags re-render every frame; an eagerly-built chart
-            // would be thrown away each time).
+            // its own arm, so exactly one load-deflection bitmap is
+            // rasterized per render (orbit drags re-render every frame; an
+            // eagerly-built chart would be thrown away each time).
             let outcome = app
                 .outcome
                 .as_ref()
@@ -302,24 +293,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     app.orbit,
                 ),
             };
-            let toggle: Element<'_, Message> = row![
-                radio(
-                    "Chart",
-                    crate::app::VisualMode::Chart,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-                radio(
-                    "3D",
-                    crate::app::VisualMode::Spring3d,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-            ]
-            .spacing(12)
-            .into();
+            let toggle = visual_toggle(app.results_visual);
+
+            // The presenter decides whether a fatigue chart exists (it stays
+            // hidden with the fatigue rows on min-weight runs); the view only
+            // renders the data it hands back. Reuses the `outcome` binding
+            // above rather than re-deriving it from `app.outcome`.
+            let fatigue_chart = fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
 
             render_populated(&p, toggle, visual, fatigue_chart)
         }

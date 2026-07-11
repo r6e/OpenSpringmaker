@@ -1,6 +1,6 @@
 //! Assembly humble view (ADR 0008): renders presenter output, no logic.
 
-use iced::widget::{button, column, container, radio, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
@@ -14,7 +14,7 @@ use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, panel_container, render_governing_rate, render_result_row,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    SZ_CAPTION, SZ_LABEL,
+    visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -108,24 +108,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     app.orbit,
                 ),
             };
-            let toggle: Element<'_, Message> = row![
-                radio(
-                    "Chart",
-                    crate::app::VisualMode::Chart,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-                radio(
-                    "3D",
-                    crate::app::VisualMode::Spring3d,
-                    Some(app.results_visual),
-                    Message::Visual
-                )
-                .text_size(SZ_LABEL),
-            ]
-            .spacing(12)
-            .into();
+            let toggle = visual_toggle(app.results_visual);
 
             render_populated(&p, toggle, visual)
         }
