@@ -98,8 +98,9 @@ pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design 
 /// Build the 3D element: orbitable canvas, or the placeholder for a
 /// degenerate scene.
 ///
-/// Called from the compression and conical results panels (Task 4); the
-/// remaining families wire in during Tasks 5-6. This body is what keeps
+/// Called from every family's results panel: compression and conical
+/// (Task 4), extension and torsion (Task 5), assembly (Task 6). This body is
+/// what keeps
 /// `render_scene`, `OrbitCanvas`, `SCENE_PLACEHOLDER` (and, via the trait
 /// impl, `orbit_step`) alive in the bin target.
 pub fn scene_element(scene: SceneData, orbit: Orbit) -> Element<'static, Message> {

@@ -3,5 +3,6 @@
 
 pub mod form;
 pub mod plot_model;
+pub mod scene_model;
 pub mod view;
 pub mod view_model;

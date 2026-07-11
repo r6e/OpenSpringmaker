@@ -186,8 +186,8 @@ pub enum Message {
     // visual-mode choice persist across family tabs, unlike per-family form
     // state). `Orbit` is published by `OrbitCanvas::update` (a trait-impl
     // body, which counts as a dead-code use-site); `Visual` is constructed by
-    // the compression/conical toggle radios (Task 4) — the remaining
-    // families' toggles land in Tasks 5-6.
+    // every family's chart/3D toggle radios (compression/conical in Task 4,
+    // extension/torsion in Task 5, assembly in Task 6).
     Orbit(crate::viz::Orbit),
     Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
