@@ -126,11 +126,12 @@ the hero readout.
 
 ### Resolution
 
-Two named themes ("OpenSpringmaker Dark" / "OpenSpringmaker Light") built so
-`theme.mode()` is truthful; `Palette::of(&Theme)` keys off the mode inside
-style closures (zero signature changes). Views and both bitmap renderers
-read `app.pal()`; `render_chart` / `render_scene` already take `&Palette`
-(pre-staged in PR 1) — presenters stay pure data.
+Style fns are palette-parameterized closure factories (the
+`correction_option_style` precedent); views resolve `app.pal()` once per
+build — theme switches re-run `view()`, so no `&Theme` lookup is needed.
+Views and both bitmap renderers read `app.pal()`; `render_chart` /
+`render_scene` already take `&Palette` (pre-staged in PR 1) — presenters
+stay pure data.
 
 ### Settings toggle + system tracking
 

@@ -6,7 +6,8 @@
 
 use super::mapping::{letterbox, ChartMapping, Letterbox};
 use super::{hover_readout, ChartData, CHART_H, CHART_W};
-use crate::app::{Message, C};
+// Task 2 threads &Palette here
+use crate::app::{Message, DARK};
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
@@ -64,7 +65,7 @@ impl canvas::Program<Message> for ChartCanvas {
 impl ChartCanvas {
     fn draw_overlay(&self, frame: &mut Frame, lb: &Letterbox, bx: f32, by: f32) {
         let (x0, y0, x1, y1) = ChartMapping::plot_rect();
-        let stroke = Stroke::default().with_color(C::MUTED).with_width(1.0);
+        let stroke = Stroke::default().with_color(DARK.muted).with_width(1.0);
         // Crosshair clipped to the plot rect, in widget coordinates.
         let (cx, cy) = lb.bitmap_to_widget(bx, by);
         let (lx0, ly0) = lb.bitmap_to_widget(x0, y0);
@@ -88,11 +89,11 @@ impl ChartCanvas {
         let box_h = 20.0;
         let tx = if flip_x { cx - 10.0 - box_w } else { cx + 10.0 };
         let ty = if flip_y { cy + 10.0 } else { cy - 10.0 - box_h };
-        frame.fill_rectangle(Point::new(tx, ty), Size::new(box_w, box_h), C::RAISED);
+        frame.fill_rectangle(Point::new(tx, ty), Size::new(box_w, box_h), DARK.raised);
         frame.fill_text(Text {
             content,
             position: Point::new(tx + 4.0, ty + 3.0),
-            color: C::TEXT,
+            color: DARK.text,
             size: 13.0.into(),
             ..Text::default()
         });

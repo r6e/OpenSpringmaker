@@ -5,7 +5,7 @@
 use iced::widget::{column, container, text};
 use iced::{Element, Length};
 
-use crate::app::{App, Message, C};
+use crate::app::{App, Message, Palette};
 use crate::conical::form::Field;
 use crate::conical::view_model::{
     con_inputs_view, con_results_view, ConPopulatedResults, ConResultsView, CON_LINEAR_MODEL_NOTE,
@@ -27,14 +27,15 @@ use iced::Font;
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     use crate::picker::KeyLabel;
 
+    let pal = app.pal();
     let selected_end = find_by_key(END_TYPES, &app.conical.end_type).copied();
 
     let setup_group = column![
-        section_heading("Setup"),
+        section_heading(pal, "Setup"),
         material_picker(app),
         column![
-            field_label("End type"),
-            styled_pick_list(END_TYPES, selected_end, |kl: KeyLabel| {
+            field_label(pal, "End type"),
+            styled_pick_list(pal, END_TYPES, selected_end, |kl: KeyLabel| {
                 Message::ConEndType(kl.key.to_string())
             }),
         ]
@@ -43,10 +44,11 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     .spacing(10);
 
     let inputs = con_inputs_view(app);
-    let mut inputs_col = column![section_heading("Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(12);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
+            pal,
             &fd.label,
             con_field_value(&app.conical, field),
             con_field_id(field),
@@ -54,9 +56,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         ));
     }
 
-    let inner = column![setup_group, section_divider(), inputs_col].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_col].spacing(16);
 
-    container(panel_container(inner))
+    container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -90,10 +92,11 @@ pub(crate) fn con_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let us = app.unit_system;
     let content: Element<'_, Message> = match con_results_view(app) {
-        ConResultsView::Error(msg) => results_error(msg),
-        ConResultsView::Empty => results_empty(),
+        ConResultsView::Error(msg) => results_error(pal, msg),
+        ConResultsView::Empty => results_empty(pal),
         ConResultsView::Populated(p) => {
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
@@ -115,13 +118,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     app.orbit,
                 ),
             };
-            let toggle = visual_toggle(app.results_visual);
+            let toggle = visual_toggle(pal, app.results_visual);
 
-            render_populated(&p, toggle, visual)
+            render_populated(pal, &p, toggle, visual)
         }
     };
 
-    container(panel_container(content))
+    container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -131,56 +134,57 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 /// calculator's shared status panel (as siblings do — see
 /// `calculator::status_panel`).
 fn render_populated<'a>(
+    pal: &'static Palette,
     p: &ConPopulatedResults,
     toggle: Element<'a, Message>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     column![
-        section_heading("Results"),
-        section_divider(),
-        render_governing_rate(&p.governing_rate),
-        section_divider(),
-        rows_section("Geometry", &p.geometry),
-        section_divider(),
-        render_con_load_table(&p.load_table),
-        section_divider(),
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Spring rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_con_load_table(pal, &p.load_table),
+        section_divider(pal),
         toggle,
         visual,
-        render_linear_model_footer(),
+        render_linear_model_footer(pal),
     ]
     .spacing(6)
     .into()
 }
 
 /// The load-point table. Mirrors compression's `render_load_table` exactly.
-fn render_con_load_table(lt: &LoadTable) -> Element<'static, Message> {
-    let mut load_col = column![section_heading("Load points")].spacing(4);
+fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
+    let mut load_col = column![section_heading(pal, "Load points")].spacing(4);
 
     load_col = load_col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::Fixed(24.0)),
             text("Force")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Deflection")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Length")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Stress ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("%MTS")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(4),
@@ -191,32 +195,32 @@ fn render_con_load_table(lt: &LoadTable) -> Element<'static, Message> {
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::Fixed(24.0)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.deflection.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.length.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(4);
@@ -228,10 +232,10 @@ fn render_con_load_table(lt: &LoadTable) -> Element<'static, Message> {
 
 /// The always-present linear-model disclosure footer.
 /// Mirrors compression's `render_fatigue` Note arm idiom exactly.
-fn render_linear_model_footer() -> Element<'static, Message> {
+fn render_linear_model_footer(pal: &'static Palette) -> Element<'static, Message> {
     column![
-        section_divider(),
-        text(CON_LINEAR_MODEL_NOTE).size(SZ_LABEL).color(C::MUTED),
+        section_divider(pal),
+        text(CON_LINEAR_MODEL_NOTE).size(SZ_LABEL).color(pal.muted),
     ]
     .spacing(8)
     .into()

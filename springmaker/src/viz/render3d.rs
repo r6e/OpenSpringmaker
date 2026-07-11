@@ -3,15 +3,16 @@
 //! deliberately suppressed — the scene reads as a clean engineering sketch.
 
 use super::{finite3, scene_extent, Orbit, SceneData, SceneExtent, SceneRole};
-use crate::app::C;
+// Task 2 threads &Palette here
+use crate::app::DARK;
 use crate::plot::{ensure_font, rgb_to_rgba, to_rgb, CHART_H, CHART_W};
 use plotters::prelude::*;
 
 fn role_color(role: SceneRole) -> RGBColor {
     match role {
-        SceneRole::Wire => to_rgb(C::ACCENT),
-        SceneRole::Member => to_rgb(C::MUTED),
-        SceneRole::Detail => to_rgb(C::WARN),
+        SceneRole::Wire => to_rgb(DARK.accent),
+        SceneRole::Member => to_rgb(DARK.muted),
+        SceneRole::Detail => to_rgb(DARK.warn),
     }
 }
 
@@ -59,7 +60,8 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut rgb, (CHART_W, CHART_H)).into_drawing_area();
-        root.fill(&to_rgb(C::PANEL)).expect("fill scene background");
+        root.fill(&to_rgb(DARK.panel))
+            .expect("fill scene background");
         let mut chart = ChartBuilder::on(&root)
             .margin(8)
             .build_cartesian_3d(x_lo..x_hi, y_lo..y_hi, x_lo..x_hi)
@@ -115,7 +117,7 @@ mod tests {
         let pixels = render_scene(&test_scene(), Orbit::default()).unwrap();
         assert_eq!(pixels.len(), (CHART_W * CHART_H * 4) as usize);
         assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
-        let bg = to_rgb(crate::app::C::PANEL);
+        let bg = to_rgb(crate::app::DARK.panel);
         assert!(
             pixels
                 .chunks_exact(4)

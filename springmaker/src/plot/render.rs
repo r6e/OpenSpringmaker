@@ -6,15 +6,16 @@ use super::{
     chart_extent, ensure_font, rgb_to_rgba, to_rgb, ChartData, LineRole, MarkerKind, CHART_H,
     CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA,
 };
-use crate::app::C;
+// Task 2 threads &Palette here
+use crate::app::DARK;
 use plotters::prelude::*;
 
 fn line_style(role: LineRole) -> ShapeStyle {
     let (color, width) = match role {
-        LineRole::Primary => (to_rgb(C::ACCENT), 2),
-        LineRole::Member => (to_rgb(C::MUTED), 1),
-        LineRole::Envelope => (to_rgb(C::WARN), 2),
-        LineRole::LoadLine => (to_rgb(C::MUTED), 1),
+        LineRole::Primary => (to_rgb(DARK.accent), 2),
+        LineRole::Member => (to_rgb(DARK.muted), 1),
+        LineRole::Envelope => (to_rgb(DARK.warn), 2),
+        LineRole::LoadLine => (to_rgb(DARK.muted), 1),
     };
     ShapeStyle {
         color: color.to_rgba(),
@@ -25,8 +26,8 @@ fn line_style(role: LineRole) -> ShapeStyle {
 
 fn marker_style(kind: MarkerKind) -> ShapeStyle {
     let color = match kind {
-        MarkerKind::Operating => to_rgb(C::WARN),
-        MarkerKind::Limit => to_rgb(C::DANGER),
+        MarkerKind::Operating => to_rgb(DARK.warn),
+        MarkerKind::Limit => to_rgb(DARK.danger),
     };
     ShapeStyle {
         color: color.to_rgba(),
@@ -49,7 +50,8 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut rgb, (CHART_W, CHART_H)).into_drawing_area();
-        root.fill(&to_rgb(C::PANEL)).expect("fill chart background");
+        root.fill(&to_rgb(DARK.panel))
+            .expect("fill chart background");
         let mut chart = ChartBuilder::on(&root)
             .margin(MARGIN as i32)
             .x_label_area_size(X_LABEL_AREA as i32)
@@ -60,22 +62,22 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         chart
             .configure_mesh()
             .light_line_style(ShapeStyle {
-                color: to_rgb(C::LINE).to_rgba(),
+                color: to_rgb(DARK.line).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
             .bold_line_style(ShapeStyle {
-                color: to_rgb(C::RAISED).to_rgba(),
+                color: to_rgb(DARK.raised).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
             .axis_style(ShapeStyle {
-                color: to_rgb(C::TEXT).to_rgba(),
+                color: to_rgb(DARK.text).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
-            .label_style(("sans-serif", 14).into_font().color(&to_rgb(C::MUTED)))
-            .axis_desc_style(("sans-serif", 15).into_font().color(&to_rgb(C::TEXT)))
+            .label_style(("sans-serif", 14).into_font().color(&to_rgb(DARK.muted)))
+            .axis_desc_style(("sans-serif", 15).into_font().color(&to_rgb(DARK.text)))
             .x_desc(data.x_axis.label)
             .y_desc(data.y_axis.label)
             .draw()
@@ -102,9 +104,9 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         if any_named {
             chart
                 .configure_series_labels()
-                .background_style(to_rgb(C::PANEL).mix(0.9))
-                .border_style(to_rgb(C::LINE))
-                .label_font(("sans-serif", 13).into_font().color(&to_rgb(C::TEXT)))
+                .background_style(to_rgb(DARK.panel).mix(0.9))
+                .border_style(to_rgb(DARK.line))
+                .label_font(("sans-serif", 13).into_font().color(&to_rgb(DARK.text)))
                 .draw()
                 .expect("legend");
         }
@@ -244,7 +246,7 @@ mod tests {
     #[test]
     fn render_chart_rasterizes_labels_in_y_band() {
         let (pixels, _) = render_chart(&simple_data(true)).unwrap();
-        let bg = to_rgb(crate::app::C::PANEL);
+        let bg = to_rgb(crate::app::DARK.panel);
         let differs = |col: u32, row: u32| {
             let i = ((row * CHART_W + col) * 4) as usize;
             pixels[i] != bg.0 || pixels[i + 1] != bg.1 || pixels[i + 2] != bg.2

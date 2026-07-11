@@ -6,7 +6,7 @@
 use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
-use crate::app::{App, Message, C};
+use crate::app::{App, Message, Palette};
 use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
     fatigue_chart_data, inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults,
@@ -60,6 +60,7 @@ pub(crate) fn calc_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let selected_end = find_by_key(END_TYPES, &app.form.end_type).copied();
     let selected_fix = find_by_key(FIXITIES, &app.form.fixity).copied();
 
@@ -67,8 +68,13 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let setup_col_a = column![
         crate::widgets::material_picker(app),
         column![
-            field_label("Scenario"),
-            styled_pick_list(ALL_SCENARIOS, Some(app.form.scenario), Message::Scenario),
+            field_label(pal, "Scenario"),
+            styled_pick_list(
+                pal,
+                ALL_SCENARIOS,
+                Some(app.form.scenario),
+                Message::Scenario
+            ),
         ]
         .spacing(4),
     ]
@@ -77,15 +83,15 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
 
     let setup_col_b = column![
         column![
-            field_label("End type"),
-            styled_pick_list(END_TYPES, selected_end, |kl: KeyLabel| {
+            field_label(pal, "End type"),
+            styled_pick_list(pal, END_TYPES, selected_end, |kl: KeyLabel| {
                 Message::EndType(kl.key.to_string())
             }),
         ]
         .spacing(4),
         column![
-            field_label("Fixity"),
-            styled_pick_list(FIXITIES, selected_fix, |kl: KeyLabel| {
+            field_label(pal, "Fixity"),
+            styled_pick_list(pal, FIXITIES, selected_fix, |kl: KeyLabel| {
                 Message::Fixity(kl.key.to_string())
             }),
         ]
@@ -96,32 +102,33 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
 
     let setup_row = row![setup_col_a, setup_col_b].spacing(12);
 
-    let setup_group = column![section_heading("Setup"), setup_row,].spacing(10);
+    let setup_group = column![section_heading(pal, "Setup"), setup_row,].spacing(10);
 
     let inputs_group = build_inputs_group(app);
 
-    let inner = column![setup_group, section_divider(), inputs_group,].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_group,].spacing(16);
 
-    container(panel_container(inner))
+    container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
         .into()
 }
 
 fn build_inputs_group(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     // The presenter decides which fields appear for the scenario and their
     // unit-aware labels; the live value for each field is bound here from
     // `app.form` (iced's `text_input` borrows its value).
     let inputs = inputs_view(app);
 
-    let mut col = column![section_heading("Inputs")].spacing(12);
+    let mut col = column![section_heading(pal, "Inputs")].spacing(12);
     for fd in &inputs.primary {
         col = col.push(render_input(app, fd));
     }
 
     if !inputs.fatigue.is_empty() {
         col = col
-            .push(section_divider())
-            .push(section_heading("Fatigue cycle (leave blank to skip)"));
+            .push(section_divider(pal))
+            .push(section_heading(pal, "Fatigue cycle (leave blank to skip)"));
         for fd in &inputs.fatigue {
             col = col.push(render_input(app, fd));
         }
@@ -132,8 +139,10 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
 
 /// Render one descriptor as a labeled input, binding the live value from `app.form`.
 fn render_input<'a>(app: &'a App, fd: &FieldDescriptor<Field>) -> Element<'a, Message> {
+    let pal = app.pal();
     let field = fd.field;
     labeled_input(
+        pal,
         &fd.label,
         field_value(&app.form, field),
         calc_field_id(field),
@@ -170,34 +179,34 @@ fn field_value(form: &crate::compression::form::FormState, field: Field) -> &str
 // Results (right) panel — renderers (data from view_model::results_view)
 // --------------------------------------------------------------------------
 
-fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
-    let mut load_col = column![section_heading("Load points")].spacing(4);
+fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
+    let mut load_col = column![section_heading(pal, "Load points")].spacing(4);
 
     load_col = load_col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::Fixed(24.0)),
             text("Force")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Deflection")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Length")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Stress ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("%MTS")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(4),
@@ -208,32 +217,32 @@ fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::Fixed(24.0)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.deflection.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.length.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(4);
@@ -243,22 +252,23 @@ fn render_load_table(lt: &LoadTable) -> Element<'static, Message> {
     load_col.into()
 }
 
-fn render_fatigue(fv: &FatigueView) -> Element<'static, Message> {
+fn render_fatigue(pal: &'static Palette, fv: &FatigueView) -> Element<'static, Message> {
     match fv {
         FatigueView::Hidden => column![].into(),
-        FatigueView::Computed(rows) => divided_result_section("Fatigue analysis", rows),
-        FatigueView::Note(msg) => {
-            column![section_divider(), text(*msg).size(SZ_LABEL).color(C::MUTED),]
-                .spacing(8)
-                .into()
-        }
+        FatigueView::Computed(rows) => divided_result_section(pal, "Fatigue analysis", rows),
+        FatigueView::Note(msg) => column![
+            section_divider(pal),
+            text(*msg).size(SZ_LABEL).color(pal.muted),
+        ]
+        .spacing(8)
+        .into(),
     }
 }
 
-fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
+fn render_min_weight(pal: &'static Palette, mv: &MinWeightView) -> Element<'static, Message> {
     match mv {
         MinWeightView::Hidden => column![].into(),
-        MinWeightView::Shown(rows) => divided_result_section("Min-weight optimisation", rows),
+        MinWeightView::Shown(rows) => divided_result_section(pal, "Min-weight optimisation", rows),
     }
 }
 
@@ -267,11 +277,12 @@ fn render_min_weight(mv: &MinWeightView) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let us = app.unit_system;
 
     let content: Element<'_, Message> = match results_view(app) {
-        ResultsView::Error(msg) => results_error(msg),
-        ResultsView::Empty => results_empty(),
+        ResultsView::Error(msg) => results_error(pal, msg),
+        ResultsView::Empty => results_empty(pal),
         ResultsView::Populated(p) => {
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
@@ -293,7 +304,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     app.orbit,
                 ),
             };
-            let toggle = visual_toggle(app.results_visual);
+            let toggle = visual_toggle(pal, app.results_visual);
 
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only
@@ -301,11 +312,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             // above rather than re-deriving it from `app.outcome`.
             let fatigue_chart = fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
 
-            render_populated(&p, toggle, visual, fatigue_chart)
+            render_populated(pal, &p, toggle, visual, fatigue_chart)
         }
     };
 
-    container(panel_container(content))
+    container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -313,23 +324,24 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 /// Assemble the populated results column from the presenter data plus the
 /// chart/3D toggle and the selected visual.
 fn render_populated<'a>(
+    pal: &'static Palette,
     p: &PopulatedResults,
     toggle: Element<'a, Message>,
     visual: Element<'a, Message>,
     fatigue_chart: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut col = column![
-        section_heading("Results"),
-        section_divider(),
-        render_governing_rate(&p.governing_rate),
-        section_divider(),
-        rows_section("Geometry", &p.geometry),
-        section_divider(),
-        render_load_table(&p.load_table),
-        section_divider(),
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Spring rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_load_table(pal, &p.load_table),
+        section_divider(pal),
         toggle,
         visual,
-        render_fatigue(&p.fatigue),
+        render_fatigue(pal, &p.fatigue),
     ]
     .spacing(6);
 
@@ -337,7 +349,7 @@ fn render_populated<'a>(
         col = col.push(fc);
     }
 
-    col = col.push(render_min_weight(&p.min_weight));
+    col = col.push(render_min_weight(pal, &p.min_weight));
 
     col.into()
 }

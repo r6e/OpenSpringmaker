@@ -5,7 +5,6 @@ use crate::conical::form::{ConFormOutcome, ConFormState};
 use crate::extension::form::{ExtFormOutcome, ExtFormState};
 use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
-use iced::theme::Palette;
 use iced::{Color, Theme};
 use springcore::{
     CurvatureCorrection, Family, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
@@ -16,81 +15,95 @@ use springcore::{
 // Design tokens — single source of truth for colours used in view.rs
 // --------------------------------------------------------------------------
 
-/// Global colour constants for the engineering-instrument palette.
-pub struct C;
-
-impl C {
+/// One resolved color palette. PR 2 adds `LIGHT`; views resolve the active
+/// palette once per view build via [`App::pal`] and pass it down — theme
+/// switches re-run `view()`, so build-time resolution stays correct.
+pub struct Palette {
     /// App background — near-black ink.
-    pub const INK: Color = Color {
+    pub ink: Color,
+    /// Card/panel surface.
+    pub panel: Color,
+    /// Raised input field surface.
+    pub raised: Color,
+    /// Hairline border / divider.
+    pub line: Color,
+    /// Primary text.
+    pub text: Color,
+    /// Muted / secondary labels.
+    pub muted: Color,
+    /// Accent — active controls, focus, governing result.
+    pub accent: Color,
+    /// Caution / warning indicator.
+    pub warn: Color,
+    /// Danger / error indicator.
+    pub danger: Color,
+    /// Success / healthy indicator.
+    pub success: Color,
+}
+
+/// The engineering-instrument dark palette (the shipped identity).
+pub const DARK: Palette = Palette {
+    ink: Color {
         r: 0.055,
         g: 0.067,
         b: 0.086,
         a: 1.0,
-    };
-    /// Card/panel surface.
-    pub const PANEL: Color = Color {
+    },
+    panel: Color {
         r: 0.090,
         g: 0.110,
         b: 0.141,
         a: 1.0,
-    };
-    /// Raised input field surface.
-    pub const RAISED: Color = Color {
+    },
+    raised: Color {
         r: 0.122,
         g: 0.149,
         b: 0.188,
         a: 1.0,
-    };
-    /// Hairline border / divider.
-    pub const LINE: Color = Color {
+    },
+    line: Color {
         r: 0.165,
         g: 0.196,
         b: 0.239,
         a: 1.0,
-    };
-    /// Primary text.
-    pub const TEXT: Color = Color {
+    },
+    text: Color {
         r: 0.902,
         g: 0.918,
         b: 0.941,
         a: 1.0,
-    };
-    /// Muted / secondary labels.
-    pub const MUTED: Color = Color {
+    },
+    muted: Color {
         r: 0.541,
         g: 0.592,
         b: 0.651,
         a: 1.0,
-    };
-    /// Accent — active controls, focus, governing result.
-    pub const ACCENT: Color = Color {
+    },
+    accent: Color {
         r: 0.298,
         g: 0.761,
         b: 1.0,
         a: 1.0,
-    };
-    /// Caution / warning indicator.
-    pub const WARN: Color = Color {
+    },
+    warn: Color {
         r: 0.949,
         g: 0.710,
         b: 0.227,
         a: 1.0,
-    };
-    /// Danger / error indicator.
-    pub const DANGER: Color = Color {
+    },
+    danger: Color {
         r: 1.0,
         g: 0.420,
         b: 0.420,
         a: 1.0,
-    };
-    /// Success / healthy indicator.
-    pub const SUCCESS: Color = Color {
+    },
+    success: Color {
         r: 0.31,
         g: 0.78,
         b: 0.47,
         a: 1.0,
-    };
-}
+    },
+};
 
 // --------------------------------------------------------------------------
 // Screen routing
@@ -850,15 +863,21 @@ impl App {
     pub fn theme(&self) -> Theme {
         Theme::custom(
             "OpenSpringmaker".to_string(),
-            Palette {
-                background: C::INK,
-                text: C::TEXT,
-                primary: C::ACCENT,
-                success: C::SUCCESS,
-                warning: C::WARN,
-                danger: C::DANGER,
+            iced::theme::Palette {
+                background: DARK.ink,
+                text: DARK.text,
+                primary: DARK.accent,
+                success: DARK.success,
+                warning: DARK.warn,
+                danger: DARK.danger,
             },
         )
+    }
+
+    /// The active palette. PR 2 resolves Light/Dark/System here; today it is
+    /// always the dark identity.
+    pub(crate) fn pal(&self) -> &'static Palette {
+        &DARK
     }
 
     fn set_field(&mut self, field: Field, value: String) {
@@ -1141,6 +1160,48 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn palette_dark_matches_the_legacy_c_tokens() {
+        // Pin the exact legacy values so the C→Palette migration is provably
+        // color-identical (any drift = silent restyle).
+        assert_eq!(
+            DARK.ink,
+            Color {
+                r: 0.055,
+                g: 0.067,
+                b: 0.086,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.accent,
+            Color {
+                r: 0.298,
+                g: 0.761,
+                b: 1.0,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.danger,
+            Color {
+                r: 1.0,
+                g: 0.420,
+                b: 0.420,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.success,
+            Color {
+                r: 0.31,
+                g: 0.78,
+                b: 0.47,
+                a: 1.0
+            }
+        );
+    }
 
     /// An `App` with a curated-only store (no on-disk user overlay), so the
     /// materials-CRUD tests are hermetic regardless of the developer's saved

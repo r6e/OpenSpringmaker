@@ -7,7 +7,7 @@
 use iced::widget::{button, column, container, radio, row, scrollable, space, text};
 use iced::{Background, Element, Font, Length};
 
-use crate::app::{App, Message, Screen, C};
+use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
@@ -17,6 +17,7 @@ use springcore::{Family, UnitSystem, ALL_FAMILIES};
 
 /// Build the complete Calculator screen UI.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let header = header(app);
     let (left, right) = match app.family {
         Family::Compression => (
@@ -41,9 +42,9 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ),
     };
     let status = status_panel(app);
-    let footer = footer();
+    let footer = footer(pal);
 
-    let header_divider = section_divider();
+    let header_divider = section_divider(pal);
 
     let content = column![
         header,
@@ -60,8 +61,8 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     ))
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(Background::Color(C::INK)),
+    .style(move |_theme| iced::widget::container::Style {
+        background: Some(Background::Color(pal.ink)),
         ..Default::default()
     });
 
@@ -73,15 +74,17 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn header(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let app_name = text("OpenSpringmaker")
         .size(SZ_TITLE)
-        .color(C::ACCENT)
+        .color(pal.accent)
         .font(Font {
             weight: iced::font::Weight::Semibold,
             ..Font::DEFAULT
         });
 
     let family_selector = container(styled_pick_list(
+        pal,
         ALL_FAMILIES.to_vec(),
         Some(app.family),
         Message::SelectFamily,
@@ -104,13 +107,13 @@ fn header(app: &App) -> Element<'_, Message> {
     )
     .text_size(SZ_LABEL);
 
-    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
+    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Materials))
-        .style(nav_button_style);
+        .style(nav_button_style(pal));
 
-    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(C::ACCENT))
+    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Settings))
-        .style(nav_button_style);
+        .style(nav_button_style(pal));
 
     row![
         app_name,
@@ -132,6 +135,7 @@ fn header(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn status_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let lines = match app.family {
         Family::Compression => crate::compression::view_model::status_view(app),
         Family::Extension => crate::extension::view_model::ext_status_view(app),
@@ -144,21 +148,21 @@ fn status_panel(app: &App) -> Element<'_, Message> {
         return column![].into();
     }
 
-    let mut col = column![section_heading("Status")].spacing(6);
+    let mut col = column![section_heading(pal, "Status")].spacing(6);
     for line in &lines {
-        col = col.push(render_status_line(line));
+        col = col.push(render_status_line(pal, line));
     }
 
-    panel_container(col)
+    panel_container(pal, col)
 }
 
-fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
+fn render_status_line(pal: &'static Palette, line: &StatusLine) -> Element<'static, Message> {
     let (prefix, color) = match line.kind {
-        StatusKind::ActionError => ("Error:", C::DANGER),
-        StatusKind::LoadWarning => ("Warning:", C::WARN),
-        StatusKind::Info => ("Info:", C::MUTED),
-        StatusKind::Caution => ("Caution:", C::WARN),
-        StatusKind::DesignWarning => ("Warning:", C::DANGER),
+        StatusKind::ActionError => ("Error:", pal.danger),
+        StatusKind::LoadWarning => ("Warning:", pal.warn),
+        StatusKind::Info => ("Info:", pal.muted),
+        StatusKind::Caution => ("Caution:", pal.warn),
+        StatusKind::DesignWarning => ("Warning:", pal.danger),
     };
     row![
         text(prefix)
@@ -175,14 +179,14 @@ fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
 // Footer
 // --------------------------------------------------------------------------
 
-fn footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
+fn footer(pal: &'static Palette) -> Element<'static, Message> {
+    let save_btn = button(text("Save design").size(SZ_BODY).color(pal.ink))
         .on_press(Message::Save)
-        .style(accent_button_style);
+        .style(accent_button_style(pal));
 
-    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
+    let load_btn = button(text("Load design").size(SZ_BODY).color(pal.text))
         .on_press(Message::Load)
-        .style(ghost_button_style);
+        .style(ghost_button_style(pal));
 
     row![save_btn, load_btn].spacing(12).into()
 }
