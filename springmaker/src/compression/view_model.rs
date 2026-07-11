@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn fatigue_chart_suppressed_for_min_weight_even_when_computed() {
-        // Regression (Task 8 review): a min-weight solve with cycle forces
+        // Regression guard: a min-weight solve with cycle forces
         // filled yields BOTH `min_weight: Some` and `fatigue: Computed`; the
         // chart must follow the rows' Hidden gate, not the raw fatigue status,
         // or it renders orphaned above the min-weight results.

@@ -317,6 +317,8 @@ fn render_populated<'a>(
         rows_section("Geometry", &p.geometry),
         section_divider(),
         render_load_table(&p.load_table),
+        section_divider(),
+        chart,
         render_fatigue(&p.fatigue),
     ]
     .spacing(6);
@@ -325,10 +327,7 @@ fn render_populated<'a>(
         col = col.push(fc);
     }
 
-    col = col
-        .push(render_min_weight(&p.min_weight))
-        .push(section_divider())
-        .push(chart);
+    col = col.push(render_min_weight(&p.min_weight));
 
     col.into()
 }

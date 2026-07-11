@@ -3,7 +3,8 @@
 //! members visibly stack; series members visibly soften. Travel limit marked.
 
 use crate::plot::{
-    convert_fd, force_deflection_axes, ChartData, Line, LineRole, Marker, MarkerKind,
+    convert_fd, force_deflection_axes, operating_marker, ChartData, Line, LineRole, Marker,
+    MarkerKind,
 };
 use springcore::assembly::AssemblyDesign;
 use springcore::UnitSystem;
@@ -57,14 +58,7 @@ pub fn assembly_chart(design: &AssemblyDesign, units: UnitSystem) -> ChartData {
         let mut markers: Vec<Marker> = design
             .load_points
             .iter()
-            .map(|lp| {
-                let (x, y) = convert_fd(lp.deflection.meters(), lp.force.newtons(), units);
-                Marker {
-                    x,
-                    y,
-                    kind: MarkerKind::Operating,
-                }
-            })
+            .map(|lp| operating_marker(lp.deflection.meters(), lp.force.newtons(), units))
             .collect();
         let (tx, ty) = convert_fd(
             design.travel_limit_deflection.meters(),

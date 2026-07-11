@@ -4,7 +4,7 @@
 //! ephemeral — no Message is ever published; `Action::request_redraw()` only
 //! repaints this canvas (plotters never re-rasterizes on mouse movement).
 
-use super::mapping::{letterbox, ChartMapping};
+use super::mapping::{letterbox, ChartMapping, Letterbox};
 use super::{hover_readout, ChartData, CHART_H, CHART_W};
 use crate::app::{Message, C};
 use iced::mouse;
@@ -62,7 +62,7 @@ impl canvas::Program<Message> for ChartCanvas {
 }
 
 impl ChartCanvas {
-    fn draw_overlay(&self, frame: &mut Frame, lb: &super::mapping::Letterbox, bx: f32, by: f32) {
+    fn draw_overlay(&self, frame: &mut Frame, lb: &Letterbox, bx: f32, by: f32) {
         let (x0, y0, x1, y1) = ChartMapping::plot_rect();
         let stroke = Stroke::default().with_color(C::MUTED).with_width(1.0);
         // Crosshair clipped to the plot rect, in widget coordinates.
@@ -97,11 +97,17 @@ impl ChartCanvas {
     }
 }
 
+/// Shown whenever a family's chart data has no finite positive extent
+/// (`render_chart` returns `None`). Every family's Populated results panel
+/// falls back to this text, so tests can assert its absence as proof that a
+/// real chart was built from the solved outcome.
+pub(crate) const CHART_PLACEHOLDER: &str = "Chart unavailable for this design (check inputs).";
+
 /// Build the chart element: hoverable canvas, or a text placeholder for a
 /// degenerate design (plotters must never see a non-finite range).
 pub fn chart_element(data: ChartData) -> Element<'static, Message> {
     match super::render::render_chart(&data) {
-        None => iced::widget::text("Chart unavailable for this design (check inputs).").into(),
+        None => iced::widget::text(CHART_PLACEHOLDER).into(),
         Some((pixels, mapping)) => {
             let handle = iced::widget::image::Handle::from_rgba(CHART_W, CHART_H, pixels);
             Canvas::new(ChartCanvas {

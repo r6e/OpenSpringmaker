@@ -33,27 +33,33 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
         UnitSystem::Us => m.pound_force_inches(),
     };
 
-    let max_m_nm = design
-        .load_points
-        .iter()
-        .map(|lp| lp.moment.newton_meters())
-        .fold(0.0_f64, f64::max);
     let k = design.rate.newton_meters_per_degree();
     let rate_ok = k.is_finite() && k > 0.0;
-    let lines = if rate_ok && max_m_nm.is_finite() && max_m_nm > 0.0 {
+    // Single fold selecting the max-moment load point; both θ and the
+    // displayed moment are derived from that SAME point (previously two
+    // independent folds, one per unit system, could in principle disagree on
+    // which point is "max" under a pathological ordering).
+    let lines: Vec<Line> = 'lines: {
+        if !rate_ok {
+            break 'lines vec![];
+        }
+        let Some(max_lp) = design.load_points.iter().max_by(|a, b| {
+            a.moment
+                .newton_meters()
+                .total_cmp(&b.moment.newton_meters())
+        }) else {
+            break 'lines vec![];
+        };
+        let max_m_nm = max_lp.moment.newton_meters();
+        if !(max_m_nm.is_finite() && max_m_nm > 0.0) {
+            break 'lines vec![];
+        }
         let theta = max_m_nm / k;
-        let max_m = design
-            .load_points
-            .iter()
-            .map(|lp| display_moment(lp.moment))
-            .fold(0.0_f64, f64::max);
         vec![Line {
-            points: vec![(0.0, 0.0), (theta, max_m)],
+            points: vec![(0.0, 0.0), (theta, display_moment(max_lp.moment))],
             role: LineRole::Primary,
             name: None,
         }]
-    } else {
-        vec![]
     };
     // A non-positive or non-finite rate makes the whole design degenerate, not
     // just the line: the solved deflections came from that rate, so markers are
@@ -221,6 +227,7 @@ mod tests {
             springcore::units::Angle::from_degrees(d.load_points[0].deflection.degrees() + 3.0);
         d.load_points[0].deflection = nudged;
         let data = torsion_chart(&d, UnitSystem::Metric);
+        assert_eq!(data.markers.len(), d.load_points.len());
         assert_relative_eq!(data.markers[0].x, nudged.degrees(), max_relative = 1e-12);
         for (m, lp) in data.markers.iter().zip(&d.load_points) {
             assert_relative_eq!(m.x, lp.deflection.degrees(), max_relative = 1e-12);

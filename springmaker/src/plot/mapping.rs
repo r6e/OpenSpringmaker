@@ -11,8 +11,12 @@ use super::{CHART_H, CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA};
 const MIN_SCALE: f32 = 1e-6;
 
 pub struct ChartMapping {
-    /// Data ranges plotters was given (AFTER the 1.1 headroom factor).
+    /// Data range plotters was given for x (AFTER the 1.1 headroom factor).
+    /// Always > 0 (renderer-floored: `render_chart` clamps it to at least
+    /// `1e-9` before building the cartesian range).
     pub x_max: f64,
+    /// Data range plotters was given for y (AFTER the 1.1 headroom factor).
+    /// Always > 0 (renderer-floored, same as `x_max`).
     pub y_max: f64,
 }
 
@@ -39,7 +43,8 @@ impl ChartMapping {
         (fx * self.x_max, fy * self.y_max)
     }
 
-    #[allow(dead_code)] // test-only round-trip witness; retained deliberately
+    /// Test-only round-trip witness for [`pixel_to_data`](Self::pixel_to_data).
+    #[cfg(test)]
     pub fn data_to_pixel(&self, x: f64, y: f64) -> (f32, f32) {
         let (x0, y0, x1, y1) = Self::plot_rect();
         let px = x0 + ((x / self.x_max) as f32) * (x1 - x0);
@@ -157,7 +162,7 @@ mod tests {
         assert_relative_eq!(wy, 24.0, max_relative = 1e-6);
     }
 
-    /// Pins the chosen guard (Task 2 review, binding): a zero/degenerate
+    /// Pins the review-mandated zero-bounds guard: a zero/degenerate
     /// widget bounds must never produce a zero scale, so
     /// `widget_to_bitmap`/`bitmap_to_widget` stay finite (no NaN/∞ reaching
     /// `ChartMapping::in_plot_rect`).

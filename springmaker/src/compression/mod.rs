@@ -1,7 +1,8 @@
 //! Compression-spring calculator screen: form (input parsing and solving),
-//! view-model (the compression presenter functions and result aggregates), and
-//! view (the humble iced widget tree). Mirrors the engine's per-family layout;
-//! shared vocabulary lives in `crate::presenter` and `crate::widgets`.
+//! view-model (the compression presenter functions and result aggregates),
+//! plot_model (the chart presenter), and view (the humble iced widget tree).
+//! Mirrors the engine's per-family layout; shared vocabulary lives in
+//! `crate::presenter` and `crate::widgets`.
 
 pub(crate) mod form;
 pub(crate) mod plot_model;

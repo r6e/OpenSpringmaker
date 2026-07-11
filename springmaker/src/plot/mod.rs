@@ -1,4 +1,8 @@
-//! Live load-vs-deflection chart for the current design.
+//! The family-agnostic chart core (ADR 0008). Each family's pure presenter
+//! (`plot_model.rs`) turns a solved design into a [`ChartData`]; this module
+//! renders that data ([`render`]) into a bitmap and drives the interactive
+//! hover widget ([`canvas`]) that displays it, with the pixel↔data affine
+//! math ([`mapping`]) shared between the two so they cannot drift apart.
 //!
 //! The chart is drawn by `plotters` into an in-memory RGB bitmap and shown via
 //! iced's `image` widget. This keeps the (well-established) `plotters` drawing
@@ -15,12 +19,15 @@ pub mod mapping;
 pub mod render;
 
 pub use canvas::chart_element;
+#[cfg(test)]
+pub(crate) use canvas::CHART_PLACEHOLDER;
 
 /// Fixed render resolution for the chart bitmap; iced scales it to fit the panel.
 pub(crate) const CHART_W: u32 = 760;
 pub(crate) const CHART_H: u32 = 300;
-/// Top/bottom margin and bottom x-axis label band width.
+/// Top/bottom margin surrounding the plot area.
 pub(crate) const MARGIN: u32 = 24;
+/// Height of the bottom x-axis label band.
 pub(crate) const X_LABEL_AREA: u32 = 44;
 /// Width of the left y-axis label band. Plot geometry sits right of it
 /// (margin + this), so this column range contains only axis text — relied on by
@@ -192,14 +199,7 @@ pub fn round_wire_force_deflection(
     let markers = if rate_ok {
         load_points
             .iter()
-            .map(|lp| {
-                let (x, y) = convert_fd(lp.deflection.meters(), lp.force.newtons(), units);
-                Marker {
-                    x,
-                    y,
-                    kind: MarkerKind::Operating,
-                }
-            })
+            .map(|lp| operating_marker(lp.deflection.meters(), lp.force.newtons(), units))
             .collect()
     } else {
         vec![]
@@ -238,6 +238,20 @@ pub(crate) fn force_deflection_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
                 unit: "lbf",
             },
         ),
+    }
+}
+
+/// Build an `Operating` marker from a deflection (meters) and force
+/// (newtons), converting both to display units. Shared by the round-wire,
+/// extension, and assembly presenters, which all plot force vs. linear
+/// deflection; torsion plots angle vs. moment and builds its markers
+/// directly.
+pub(crate) fn operating_marker(defl_m: f64, force_n: f64, units: UnitSystem) -> Marker {
+    let (x, y) = convert_fd(defl_m, force_n, units);
+    Marker {
+        x,
+        y,
+        kind: MarkerKind::Operating,
     }
 }
 
@@ -400,6 +414,38 @@ mod tests {
         let (x, y) = chart_extent(&d).expect("x = 0, y > 0 must be a valid extent");
         assert_relative_eq!(x, 0.0, max_relative = 1e-12);
         assert_relative_eq!(y, 20.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn round_wire_force_deflection_falls_back_to_at_solid_with_no_loads() {
+        // Empty load_points: the line's extent must come from at_solid (the
+        // compression-family precedent documented on the function), and no
+        // operating markers exist since there are no load points to mark.
+        use springcore::units::{Force, Length, Stress};
+        use springcore::{LoadPoint, SpringRate};
+
+        let at_solid = LoadPoint {
+            force: Force::from_newtons(50.0),
+            deflection: Length::from_millimeters(25.0),
+            length: Length::from_millimeters(35.0),
+            shear_stress: Stress::from_megapascals(400.0),
+            pct_mts: 50.0,
+        };
+        let rate = SpringRate::from_newtons_per_meter(2000.0);
+        let data = round_wire_force_deflection(rate, &[], &at_solid, UnitSystem::Metric);
+
+        assert!(data.markers.is_empty());
+        assert_eq!(data.lines.len(), 1);
+        let pts = &data.lines[0].points;
+        assert_eq!(pts.len(), 2);
+        assert_relative_eq!(pts[0].0, 0.0, max_relative = 1e-12);
+        assert_relative_eq!(pts[0].1, 0.0, max_relative = 1e-12);
+        assert_relative_eq!(pts[1].0, 25.0, max_relative = 1e-9); // at_solid deflection, mm
+        assert_relative_eq!(pts[1].1, 50.0, max_relative = 1e-9); // at_solid force, N
+
+        let (x, y) = chart_extent(&data).expect("at_solid fallback must be a renderable extent");
+        assert_relative_eq!(x, 25.0, max_relative = 1e-9);
+        assert_relative_eq!(y, 50.0, max_relative = 1e-9);
     }
 
     #[test]

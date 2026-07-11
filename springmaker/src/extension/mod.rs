@@ -1,4 +1,5 @@
-//! Extension-spring Calculator GUI: form (strings→solve), presenter, humble view.
+//! Extension-spring Calculator GUI: form (strings→solve), presenter,
+//! plot_model (chart presenter), humble view.
 pub(crate) mod form;
 pub(crate) mod plot_model;
 pub(crate) mod view;

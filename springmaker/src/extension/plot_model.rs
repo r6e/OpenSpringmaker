@@ -5,9 +5,7 @@
 //! the line then degenerates to a plain rate line, origin to max load, with
 //! no vertical jump segment.
 
-use crate::plot::{
-    convert_fd, force_deflection_axes, ChartData, Line, LineRole, Marker, MarkerKind,
-};
+use crate::plot::{convert_fd, force_deflection_axes, operating_marker, ChartData, Line, LineRole};
 use springcore::extension::ExtensionDesign;
 use springcore::UnitSystem;
 
@@ -57,14 +55,7 @@ pub fn extension_chart(design: &ExtensionDesign, units: UnitSystem) -> ChartData
         design
             .load_points
             .iter()
-            .map(|lp| {
-                let (x, y) = convert_fd(lp.deflection.meters(), lp.force.newtons(), units);
-                Marker {
-                    x,
-                    y,
-                    kind: MarkerKind::Operating,
-                }
-            })
+            .map(|lp| operating_marker(lp.deflection.meters(), lp.force.newtons(), units))
             .collect()
     } else {
         vec![]

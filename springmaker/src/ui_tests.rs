@@ -12,6 +12,7 @@ use crate::app::{App, Message, Screen};
 use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
+use crate::plot::CHART_PLACEHOLDER;
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
@@ -1109,14 +1110,7 @@ fn assembly_save_load_round_trip() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ── Chart + fatigue-chart wiring tests (Task 9) ─────────────────────────────
-
-/// The degenerate-chart placeholder text; every family's results panel falls
-/// back to this when `chart_element` receives a `None` render. Asserting its
-/// absence — paired with each family's existing Populated-proof label — pins
-/// that the results panel's Populated arm actually built a chart from the
-/// solved outcome, not just that some panel rendered.
-const CHART_PLACEHOLDER: &str = "Chart unavailable for this design (check inputs).";
+// ── Chart + fatigue-chart wiring tests ──────────────────────────────────────
 
 /// Compression: drive the same PowerUser design as
 /// `typing_a_valid_power_user_design_renders_results` and confirm the chart
@@ -1244,7 +1238,7 @@ fn assembly_chart_renders_after_solve() {
 }
 
 /// Simulator-level pin for the compression fatigue chart's Computed gate
-/// (Task 8 pinned the presenter's polarity; this pins that the Simulator's
+/// (the presenter decides the polarity; this pins that the Simulator's
 /// wiring reacts to it): solving without cycle forces must show the Skipped
 /// note; filling the cycle-force fields and re-solving must both compute the
 /// fatigue rows (not fall through to NoData for the wrong reason) and clear
