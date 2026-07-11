@@ -284,7 +284,16 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 })
                 .expect("ResultsView::Populated implies app.outcome is Some");
 
-            render_populated(&p, chart)
+            let fatigue_chart = app.outcome.as_ref().and_then(|o| match &o.fatigue {
+                crate::compression::form::FatigueStatus::Computed(f) => {
+                    Some(crate::plot::chart_element(
+                        crate::compression::plot_model::goodman_chart(f, us),
+                    ))
+                }
+                _ => None,
+            });
+
+            render_populated(&p, chart, fatigue_chart)
         }
     };
 
@@ -294,8 +303,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Assemble the populated results column from the presenter data plus the chart.
-fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> Element<'a, Message> {
-    column![
+fn render_populated<'a>(
+    p: &PopulatedResults,
+    chart: Element<'a, Message>,
+    fatigue_chart: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut col = column![
         section_heading("Results"),
         section_divider(),
         render_governing_rate(&p.governing_rate),
@@ -304,10 +317,17 @@ fn render_populated<'a>(p: &PopulatedResults, chart: Element<'a, Message>) -> El
         section_divider(),
         render_load_table(&p.load_table),
         render_fatigue(&p.fatigue),
-        render_min_weight(&p.min_weight),
-        section_divider(),
-        chart,
     ]
-    .spacing(6)
-    .into()
+    .spacing(6);
+
+    if let Some(fc) = fatigue_chart {
+        col = col.push(fc);
+    }
+
+    col = col
+        .push(render_min_weight(&p.min_weight))
+        .push(section_divider())
+        .push(chart);
+
+    col.into()
 }

@@ -78,11 +78,7 @@ pub struct AxisMeta {
 pub enum LineRole {
     Primary,
     Member,
-    // Consumed once the fatigue family emits its envelope/load-line overlay
-    // (Task 8); remove then.
-    #[allow(dead_code)]
     Envelope,
-    #[allow(dead_code)]
     LoadLine,
 }
 
@@ -250,6 +246,42 @@ pub(crate) fn convert_fd(defl_m: f64, force_n: f64, units: UnitSystem) -> (f64, 
             springcore::units::Length::from_meters(defl_m).inches(),
             springcore::units::Force::from_newtons(force_n).pounds_force(),
         ),
+    }
+}
+
+pub(crate) fn stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
+    match units {
+        UnitSystem::Metric => (
+            AxisMeta {
+                label: "mean stress (MPa)",
+                symbol: "σm",
+                unit: "MPa",
+            },
+            AxisMeta {
+                label: "alternating stress (MPa)",
+                symbol: "σa",
+                unit: "MPa",
+            },
+        ),
+        UnitSystem::Us => (
+            AxisMeta {
+                label: "mean stress (psi)",
+                symbol: "σm",
+                unit: "psi",
+            },
+            AxisMeta {
+                label: "alternating stress (psi)",
+                symbol: "σa",
+                unit: "psi",
+            },
+        ),
+    }
+}
+
+pub(crate) fn stress_display(s: springcore::units::Stress, units: UnitSystem) -> f64 {
+    match units {
+        UnitSystem::Metric => s.megapascals(),
+        UnitSystem::Us => s.psi(),
     }
 }
 

@@ -7,12 +7,78 @@ pub fn compression_chart(design: &SpringDesign, units: UnitSystem) -> ChartData 
     round_wire_force_deflection(design.rate, &design.load_points, &design.at_solid, units)
 }
 
+/// Goodman fatigue diagram (Shigley §10-9): straight envelope (0,Se)→(Ssu,0),
+/// load line from the origin through the operating point to the envelope.
+/// All values come from `FatigueResult`; no engineering formula is re-derived
+/// here — the intersection is line/line geometry on the engine's numbers.
+pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartData {
+    let (x_axis, y_axis) = crate::plot::stress_axes(units);
+    let se = crate::plot::stress_display(f.fully_reversed_endurance, units);
+    let ssu = crate::plot::stress_display(f.ultimate_shear, units);
+    let ta = crate::plot::stress_display(f.alternating_stress, units);
+    let tm = crate::plot::stress_display(f.mean_stress, units);
+    // Defense in depth: the engine's output guard makes these finite-positive,
+    // but the presenter re-checks before building geometry.
+    if !(se.is_finite()
+        && se > 0.0
+        && ssu.is_finite()
+        && ssu > 0.0
+        && ta.is_finite()
+        && tm.is_finite())
+    {
+        return ChartData {
+            x_axis,
+            y_axis,
+            lines: vec![],
+            markers: vec![],
+        };
+    }
+
+    let envelope = crate::plot::Line {
+        points: vec![(0.0, se), (ssu, 0.0)],
+        role: crate::plot::LineRole::Envelope,
+        name: None,
+    };
+    // Load line endpoint on the envelope: vertical when τm = 0, else
+    // x* = Se·Ssu/(Se + r·Ssu) with r = τa/τm.
+    let (lx, ly) = if tm <= 0.0 {
+        (0.0, se)
+    } else {
+        let r = ta / tm;
+        let x_star = se * ssu / (se + r * ssu);
+        (x_star, r * x_star)
+    };
+    let load_line = crate::plot::Line {
+        points: vec![(0.0, 0.0), (lx, ly)],
+        role: crate::plot::LineRole::LoadLine,
+        name: None,
+    };
+
+    ChartData {
+        x_axis,
+        y_axis,
+        lines: vec![envelope, load_line],
+        markers: vec![
+            crate::plot::Marker {
+                x: tm,
+                y: ta,
+                kind: crate::plot::MarkerKind::Operating,
+            },
+            crate::plot::Marker {
+                x: lx,
+                y: ly,
+                kind: crate::plot::MarkerKind::Limit,
+            },
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plot::{LineRole, MarkerKind};
     use approx::assert_relative_eq;
-    use springcore::units::{Force, Length};
+    use springcore::units::{Force, Length, Stress};
     use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario};
 
     fn design() -> SpringDesign {
@@ -69,5 +135,88 @@ mod tests {
         d.rate = springcore::SpringRate::from_newtons_per_meter(0.0);
         let data = compression_chart(&d, UnitSystem::Metric);
         assert!(crate::plot::chart_extent(&data).is_none());
+    }
+
+    fn fatigue_result() -> springcore::FatigueResult {
+        // Synthetic but physically-shaped values; the presenter is pure geometry.
+        springcore::FatigueResult {
+            alternating_stress: Stress::from_megapascals(100.0),
+            mean_stress: Stress::from_megapascals(200.0),
+            fully_reversed_endurance: Stress::from_megapascals(310.0),
+            ultimate_shear: Stress::from_megapascals(1130.0),
+            goodman_factor_of_safety: 2.0,
+        }
+    }
+
+    #[test]
+    fn goodman_envelope_runs_se_to_ssu() {
+        let d = goodman_chart(&fatigue_result(), UnitSystem::Metric);
+        let env = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Envelope)
+            .unwrap();
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        assert_eq!(env.points.len(), 2);
+        assert_relative_eq!(env.points[0].0, 0.0, max_relative = 1e-12);
+        assert_relative_eq!(env.points[0].1, 310.0, max_relative = 1e-9); // (0, Se)
+        assert_relative_eq!(env.points[1].0, 1130.0, max_relative = 1e-9); // (Ssu, 0)
+        assert_relative_eq!(env.points[1].1, 0.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn goodman_load_line_ends_on_the_envelope() {
+        // Shigley §10-9: load line y = r·x, r = τa/τm, meets x/Ssu + y/Se = 1 at
+        // x* = Se·Ssu/(Se + r·Ssu).
+        let f = fatigue_result();
+        let d = goodman_chart(&f, UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        let ll = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::LoadLine)
+            .unwrap();
+        let r: f64 = 100.0 / 200.0;
+        let x_star: f64 = 310.0 * 1130.0 / (310.0 + r * 1130.0);
+        let end = *ll.points.last().unwrap();
+        assert_relative_eq!(end.0, x_star, max_relative = 1e-9);
+        assert_relative_eq!(end.1, r * x_star, max_relative = 1e-9);
+        // Marker check: Operating at (τm, τa); Limit at the envelope intersection.
+        assert!(d.markers.iter().any(|m| m.kind == MarkerKind::Operating
+            && (m.x - 200.0).abs() < 1e-9
+            && (m.y - 100.0).abs() < 1e-9));
+        assert!(d
+            .markers
+            .iter()
+            .any(|m| m.kind == MarkerKind::Limit && (m.x - x_star).abs() < 1e-6));
+    }
+
+    #[test]
+    fn goodman_zero_mean_stress_is_a_vertical_load_line() {
+        let mut f = fatigue_result();
+        f.mean_stress = Stress::from_megapascals(0.0);
+        let d = goodman_chart(&f, UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        let ll = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::LoadLine)
+            .unwrap();
+        let end = *ll.points.last().unwrap();
+        assert_relative_eq!(end.0, 0.0, max_relative = 1e-12);
+        assert_relative_eq!(end.1, 310.0, max_relative = 1e-9); // straight up to Se
+    }
+
+    #[test]
+    fn goodman_zero_endurance_is_degenerate() {
+        let mut f = fatigue_result();
+        f.fully_reversed_endurance = Stress::from_megapascals(0.0);
+        let d = goodman_chart(&f, UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 0);
+        assert_eq!(d.markers.len(), 0);
+        assert!(crate::plot::chart_extent(&d).is_none());
     }
 }

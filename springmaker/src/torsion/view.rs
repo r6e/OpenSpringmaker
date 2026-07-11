@@ -298,6 +298,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 })
                 .expect("TorResultsView::Populated implies app.tor_outcome is Some");
 
+            let fatigue_chart = app.tor_outcome.as_ref().and_then(|o| match &o.fatigue {
+                crate::torsion::form::TorFatigueStatus::Computed(f) => Some(
+                    crate::plot::chart_element(crate::torsion::plot_model::gerber_chart(f, us)),
+                ),
+                _ => None,
+            });
+
             // Angular rate section — two ResultRows (per-degree and per-revolution).
             let mut rate_col = column![section_heading("Angular rate")].spacing(6);
             rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
@@ -324,6 +331,9 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 TorFatigueView::Hidden => {}
                 TorFatigueView::Computed(rows) => {
                     col = col.push(divided_result_section("Fatigue analysis", rows));
+                    if let Some(fc) = fatigue_chart {
+                        col = col.push(fc);
+                    }
                 }
                 TorFatigueView::Note(msg) => {
                     col = col.push(

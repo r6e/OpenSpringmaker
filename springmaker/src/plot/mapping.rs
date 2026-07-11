@@ -39,7 +39,7 @@ impl ChartMapping {
         (fx * self.x_max, fy * self.y_max)
     }
 
-    #[allow(dead_code)] // symmetric inverse of pixel_to_data; consumed once a family overlays a data-space point (e.g. fatigue envelope, Task 8); remove then
+    #[allow(dead_code)] // test-only round-trip witness; retained deliberately
     pub fn data_to_pixel(&self, x: f64, y: f64) -> (f32, f32) {
         let (x0, y0, x1, y1) = Self::plot_rect();
         let px = x0 + ((x / self.x_max) as f32) * (x1 - x0);

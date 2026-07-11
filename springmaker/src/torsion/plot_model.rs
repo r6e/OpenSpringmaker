@@ -78,12 +78,82 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
     }
 }
 
+/// Gerber fatigue diagram (Shigley §10-12): parabolic envelope
+/// σa = Se·(1 − (σm/Sut)²) sampled as a 65-point polyline, load line
+/// r = σa/σm from the origin to the engine's strength amplitude (Sa,
+/// Eq. 10-59). The GUI samples the cited criterion for display only; the
+/// engine remains the factor-of-safety authority.
+pub fn gerber_chart(f: &springcore::torsion::TorFatigueResult, units: UnitSystem) -> ChartData {
+    let (x_axis, y_axis) = crate::plot::stress_axes(units);
+    let se = crate::plot::stress_display(f.fully_reversed_endurance, units);
+    let sut = crate::plot::stress_display(f.ultimate_tensile, units);
+    let sa_op = crate::plot::stress_display(f.alternating_stress, units);
+    let sm_op = crate::plot::stress_display(f.mean_stress, units);
+    let sa_strength = crate::plot::stress_display(f.strength_amplitude, units);
+    if !(se.is_finite()
+        && se > 0.0
+        && sut.is_finite()
+        && sut > 0.0
+        && sa_op.is_finite()
+        && sa_op > 0.0
+        && sm_op.is_finite()
+        && sm_op > 0.0)
+    {
+        return ChartData {
+            x_axis,
+            y_axis,
+            lines: vec![],
+            markers: vec![],
+        };
+    }
+
+    const SAMPLES: usize = 65;
+    let envelope_pts: Vec<(f64, f64)> = (0..SAMPLES)
+        .map(|i| {
+            let sm = sut * i as f64 / (SAMPLES - 1) as f64;
+            (sm, se * (1.0 - (sm / sut).powi(2)))
+        })
+        .collect();
+    let r = sa_op / sm_op; // engine rejects σm = 0 (strictly increasing moments)
+    let sm_star = sa_strength / r;
+    ChartData {
+        x_axis,
+        y_axis,
+        lines: vec![
+            Line {
+                points: envelope_pts,
+                role: LineRole::Envelope,
+                name: None,
+            },
+            Line {
+                points: vec![(0.0, 0.0), (sm_star, sa_strength)],
+                role: LineRole::LoadLine,
+                name: None,
+            },
+        ],
+        markers: vec![
+            Marker {
+                x: sm_op,
+                y: sa_op,
+                kind: MarkerKind::Operating,
+            },
+            Marker {
+                x: sm_star,
+                y: sa_strength,
+                kind: MarkerKind::Limit,
+            },
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::plot::{LineRole, MarkerKind};
     use crate::torsion::form::TorFormState;
     use approx::assert_relative_eq;
+    use springcore::units::Stress;
     use springcore::{CurvatureCorrection, Family, MaterialSet, MaterialStore, UnitSystem};
 
     fn store() -> MaterialStore {
@@ -180,5 +250,64 @@ mod tests {
             .map(|lp| lp.moment.pound_force_inches())
             .fold(0.0_f64, f64::max);
         assert_relative_eq!(last.1, max_lbf_in, max_relative = 1e-9);
+    }
+
+    fn tor_fatigue_result() -> springcore::torsion::TorFatigueResult {
+        springcore::torsion::TorFatigueResult {
+            alternating_stress: Stress::from_megapascals(300.0),
+            mean_stress: Stress::from_megapascals(300.0),
+            fully_reversed_endurance: Stress::from_megapascals(500.0),
+            ultimate_tensile: Stress::from_megapascals(1600.0),
+            strength_amplitude: Stress::from_megapascals(480.0),
+            gerber_factor_of_safety: 1.6,
+        }
+    }
+
+    #[test]
+    fn gerber_envelope_is_the_sampled_parabola() {
+        // σa = Se·(1 − (σm/Sut)²), Shigley Eq. 10-58 family (§10-12).
+        let d = gerber_chart(&tor_fatigue_result(), UnitSystem::Metric);
+        let env = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Envelope)
+            .unwrap();
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        assert_eq!(env.points.len(), 65);
+        assert_relative_eq!(env.points[0].1, 500.0, max_relative = 1e-9); // (0, Se)
+        let last = *env.points.last().unwrap();
+        assert_relative_eq!(last.0, 1600.0, max_relative = 1e-9); // (Sut, 0)
+        assert!(last.1.abs() < 1e-9);
+        // Midpoint sanity: at σm = Sut/2, σa = Se·(1 − 1/4).
+        let mid = env.points[32];
+        assert_relative_eq!(mid.0, 800.0, max_relative = 1e-9);
+        assert_relative_eq!(mid.1, 375.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn gerber_markers_show_operating_and_strength_amplitude() {
+        // Limit marker: (Sm*, Sa) with Sm* = Sa/r, r = σa/σm (load line), Sa from
+        // the ENGINE's strength_amplitude — not re-derived here.
+        let d = gerber_chart(&tor_fatigue_result(), UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        assert!(d.markers.iter().any(|m| m.kind == MarkerKind::Operating
+            && (m.x - 300.0).abs() < 1e-9
+            && (m.y - 300.0).abs() < 1e-9));
+        let sm_star: f64 = 480.0 / (300.0_f64 / 300.0); // = 480.0
+        assert!(d.markers.iter().any(|m| m.kind == MarkerKind::Limit
+            && (m.x - sm_star).abs() < 1e-9
+            && (m.y - 480.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn gerber_zero_endurance_is_degenerate() {
+        let mut f = tor_fatigue_result();
+        f.fully_reversed_endurance = Stress::from_megapascals(0.0);
+        let d = gerber_chart(&f, UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 0);
+        assert_eq!(d.markers.len(), 0);
+        assert!(crate::plot::chart_extent(&d).is_none());
     }
 }
