@@ -10,10 +10,12 @@
 
 use std::f64::consts::TAU;
 
+pub mod render3d;
+
 /// Stroke/color role of one polyline (mapped to palette tokens in the
 /// renderer only). `Detail` = hooks and legs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 pub enum SceneRole {
     Wire,
     Member,
@@ -21,7 +23,7 @@ pub enum SceneRole {
 }
 
 /// One 3D polyline in true millimetres; y is the spring axis.
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 pub struct Polyline3 {
     pub points: Vec<(f64, f64, f64)>,
     pub role: SceneRole,
@@ -37,7 +39,7 @@ pub struct SceneData {
 /// Sample a helix: `radius_at`/`height_at` are functions of t ∈ [0, 1] along
 /// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
 /// + 1` points (inclusive endpoint).
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn helix(
     radius_at: impl Fn(f64) -> f64,
     height_at: impl Fn(f64) -> f64,
@@ -60,7 +62,7 @@ pub fn helix(
 /// driven by the SOLVED coil counts, so every `EndType` renders correctly
 /// without matching on it (plain ends have total == active ⇒ no flattening).
 /// `t` spans the TOTAL coil count.
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn coil_height_fn(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> impl Fn(f64) -> f64 {
     let dead_per_end = ((total - active) / 2.0).max(0.0);
     move |t: f64| {
@@ -74,7 +76,7 @@ pub fn coil_height_fn(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> i
 
 /// Wire-diameter → stroke width: proportional to the wire's share of the
 /// scene's largest dimension, clamped to a legible pixel range.
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
     ((wire_mm / extent_mm) * 250.0).clamp(1.0, 8.0) as u32
 }
@@ -83,14 +85,14 @@ pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
 /// span. `None` when no finite point exists (degenerate scene — must not
 /// reach the renderer). Coordinates are SIGNED (x/z span ±R); only
 /// finiteness is filtered, unlike the 2D chart's non-negative rule.
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 pub struct SceneExtent {
     pub radial: f64,
     pub y_min: f64,
     pub y_max: f64,
 }
 
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Task 3 (canvas); remove this allow then
 pub fn scene_extent(scene: &SceneData) -> Option<SceneExtent> {
     let mut radial = f64::NEG_INFINITY;
     let mut y_min = f64::INFINITY;
@@ -136,7 +138,7 @@ const ORBIT_SENSITIVITY: f32 = 0.01;
 const PITCH_LIMIT: f32 = 1.4;
 
 /// Apply a drag delta: yaw wraps into (-π, π], pitch clamps to ±`PITCH_LIMIT`.
-#[allow(dead_code)] // consumed from Task 2 (renderer) / Task 3 (canvas) / Tasks 4-6 (presenters); remove this allow then
+#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
     use std::f32::consts::{PI, TAU};
     let mut yaw = current.yaw + dx * ORBIT_SENSITIVITY;
