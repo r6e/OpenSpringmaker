@@ -16,7 +16,7 @@ use crate::presenter::unit_length_label;
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -38,13 +38,13 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 Message::ExtScenario
             ),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     // Inputs group — driven by the presenter's field list.
     let inputs = ext_inputs_view(app);
-    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
@@ -66,7 +66,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         section_divider(pal),
         hooks_group,
     ]
-    .spacing(16);
+    .spacing(SP_LG);
 
     container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
@@ -99,7 +99,7 @@ fn hooks_group(app: &App) -> Element<'_, Message> {
         default_radio,
         custom_radio,
     ]
-    .spacing(8);
+    .spacing(SP_SM);
 
     if mode == HookMode::Custom {
         col = col
@@ -185,14 +185,14 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'static, Message> {
-    let mut col = column![section_heading(pal, "Load points")].spacing(4);
+    let mut col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     col = col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
@@ -230,7 +230,7 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
@@ -239,7 +239,7 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
@@ -286,7 +286,7 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
                 .color(pal.text)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
         col = col.push(data_row);
     }
 
@@ -357,7 +357,7 @@ fn render_populated<'a>(
         toggle,
         visual,
     ]
-    .spacing(6);
+    .spacing(SP_ROW);
     if let Some(rows) = &p.min_weight {
         col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
     }

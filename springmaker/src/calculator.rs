@@ -11,7 +11,8 @@ use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, styled_pick_list, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    section_heading, styled_pick_list, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD, SP_ROW, SP_SM,
+    SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 use springcore::{Family, UnitSystem, ALL_FAMILIES};
 
@@ -49,15 +50,15 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let content = column![
         header,
         header_divider,
-        row![left, right].spacing(16),
+        row![left, right].spacing(SP_LG),
         status,
         footer,
     ]
-    .spacing(16)
+    .spacing(SP_LG)
     .max_width(1200);
 
     let root = container(scrollable(
-        container(content).padding(24).width(Length::Fill),
+        container(content).padding(SP_XL).width(Length::Fill),
     ))
     .width(Length::Fill)
     .height(Length::Fill)
@@ -117,7 +118,7 @@ fn header(app: &App) -> Element<'_, Message> {
 
     row![
         app_name,
-        space().width(Length::Fixed(160.0)),
+        space().width(Length::Fixed(HEADER_GAP)),
         family_selector,
         space().width(Length::Fill),
         materials_btn,
@@ -125,7 +126,7 @@ fn header(app: &App) -> Element<'_, Message> {
         unit_metric,
         unit_us,
     ]
-    .spacing(16)
+    .spacing(SP_LG)
     .align_y(iced::Alignment::Center)
     .into()
 }
@@ -148,7 +149,7 @@ fn status_panel(app: &App) -> Element<'_, Message> {
         return column![].into();
     }
 
-    let mut col = column![section_heading(pal, "Status")].spacing(6);
+    let mut col = column![section_heading(pal, "Status")].spacing(SP_ROW);
     for line in &lines {
         col = col.push(render_status_line(pal, line));
     }
@@ -168,10 +169,10 @@ fn render_status_line(pal: &'static Palette, line: &StatusLine) -> Element<'stat
         text(prefix)
             .size(SZ_LABEL)
             .color(color)
-            .width(Length::Fixed(72.0)),
+            .width(Length::Fixed(COL_STATUS_PREFIX)),
         text(line.text.clone()).size(SZ_LABEL).color(color),
     ]
-    .spacing(8)
+    .spacing(SP_SM)
     .into()
 }
 
@@ -188,5 +189,5 @@ fn footer(pal: &'static Palette) -> Element<'static, Message> {
         .on_press(Message::Load)
         .style(ghost_button_style(pal));
 
-    row![save_btn, load_btn].spacing(12).into()
+    row![save_btn, load_btn].spacing(SP_MD).into()
 }

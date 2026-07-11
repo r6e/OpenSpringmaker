@@ -11,7 +11,7 @@ use crate::materials_view_model::{edit_panel, feedback, list_rows, Badge, Feedba
 use crate::widgets::{
     accent_button_style, danger_button_style, field_label, ghost_button_style, mono_value,
     nav_button_style, panel_container, section_divider, section_heading, styled_pick_list,
-    text_input_style, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    text_input_style, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XL, SP_XS, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 use springcore::{MtsForm, StrengthUnits};
 
@@ -46,7 +46,7 @@ fn labeled_mat_input<'a>(
         field_label(pal, label.to_owned()),
         mat_text_input(pal, "", value, field),
     ]
-    .spacing(4)
+    .spacing(SP_XS)
     .into()
 }
 
@@ -56,7 +56,7 @@ fn labeled_mat_input<'a>(
 
 fn build_list_panel(app: &App) -> Element<'_, Message> {
     let pal = app.pal();
-    let mut list_col = column![].spacing(6);
+    let mut list_col = column![].spacing(SP_ROW);
     // Rendering is driven entirely by the presenter (materials_view_model);
     // which actions a row offers is decided there and unit-tested.
     for r in list_rows(app) {
@@ -66,7 +66,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
         };
         let badge = text(badge_text).size(SZ_LABEL).color(badge_color);
 
-        let mut btn_row = row![badge, space().width(Length::Fill)].spacing(6);
+        let mut btn_row = row![badge, space().width(Length::Fill)].spacing(SP_ROW);
         if r.can_clone {
             btn_row = btn_row.push(
                 button(text("Clone").size(SZ_LABEL).color(pal.text))
@@ -94,7 +94,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
             btn_row,
             section_divider(pal),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
 
         list_col = list_col.push(entry);
     }
@@ -109,7 +109,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
         .on_press(Message::MatPersist)
         .style(ghost_button_style(pal));
 
-    let footer = row![new_btn, persist_btn].spacing(10);
+    let footer = row![new_btn, persist_btn].spacing(SP_MD);
 
     let inner = column![
         section_heading(pal, "Materials"),
@@ -117,7 +117,7 @@ fn build_list_panel(app: &App) -> Element<'_, Message> {
         list_scroll,
         footer,
     ]
-    .spacing(10)
+    .spacing(SP_MD)
     .height(Length::Fill);
 
     container(panel_container(pal, inner))
@@ -175,12 +175,12 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
             field_label(pal, "MTS form"),
             styled_pick_list(pal, MTS_FORMS, Some(f.mts_form), Message::MatFormKind),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
         column![
             field_label(pal, "Units"),
             styled_pick_list(pal, STRENGTH_UNITS, Some(f.mts_units), Message::MatUnits),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
         labeled_mat_input(pal, coeff_hint, &f.coefficients, MatField::Coefficients),
         section_divider(pal),
         section_heading(pal, "Diameter range (mm)"),
@@ -188,7 +188,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
             labeled_mat_input(pal, "Min", &f.valid_dia_min, MatField::ValidDiaMin),
             labeled_mat_input(pal, "Max", &f.valid_dia_max, MatField::ValidDiaMax),
         ]
-        .spacing(10),
+        .spacing(SP_MD),
         section_divider(pal),
         section_heading(pal, "Elastic constants"),
         labeled_mat_input(
@@ -218,7 +218,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
         section_divider(pal),
         endurance_toggle,
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     if panel.show_endurance_fields {
         form_col = form_col
@@ -278,7 +278,7 @@ fn build_edit_panel(app: &App) -> Element<'_, Message> {
         save_btn,
         cancel_btn,
     ]
-    .spacing(8)
+    .spacing(SP_SM)
     .align_y(iced::Alignment::Center);
 
     form_col = form_col.push(section_divider(pal)).push(action_row);
@@ -308,18 +308,18 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     });
 
     let header = row![title, space().width(Length::Fill), back_btn]
-        .spacing(16)
+        .spacing(SP_LG)
         .align_y(iced::Alignment::Center);
 
     let list_panel = build_list_panel(app);
     let edit_panel = build_edit_panel(app);
 
     let panels = row![list_panel, edit_panel]
-        .spacing(16)
+        .spacing(SP_LG)
         .height(Length::Fill);
 
     let mut content = column![header, section_divider(pal)]
-        .spacing(16)
+        .spacing(SP_LG)
         .max_width(1200)
         .height(Length::Fill);
 
@@ -335,7 +335,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     let root = container(
         container(content)
-            .padding(24)
+            .padding(SP_XL)
             .width(Length::Fill)
             .height(Length::Fill),
     )

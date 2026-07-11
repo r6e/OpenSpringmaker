@@ -17,12 +17,50 @@ pub(crate) const SZ_LABEL: u32 = 13;
 pub(crate) const SZ_BODY: u32 = 14;
 pub(crate) const SZ_TITLE: u32 = 18;
 
+// --------------------------------------------------------------------------
+// Spacing tokens
+// --------------------------------------------------------------------------
+
+/// Extra-small spacing unit (4px).
+pub(crate) const SP_XS: f32 = 4.0;
+
+/// Row spacing for results panels (6px) — deliberate token for results-row rhythm.
+pub(crate) const SP_ROW: f32 = 6.0;
+
+/// Small spacing unit (8px).
+pub(crate) const SP_SM: f32 = 8.0;
+
+/// Medium spacing unit (12px) — note: 10→12 value change during visual refresh.
+pub(crate) const SP_MD: f32 = 12.0;
+
+/// Large spacing unit (16px).
+pub(crate) const SP_LG: f32 = 16.0;
+
+/// Panel padding (20px).
+pub(crate) const PANEL_PAD: f32 = 20.0;
+
+/// Extra-large spacing unit (24px).
+pub(crate) const SP_XL: f32 = 24.0;
+
+// --------------------------------------------------------------------------
+// Fixed-width columns
+// --------------------------------------------------------------------------
+
+/// Pt column width (24.0).
+pub(crate) const COL_PT: f32 = 24.0;
+
+/// Status prefix column width (72.0).
+pub(crate) const COL_STATUS_PREFIX: f32 = 72.0;
+
+/// Header gap width (160.0).
+pub(crate) const HEADER_GAP: f32 = 160.0;
+
 pub(crate) fn panel_container<'a>(
     pal: &'static Palette,
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     container(content)
-        .padding(20)
+        .padding(PANEL_PAD)
         .style(move |_theme| iced::widget::container::Style {
             background: Some(Background::Color(pal.panel)),
             border: Border {
@@ -127,7 +165,7 @@ pub(crate) fn material_picker(app: &App) -> Element<'_, Message> {
             Message::Material
         ),
     ]
-    .spacing(4)
+    .spacing(SP_XS)
     .into()
 }
 
@@ -289,7 +327,7 @@ pub(crate) fn results_empty(pal: &'static Palette) -> Element<'static, Message> 
             .size(SZ_BODY)
             .color(pal.muted),
     ]
-    .spacing(12)
+    .spacing(SP_MD)
     .into()
 }
 
@@ -299,7 +337,7 @@ pub(crate) fn results_error(pal: &'static Palette, msg: String) -> Element<'stat
         section_heading(pal, "Results"),
         text(msg).size(SZ_LABEL).color(pal.danger),
     ]
-    .spacing(12)
+    .spacing(SP_MD)
     .into()
 }
 
@@ -329,7 +367,7 @@ pub(crate) fn result_row_colored<'a>(
             .color(value_color)
             .width(Length::FillPortion(3)),
     ]
-    .spacing(8)
+    .spacing(SP_SM)
     .into()
 }
 
@@ -363,7 +401,7 @@ pub(crate) fn rows_section(
     heading: &str,
     rows: &[ResultRow],
 ) -> iced::widget::Column<'static, Message> {
-    let mut col = column![section_heading(pal, heading)].spacing(6);
+    let mut col = column![section_heading(pal, heading)].spacing(SP_ROW);
     for r in rows {
         col = col.push(render_result_row(pal, r));
     }
@@ -378,7 +416,7 @@ pub(crate) fn divided_result_section(
     heading: &str,
     rows: &[ResultRow],
 ) -> Element<'static, Message> {
-    let mut col = column![section_divider(pal), section_heading(pal, heading)].spacing(6);
+    let mut col = column![section_divider(pal), section_heading(pal, heading)].spacing(SP_ROW);
     for r in rows {
         col = col.push(render_result_row(pal, r));
     }
@@ -393,7 +431,7 @@ pub(crate) fn render_governing_rate(
 ) -> Element<'static, Message> {
     let rate_label = text(label.to_owned()).size(SZ_LABEL).color(pal.muted);
     let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), pal.accent, SZ_HERO);
-    column![rate_label, rate_value].spacing(6).into()
+    column![rate_label, rate_value].spacing(SP_ROW).into()
 }
 
 /// The results panel's shared chart/3D toggle: identical in every family
@@ -410,7 +448,7 @@ pub(crate) fn visual_toggle(
         radio("Chart", VisualMode::Chart, Some(selected), Message::Visual).text_size(SZ_LABEL),
         radio("3D", VisualMode::Spring3d, Some(selected), Message::Visual).text_size(SZ_LABEL),
     ]
-    .spacing(12)
+    .spacing(SP_MD)
     .into()
 }
 
@@ -436,7 +474,7 @@ pub(crate) fn labeled_input<'a>(
             .font(Font::MONOSPACE)
             .style(text_input_style(pal)),
     ]
-    .spacing(4)
+    .spacing(SP_XS)
     .into()
 }
 
@@ -459,6 +497,6 @@ pub(crate) fn material_picker_for_member(app: &App, index: usize) -> Element<'_,
             index, m
         )),
     ]
-    .spacing(4)
+    .spacing(SP_XS)
     .into()
 }

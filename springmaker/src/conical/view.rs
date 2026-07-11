@@ -15,7 +15,7 @@ use crate::presenter::LoadTable;
 use crate::widgets::{
     field_label, labeled_input, material_picker, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 use iced::widget::row;
 use iced::Font;
@@ -39,12 +39,12 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 Message::ConEndType(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     let inputs = con_inputs_view(app);
-    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
@@ -56,7 +56,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         ));
     }
 
-    let inner = column![setup_group, section_divider(pal), inputs_col].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_col].spacing(SP_LG);
 
     container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
@@ -154,20 +154,20 @@ fn render_populated<'a>(
         visual,
         render_linear_model_footer(pal),
     ]
-    .spacing(6)
+    .spacing(SP_ROW)
     .into()
 }
 
 /// The load-point table. Mirrors compression's `render_load_table` exactly.
 fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
-    let mut load_col = column![section_heading(pal, "Load points")].spacing(4);
+    let mut load_col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     load_col = load_col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
@@ -189,7 +189,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
@@ -198,7 +198,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
@@ -225,7 +225,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                 .color(pal.text)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
         load_col = load_col.push(load_row);
     }
 
@@ -239,6 +239,6 @@ fn render_linear_model_footer(pal: &'static Palette) -> Element<'static, Message
         section_divider(pal),
         text(CON_LINEAR_MODEL_NOTE).size(SZ_LABEL).color(pal.muted),
     ]
-    .spacing(8)
+    .spacing(SP_SM)
     .into()
 }

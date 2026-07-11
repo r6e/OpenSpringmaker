@@ -17,7 +17,7 @@ use crate::presenter::{FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -76,9 +76,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 Message::Scenario
             ),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(12)
+    .spacing(SP_MD)
     .width(Length::FillPortion(1));
 
     let setup_col_b = column![
@@ -88,25 +88,25 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 Message::EndType(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
         column![
             field_label(pal, "Fixity"),
             styled_pick_list(pal, FIXITIES, selected_fix, |kl: KeyLabel| {
                 Message::Fixity(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(12)
+    .spacing(SP_MD)
     .width(Length::FillPortion(1));
 
-    let setup_row = row![setup_col_a, setup_col_b].spacing(12);
+    let setup_row = row![setup_col_a, setup_col_b].spacing(SP_MD);
 
-    let setup_group = column![section_heading(pal, "Setup"), setup_row,].spacing(10);
+    let setup_group = column![section_heading(pal, "Setup"), setup_row,].spacing(SP_MD);
 
     let inputs_group = build_inputs_group(app);
 
-    let inner = column![setup_group, section_divider(pal), inputs_group,].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_group,].spacing(SP_LG);
 
     container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
@@ -120,7 +120,7 @@ fn build_inputs_group(app: &App) -> Element<'_, Message> {
     // `app.form` (iced's `text_input` borrows its value).
     let inputs = inputs_view(app);
 
-    let mut col = column![section_heading(pal, "Inputs")].spacing(12);
+    let mut col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs.primary {
         col = col.push(render_input(app, fd));
     }
@@ -180,14 +180,14 @@ fn field_value(form: &crate::compression::form::FormState, field: Field) -> &str
 // --------------------------------------------------------------------------
 
 fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
-    let mut load_col = column![section_heading(pal, "Load points")].spacing(4);
+    let mut load_col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     load_col = load_col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
@@ -209,7 +209,7 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
@@ -218,7 +218,7 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
@@ -245,7 +245,7 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
                 .color(pal.text)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
         load_col = load_col.push(load_row);
     }
 
@@ -260,7 +260,7 @@ fn render_fatigue(pal: &'static Palette, fv: &FatigueView) -> Element<'static, M
             section_divider(pal),
             text(*msg).size(SZ_LABEL).color(pal.muted),
         ]
-        .spacing(8)
+        .spacing(SP_SM)
         .into(),
     }
 }
@@ -346,7 +346,7 @@ fn render_populated<'a>(
         visual,
         render_fatigue(pal, &p.fatigue),
     ]
-    .spacing(6);
+    .spacing(SP_ROW);
 
     if let Some(fc) = fatigue_chart {
         col = col.push(fc);

@@ -7,8 +7,8 @@ use iced::{Background, Border, Color, Element, Font, Length};
 use crate::app::{App, Message, Palette, Screen};
 use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
 use crate::widgets::{
-    nav_button_style, panel_container, section_divider, section_heading, SZ_BODY, SZ_LABEL,
-    SZ_TITLE,
+    nav_button_style, panel_container, section_divider, section_heading, SP_LG, SP_MD, SP_SM,
+    SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 
 /// Style for a correction-option row: highlighted when selected, muted when not.
@@ -65,7 +65,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
     });
 
     let header = row![title, space().width(Length::Fill), back_btn]
-        .spacing(16)
+        .spacing(SP_LG)
         .align_y(iced::Alignment::Center);
 
     // Build correction-option buttons. Each option emits SetCorrection on press;
@@ -77,7 +77,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         section_heading(pal, "Curvature-correction factor"),
         section_divider(pal),
     ]
-    .spacing(8);
+    .spacing(SP_SM);
 
     // Extract save_feedback before consuming vm.options into option_data.
     let save_feedback = vm.save_feedback;
@@ -96,7 +96,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             .on_press(Message::SetCorrection(value))
             .style(correction_option_style(pal, selected))
             .width(Length::Fill)
-            .padding([8, 12]);
+            .padding([SP_SM, SP_MD]);
         options_col = options_col.push(btn);
     }
 
@@ -105,7 +105,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .into();
 
     let mut content = column![header, section_divider(pal), correction_panel]
-        .spacing(16)
+        .spacing(SP_LG)
         .max_width(800);
 
     // Surface a settings-save error below the correction panel (spec §5).
@@ -119,7 +119,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     let root = container(
         container(content)
-            .padding(24)
+            .padding(SP_XL)
             .width(Length::Fill)
             .height(Length::Fill),
     )

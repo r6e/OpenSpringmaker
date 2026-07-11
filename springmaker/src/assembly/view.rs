@@ -14,7 +14,7 @@ use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, panel_container, render_governing_rate, render_result_row,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -34,16 +34,16 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
                 Message::AsmTopology(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
         column![
             field_label(pal, "Fixity"),
             styled_pick_list(pal, FIXITIES, selected_fixity, |kl: KeyLabel| {
                 Message::AsmFixity(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     let loads_group = column![
         section_heading(pal, "Loads"),
@@ -51,9 +51,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
             Message::AsmLoads(v)
         }),
     ]
-    .spacing(8);
+    .spacing(SP_SM);
 
-    let mut members_col = column![section_heading(pal, "Members")].spacing(12);
+    let mut members_col = column![section_heading(pal, "Members")].spacing(SP_MD);
     for (index, m) in app.assembly.members.iter().enumerate() {
         members_col = members_col.push(member_card(app, index, m));
     }
@@ -70,7 +70,7 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         members_col,
         add_btn,
     ]
-    .spacing(16);
+    .spacing(SP_LG);
 
     container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
@@ -148,7 +148,7 @@ fn render_populated<'a>(
         toggle,
         visual,
     ]
-    .spacing(6);
+    .spacing(SP_ROW);
 
     for member in &p.members {
         col = col.push(section_divider(pal));
@@ -162,14 +162,14 @@ fn render_populated<'a>(
 /// The assembly `LoadTable` has no stress — `stress_unit` is empty and the
 /// stress/%MTS columns are omitted.
 fn render_asm_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
-    let mut col = column![section_heading(pal, "Assembly load points")].spacing(4);
+    let mut col = column![section_heading(pal, "Assembly load points")].spacing(SP_XS);
 
     col = col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
@@ -183,7 +183,7 @@ fn render_asm_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                 .color(pal.muted)
                 .width(Length::FillPortion(2)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
@@ -193,7 +193,7 @@ fn render_asm_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
                     .color(pal.muted)
-                    .width(Length::Fixed(24.0)),
+                    .width(Length::Fixed(COL_PT)),
                 text(lp.force.clone())
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
@@ -210,7 +210,7 @@ fn render_asm_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                     .color(pal.text)
                     .width(Length::FillPortion(2)),
             ]
-            .spacing(4),
+            .spacing(SP_XS),
         );
     }
 
@@ -227,7 +227,7 @@ fn render_member_section(
 ) -> Element<'static, Message> {
     let heading = text(m.heading.clone()).size(SZ_LABEL).color(pal.text);
 
-    let mut col = column![heading].spacing(6);
+    let mut col = column![heading].spacing(SP_ROW);
     for r in &m.rows {
         col = col.push(render_result_row(pal, r));
     }
@@ -241,14 +241,14 @@ fn render_member_section(
 /// Per-member load table: 6 columns (Pt / Force / Deflection / Length /
 /// Stress(unit) / %MTS). Mirrors `render_con_load_table` in the conical view.
 fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
-    let mut col = column![section_heading(pal, "Member load points")].spacing(4);
+    let mut col = column![section_heading(pal, "Member load points")].spacing(SP_XS);
 
     col = col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
-                .width(Length::Fixed(24.0)),
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
@@ -270,7 +270,7 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
@@ -280,7 +280,7 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
                     .color(pal.muted)
-                    .width(Length::Fixed(24.0)),
+                    .width(Length::Fixed(COL_PT)),
                 text(lp.force.clone())
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
@@ -307,7 +307,7 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
                     .color(pal.text)
                     .width(Length::FillPortion(1)),
             ]
-            .spacing(4),
+            .spacing(SP_XS),
         );
     }
 
@@ -341,7 +341,7 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
 
     let pal = app.pal();
     let header_text = text(format!("Member {}", index + 1)).size(SZ_LABEL);
-    let mut header = row![header_text].spacing(8);
+    let mut header = row![header_text].spacing(SP_SM);
     if app.assembly.members.len() > 1 {
         let remove_btn = button(text("Remove").size(SZ_LABEL).color(pal.danger))
             .style(danger_button_style(pal))
@@ -360,7 +360,7 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
                 Message::AsmMemberEndType(index, kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
         labeled_input(
             pal,
             "Wire dia",
@@ -390,7 +390,7 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
             move |v| Message::AsmField(index, F::FreeLength, v)
         ),
     ]
-    .spacing(6)
-    .padding(8)
+    .spacing(SP_ROW)
+    .padding(SP_SM)
     .into()
 }
