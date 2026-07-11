@@ -15,6 +15,7 @@ mod settings;
 mod settings_view;
 mod settings_view_model;
 mod torsion;
+mod viz;
 mod widgets;
 
 #[cfg(test)]
