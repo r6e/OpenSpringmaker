@@ -117,13 +117,22 @@ mod tests {
         assert_relative_eq!(pts[0].0, 0.0, max_relative = 1e-12);
         assert_relative_eq!(pts[0].1, 0.0, max_relative = 1e-12);
         assert_relative_eq!(pts[1].0, 0.0, max_relative = 1e-12);
-        assert_relative_eq!(pts[1].1, d.initial_tension.newtons(), max_relative = 1e-9); // Fi intercept
-        let max_f = d
+        // Fi intercept.
+        assert_relative_eq!(pts[1].1, d.initial_tension.newtons(), max_relative = 1e-9);
+        // Cross-check the third point against the ENGINE's solved load point
+        // (not a recomputation of the presenter's own fold): the presenter's
+        // (max_f - Fi)/k geometry must land exactly on the engine's solution.
+        let max_lp = d
             .load_points
             .iter()
-            .map(|lp| lp.force.newtons())
-            .fold(0.0_f64, f64::max);
-        assert_relative_eq!(pts[2].1, max_f, max_relative = 1e-9);
+            .max_by(|a, b| a.force.newtons().total_cmp(&b.force.newtons()))
+            .expect("fixture has load points");
+        assert_relative_eq!(
+            pts[2].0,
+            max_lp.deflection.millimeters(),
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(pts[2].1, max_lp.force.newtons(), max_relative = 1e-9);
     }
 
     #[test]
@@ -131,6 +140,19 @@ mod tests {
         // All loads ≤ Fi: no third segment; extent is Fi itself.
         let d = design_with_loads_below_fi();
         let data = extension_chart(&d, UnitSystem::Metric);
-        assert_eq!(data.lines[0].points.len(), 2);
+        let pts = &data.lines[0].points;
+        assert_eq!(pts.len(), 2);
+        // The line's extent is the fixture's Fi (20 N).
+        assert_relative_eq!(pts[1].1, 20.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn invalid_initial_tension_yields_no_lines() {
+        // Fi = 0 is not finite-positive: the presenter must emit no lines
+        // (markers may remain — their validity does not hinge on Fi).
+        let mut d = design();
+        d.initial_tension = springcore::units::Force::from_newtons(0.0);
+        let data = extension_chart(&d, UnitSystem::Metric);
+        assert!(data.lines.is_empty());
     }
 }
