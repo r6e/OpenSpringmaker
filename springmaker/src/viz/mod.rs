@@ -41,15 +41,30 @@ pub struct SceneData {
     pub polylines: Vec<Polyline3>,
 }
 
+/// Hard cap on renderable turns. Coil counts are form-controlled with only
+/// positive+finite validation upstream, so the viz layer must self-defend:
+/// beyond this, additional turns add no visible detail at the shipped
+/// 760×300 scene resolution, while an uncapped hostile value (a huge finite
+/// turns count, or `inf`) would try to allocate an enormous or overflowing
+/// point buffer inside `view()` — an application-killing panic on every
+/// affected family, since they all share this sampler.
+const MAX_RENDER_TURNS: f64 = 2_000.0;
+
 /// Sample a helix: `radius_at`/`height_at` are functions of t ∈ [0, 1] along
 /// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
-/// + 1` points (inclusive endpoint).
+/// + 1` points (inclusive endpoint). Hostile `turns` (non-finite, or beyond
+/// [`MAX_RENDER_TURNS`]) returns an empty `Vec` instead of sampling, so the
+/// existing `scene_extent → None → placeholder` discipline fires rather than
+/// the allocation overflowing or blowing up the frame budget.
 pub fn helix(
     radius_at: impl Fn(f64) -> f64,
     height_at: impl Fn(f64) -> f64,
     turns: f64,
     samples_per_turn: usize,
 ) -> Vec<(f64, f64, f64)> {
+    if !turns.is_finite() || turns > MAX_RENDER_TURNS {
+        return Vec::new();
+    }
     let n = ((turns * samples_per_turn as f64).ceil() as usize).max(2);
     (0..=n)
         .map(|i| {
@@ -226,6 +241,36 @@ mod tests {
         assert_relative_eq!(last.1, 50.0, max_relative = 1e-12);
         // 5 whole turns: end angle ≡ start angle (x > 0, z ≈ 0).
         assert_relative_eq!(last.2, 0.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn helix_caps_hostile_turns_to_empty() {
+        // Non-finite turns: NaN and inf both must empty out rather than
+        // overflow the `as usize` cast into a capacity-overflow panic.
+        assert!(helix(|_| 1.0, |_| 1.0, f64::NAN, 32).is_empty());
+        assert!(helix(|_| 1.0, |_| 1.0, f64::INFINITY, 32).is_empty());
+        // A huge but finite turns count (form validation only checks
+        // positive+finite) must also empty out, not allocate ~768MB/frame.
+        assert!(helix(|_| 1.0, |_| 1.0, 1e18, 32).is_empty());
+    }
+
+    #[test]
+    fn helix_renders_exactly_at_the_cap_and_empties_just_above() {
+        let at_cap = helix(|_| 1.0, |_| 1.0, MAX_RENDER_TURNS, 32);
+        assert_eq!(at_cap.len(), (MAX_RENDER_TURNS * 32.0) as usize + 1); // ≈64k points, ~1.5MB
+        let just_over = helix(|_| 1.0, |_| 1.0, MAX_RENDER_TURNS + 1.0, 32);
+        assert!(just_over.is_empty());
+    }
+
+    #[test]
+    fn scene_from_radius_hostile_turns_yields_a_degenerate_scene() {
+        // End-to-end: the sampler cap must reach through `scene_from_radius`
+        // (and therefore every family calling it) so `scene_extent` sees
+        // `None` and the shipped placeholder fires, instead of the `view()`
+        // capacity-overflow panic the adversary proved (form `active=1e18,
+        // free=1e19` solves, then the scene build panics).
+        let scene = scene_from_radius(|_| 10.0, 10.0, 1e18, 1e18, 5.0, 2.0);
+        assert!(scene_extent(&scene).is_none());
     }
 
     #[test]
