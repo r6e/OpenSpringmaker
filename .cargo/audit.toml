@@ -1,0 +1,21 @@
+# cargo-audit configuration (read by the Security Audit workflow's
+# rustsec/audit-check job). This file mirrors the *vulnerability* acceptances
+# already enforced in deny.toml — both CI advisory gates must encode the same
+# decision, or the one without the ignore fails on an already-accepted risk
+# (which is exactly how this file came to exist).
+#
+# Unmaintained/informational advisories (paste, ttf-parser) are NOT ignored
+# here: cargo-audit reports them as warnings that do not fail the check, and
+# keeping them visible preserves the nudge to migrate.
+
+[advisories]
+ignore = [
+    # `quick-xml` 0.39 — two DoS vulnerabilities reachable only when parsing
+    # UNTRUSTED XML. Not reachable here: quick-xml's sole consumer is
+    # `wayland-scanner`, a build-time proc-macro over the trusted, vendored
+    # Wayland protocol definitions; un-bumpable while wayland-scanner pins
+    # ^0.39. Accepted in docs/adr/0012-accept-transitive-quick-xml-advisories.md;
+    # revisit on the iced/winit stack upgrade, in lockstep with deny.toml.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

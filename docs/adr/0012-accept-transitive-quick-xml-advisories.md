@@ -50,7 +50,12 @@ exists. The fix is not reachable without a full GUI-stack upgrade.
 
 The acceptance is made explicit in CI via the `deny.toml` advisory `ignore` list
 (`RUSTSEC-2026-0194`, `RUSTSEC-2026-0195`), with a comment pointing back to this ADR, so
-the gate documents the decision rather than silently passing. Unlike the `paste` (ADR 0010)
+the gate documents the decision rather than silently passing. The same two IDs are
+mirrored in `.cargo/audit.toml` for the separate `cargo-audit` workflow (added 2026-07-11:
+that gate reads its own config, not `deny.toml`, and failed on the already-accepted
+advisories the first time a `Cargo.*` change path-triggered it after their publication).
+Both files must stay in lockstep; the revisit condition below removes the ignores from
+**both**. Unlike the `paste` (ADR 0010)
 and `ttf-parser` (ADR 0011) acceptances — which are *unmaintained/informational* — this ADR
 accepts *vulnerability* advisories, justified by the non-reachability analysis above.
 
@@ -70,7 +75,7 @@ accepts *vulnerability* advisories, justified by the non-reachability analysis a
   to be revisited — the ID-keyed advisory `ignore` alone would silently keep passing.
 - **Revisit when** the `iced` / `winit` / `wayland-scanner` stack is upgraded to a version
   whose `wayland-scanner` permits `quick-xml >= 0.41.0`; at that point remove the two
-  `deny.toml` ignores and drop this ADR.
+  ignores from **both** `deny.toml` and `.cargo/audit.toml`, and drop this ADR.
 
 ## Alternatives considered
 
