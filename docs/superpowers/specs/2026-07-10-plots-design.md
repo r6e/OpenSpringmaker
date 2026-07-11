@@ -129,8 +129,8 @@ renderer.
 |---|---|---|---|---|
 | Compression | deflection (mm/in) | load (N/lbf) | origin→max-load linear | operating points |
 | Conical | deflection | load | same linear shape (linear-range model) | operating points |
-| Extension | deflection | load | two segments: (0,0)→(0,Fi)→(y_max,F_max) — the initial-tension jump made visible | operating points |
-| Torsion | angle (deg) | moment (N·mm / lbf·in) | origin→max ideal rate line | actual load points (friction-adjusted, may sit off the ideal line — deliberate) |
+| Extension | deflection | load | three-branch: Fi>0 jump (0,0)→(0,Fi)→(y_max,F_max) when max load exceeds Fi; two-point (0,0)→(0,Fi) when every load ≤ Fi (renders via the x=0/y>0 extent allowance); Fi=0 → plain origin→max line | operating points |
+| Torsion | angle (deg) | moment (N·mm / lbf·in) | origin→max ideal rate line | actual load points — markers read the engine's solved fields (currently coincident with the ideal line under the linear engine; the field-read is what is pinned, not the coincidence) |
 | Assembly | assembly deflection | force | composite k_total line (Primary) + one Member line per member (slope kᵢ, legend "Member N") | assembly operating points + travel limit on the composite |
 
 Assembly reads: nested members visibly stack (composite steeper than every
@@ -138,19 +138,25 @@ member); series assemblies visibly soften (composite shallower than every
 member). Member lines draw thinner/muted; the composite draws in the accent
 color.
 
-Extent rule: x/y extents come from the max finite operating point. Fallbacks
-when no operating loads exist: compression and conical fall back to the
-at-solid point (compression-family precedent); assembly to the travel-limit
-point; extension and torsion have no solid-state analogue and render the
-placeholder instead (their forms already require loads to produce a solved
-outcome, so the fallback is unreachable in practice — the placeholder is the
-defensive path).
+Extent rule: x/y extents come from the max finite operating point; x extents
+may be zero when y is positive (the extension family's initial-tension jump
+sits at x = 0), and the renderer floors the axis rather than treating a zero
+x-extent as degenerate. Fallbacks when no operating loads exist: compression
+and conical fall back to the at-solid point (compression-family precedent);
+assembly to the travel-limit point; extension and torsion have no
+solid-state analogue and render the placeholder instead (their forms already
+require loads to produce a solved outcome, so the fallback is unreachable in
+practice — the placeholder is the defensive path).
 
 ## Fatigue diagrams
 
-Axes: (mean stress, alternating stress) in display stress units (MPa / psi),
-rendered inside the existing fatigue results sections, only when the analysis
-returned `Ok` (the `NoFatigueData` degradation path is untouched).
+Axes: (mean stress, alternating stress) in display stress units (MPa / ksi —
+matching the app-wide US convention, `presenter::display_stress`), rendered
+inside the existing fatigue results sections, only when the analysis returned
+`Ok` (the `NoFatigueData` degradation path is untouched). Compression's axes
+are SHEAR stress (τm/τa symbols — its `FatigueResult` quantities are
+torsional shear); torsion's Gerber axes are normal stress (σm/σa symbols —
+its bending fatigue check).
 
 - **Compression — Goodman (Shigley §10-9).** Envelope: straight line
   (0, Se)→(Ssu, 0). Load line: origin through (τm, τa), role `LoadLine`.
@@ -203,3 +209,23 @@ returned `Ok` (the `NoFatigueData` degradation path is untouched).
 - Zoom/pan, plot export to file (candidates for the reports increment).
 - Any springcore change.
 - 3D visualization and display polish (increments two and three).
+
+## Amendments (2026-07-10, post-review)
+
+- **Marker co-gating on rate validity is crate-wide.** Every round-wire and
+  torsion presenter suppresses operating/limit markers alongside the line
+  whenever the design's rate (or, for extension, Fi) is invalid — not just
+  the round-wire family. The design is degenerate as a whole, not just its
+  line geometry.
+- **Fatigue charts are gated through presenter functions**, not inline in the
+  view: `goodman_chart`/`gerber_chart` return an empty `ChartData` (no lines,
+  no markers) when the engine's Se/Ssu/Sut inputs aren't finite-positive,
+  keeping the "no chart ⇒ no canvas ⇒ no mapping" invariant intact for the
+  fatigue path too.
+- **Compression's chart is repositioned beside the load table**, not below
+  the whole results panel, for cross-family layout symmetry with
+  extension/torsion/conical/assembly (all of which place their chart next to
+  the load table).
+- Fixed the US fatigue-stress display bug (psi shown instead of ksi) and the
+  torsion friction erratum above; see this file's per-family table and
+  fatigue-axes paragraph, already amended in place.

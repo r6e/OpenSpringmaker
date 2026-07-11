@@ -4,11 +4,12 @@
 //! hover widget ([`canvas`]) that displays it, with the pixel↔data affine
 //! math ([`mapping`]) shared between the two so they cannot drift apart.
 //!
-//! The chart is drawn by `plotters` into an in-memory RGB bitmap and shown via
-//! iced's `image` widget. This keeps the (well-established) `plotters` drawing
-//! code without depending on any iced-coupled backend, so the chart is never
-//! blocked by a `plotters-iced` version lag. Text is rendered with a bundled
-//! font (`ab_glyph`), so there is no runtime system-font lookup.
+//! The chart is drawn by `plotters` into an in-memory RGB bitmap, displayed
+//! by the hover canvas (`ChartCanvas`) via `Frame::draw_image`. This keeps
+//! the (well-established) `plotters` drawing code without depending on any
+//! iced-coupled backend, so the chart is never blocked by a `plotters-iced`
+//! version lag. Text is rendered with a bundled font (`ab_glyph`), so there
+//! is no runtime system-font lookup.
 
 use plotters::prelude::*;
 use plotters::style::{register_font, FontStyle};

@@ -2,6 +2,18 @@
 
 **Status:** Accepted
 
+> **Update (2026-07-10).** The plots-library increment
+> (docs/superpowers/specs/2026-07-10-plots-design.md) replaced the plain
+> `image` widget with a hover canvas (`ChartCanvas`, `springmaker/src/plot/canvas.rs`):
+> an iced `canvas::Program` that draws the same plotters-rendered bitmap via
+> `Frame::draw_image` and layers a crosshair/readout overlay on top. The
+> bitmap is still rasterized only in `view()` (re-render-on-view, as noted in
+> Consequences below, is unchanged); mouse-hover repaints go through
+> `canvas::Action::request_redraw()`, which re-runs only `Program::draw` (one
+> image quad + overlay geometry) and never re-invokes plotters (see that
+> plan's cache note). The core decision here — plotters into an in-memory RGB
+> bitmap with a bundled font, no iced-coupled backend — is unchanged.
+
 ## Context
 
 The GUI's results chart (force–deflection line + operating-point markers) was
