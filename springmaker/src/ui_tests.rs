@@ -1559,3 +1559,145 @@ fn spring3d_arm_dispatches_scene_not_chart() {
         "if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER here"
     );
 }
+
+/// Extension: degenerate chart (rate=0) must not surface placeholders in
+/// Spring3d mode — scene dispatch and validity, per the compression template.
+#[test]
+fn extension_spring3d_arm_dispatches_scene_not_chart() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "10");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.ext_outcome.as_mut().unwrap().design.rate =
+        springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "extension: the 3D scene is still valid; Spring3d must dispatch to scene_element"
+    );
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "extension: if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER"
+    );
+}
+
+/// Torsion: degenerate chart (rate=0) must not surface placeholders in
+/// Spring3d mode — scene dispatch and validity, per the compression template.
+#[test]
+fn torsion_spring3d_arm_dispatches_scene_not_chart() {
+    use crate::torsion::form::Field as TF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "5");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.tor_outcome.as_mut().unwrap().design.rate =
+        springcore::units::AngularRate::from_newton_meters_per_radian(0.0);
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "torsion: the 3D scene is still valid; Spring3d must dispatch to scene_element"
+    );
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "torsion: if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER"
+    );
+}
+
+/// Conical: degenerate chart (rate=0) must not surface placeholders in
+/// Spring3d mode — scene dispatch and validity, per the compression template.
+#[test]
+fn conical_spring3d_arm_dispatches_scene_not_chart() {
+    use crate::conical::form::Field as CF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    type_into_con(&mut app, CF::WireDia, "2");
+    type_into_con(&mut app, CF::LargeMeanDia, "20");
+    type_into_con(&mut app, CF::SmallMeanDia, "12");
+    type_into_con(&mut app, CF::Active, "10");
+    type_into_con(&mut app, CF::FreeLength, "60");
+    type_into_con(&mut app, CF::Loads, "10, 25");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.con_outcome.as_mut().unwrap().design.rate =
+        springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "conical: the 3D scene is still valid; Spring3d must dispatch to scene_element"
+    );
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "conical: if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER"
+    );
+}
+
+/// Assembly: degenerate chart (rate=0) must not surface placeholders in
+/// Spring3d mode — scene dispatch and validity, per the compression template.
+#[test]
+fn assembly_spring3d_arm_dispatches_scene_not_chart() {
+    use crate::assembly::form::MemberField as F;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+    type_into_asm_member(&mut app, 0, F::WireDia, "2");
+    type_into_asm_member(&mut app, 0, F::MeanDia, "20");
+    type_into_asm_member(&mut app, 0, F::Active, "10");
+    type_into_asm_member(&mut app, 0, F::FreeLength, "60");
+    app.update(Message::AsmMemberAdd);
+    type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
+    type_into_asm_member(&mut app, 1, F::MeanDia, "16");
+    type_into_asm_member(&mut app, 1, F::Active, "8");
+    type_into_asm_member(&mut app, 1, F::FreeLength, "60");
+    app.update(Message::AsmLoads("10, 25".into()));
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.asm_outcome.as_mut().unwrap().rate = springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "assembly: the 3D scene is still valid; Spring3d must dispatch to scene_element"
+    );
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "assembly: if Spring3d arm calls chart_element by mistake, the degenerate chart surfaces CHART_PLACEHOLDER"
+    );
+}
