@@ -9,7 +9,8 @@ use iced::{Element, Font, Length};
 use crate::app::{App, Message, C};
 use crate::compression::form::{Field, ALL_SCENARIOS};
 use crate::compression::view_model::{
-    inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults, ResultsView,
+    fatigue_chart_data, inputs_view, results_view, FatigueView, MinWeightView, PopulatedResults,
+    ResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES};
 use crate::presenter::{FieldDescriptor, LoadTable};
@@ -284,14 +285,14 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 })
                 .expect("ResultsView::Populated implies app.outcome is Some");
 
-            let fatigue_chart = app.outcome.as_ref().and_then(|o| match &o.fatigue {
-                crate::compression::form::FatigueStatus::Computed(f) => {
-                    Some(crate::plot::chart_element(
-                        crate::compression::plot_model::goodman_chart(f, us),
-                    ))
-                }
-                _ => None,
-            });
+            // The presenter decides whether a fatigue chart exists (it stays
+            // hidden with the fatigue rows on min-weight runs); the view only
+            // renders the data it hands back.
+            let fatigue_chart = app
+                .outcome
+                .as_ref()
+                .and_then(|o| fatigue_chart_data(o, us))
+                .map(crate::plot::chart_element);
 
             render_populated(&p, chart, fatigue_chart)
         }

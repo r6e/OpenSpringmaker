@@ -4,7 +4,9 @@
 //! engine those coincide, but the presenter must not bake that in — a test
 //! pins that the field is read, not derived.
 
-use crate::plot::{AxisMeta, ChartData, Line, LineRole, Marker, MarkerKind};
+use crate::plot::{
+    stress_axes, stress_display, AxisMeta, ChartData, Line, LineRole, Marker, MarkerKind,
+};
 use springcore::torsion::TorsionDesign;
 use springcore::UnitSystem;
 
@@ -84,12 +86,12 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
 /// Eq. 10-59). The GUI samples the cited criterion for display only; the
 /// engine remains the factor-of-safety authority.
 pub fn gerber_chart(f: &springcore::torsion::TorFatigueResult, units: UnitSystem) -> ChartData {
-    let (x_axis, y_axis) = crate::plot::stress_axes(units);
-    let se = crate::plot::stress_display(f.fully_reversed_endurance, units);
-    let sut = crate::plot::stress_display(f.ultimate_tensile, units);
-    let sa_op = crate::plot::stress_display(f.alternating_stress, units);
-    let sm_op = crate::plot::stress_display(f.mean_stress, units);
-    let sa_strength = crate::plot::stress_display(f.strength_amplitude, units);
+    let (x_axis, y_axis) = stress_axes(units);
+    let se = stress_display(f.fully_reversed_endurance, units);
+    let sut = stress_display(f.ultimate_tensile, units);
+    let sa_op = stress_display(f.alternating_stress, units);
+    let sm_op = stress_display(f.mean_stress, units);
+    let sa_strength = stress_display(f.strength_amplitude, units);
     if !(se.is_finite()
         && se > 0.0
         && sut.is_finite()
@@ -150,7 +152,6 @@ pub fn gerber_chart(f: &springcore::torsion::TorFatigueResult, units: UnitSystem
 mod tests {
     use super::*;
     use crate::app::App;
-    use crate::plot::{LineRole, MarkerKind};
     use crate::torsion::form::TorFormState;
     use approx::assert_relative_eq;
     use springcore::units::Stress;

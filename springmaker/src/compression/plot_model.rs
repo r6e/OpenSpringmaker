@@ -1,6 +1,9 @@
 //! Pure chart presenter for the compression family (ADR 0008).
 
-use crate::plot::{round_wire_force_deflection, ChartData};
+use crate::plot::{
+    round_wire_force_deflection, stress_axes, stress_display, ChartData, Line, LineRole, Marker,
+    MarkerKind,
+};
 use springcore::{SpringDesign, UnitSystem};
 
 pub fn compression_chart(design: &SpringDesign, units: UnitSystem) -> ChartData {
@@ -12,11 +15,11 @@ pub fn compression_chart(design: &SpringDesign, units: UnitSystem) -> ChartData 
 /// All values come from `FatigueResult`; no engineering formula is re-derived
 /// here — the intersection is line/line geometry on the engine's numbers.
 pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartData {
-    let (x_axis, y_axis) = crate::plot::stress_axes(units);
-    let se = crate::plot::stress_display(f.fully_reversed_endurance, units);
-    let ssu = crate::plot::stress_display(f.ultimate_shear, units);
-    let ta = crate::plot::stress_display(f.alternating_stress, units);
-    let tm = crate::plot::stress_display(f.mean_stress, units);
+    let (x_axis, y_axis) = stress_axes(units);
+    let se = stress_display(f.fully_reversed_endurance, units);
+    let ssu = stress_display(f.ultimate_shear, units);
+    let ta = stress_display(f.alternating_stress, units);
+    let tm = stress_display(f.mean_stress, units);
     // Defense in depth: the engine's output guard makes these finite-positive,
     // but the presenter re-checks before building geometry.
     if !(se.is_finite()
@@ -34,9 +37,9 @@ pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartD
         };
     }
 
-    let envelope = crate::plot::Line {
+    let envelope = Line {
         points: vec![(0.0, se), (ssu, 0.0)],
-        role: crate::plot::LineRole::Envelope,
+        role: LineRole::Envelope,
         name: None,
     };
     // Load line endpoint on the envelope: vertical when τm = 0, else
@@ -48,9 +51,9 @@ pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartD
         let x_star = se * ssu / (se + r * ssu);
         (x_star, r * x_star)
     };
-    let load_line = crate::plot::Line {
+    let load_line = Line {
         points: vec![(0.0, 0.0), (lx, ly)],
-        role: crate::plot::LineRole::LoadLine,
+        role: LineRole::LoadLine,
         name: None,
     };
 
@@ -59,15 +62,15 @@ pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartD
         y_axis,
         lines: vec![envelope, load_line],
         markers: vec![
-            crate::plot::Marker {
+            Marker {
                 x: tm,
                 y: ta,
-                kind: crate::plot::MarkerKind::Operating,
+                kind: MarkerKind::Operating,
             },
-            crate::plot::Marker {
+            Marker {
                 x: lx,
                 y: ly,
-                kind: crate::plot::MarkerKind::Limit,
+                kind: MarkerKind::Limit,
             },
         ],
     }
@@ -76,7 +79,6 @@ pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartD
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plot::{LineRole, MarkerKind};
     use approx::assert_relative_eq;
     use springcore::units::{Force, Length, Stress};
     use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario};
@@ -208,6 +210,31 @@ mod tests {
         let end = *ll.points.last().unwrap();
         assert_relative_eq!(end.0, 0.0, max_relative = 1e-12);
         assert_relative_eq!(end.1, 310.0, max_relative = 1e-9); // straight up to Se
+    }
+
+    #[test]
+    fn goodman_zero_alternating_stress_load_line_runs_to_ssu() {
+        // r = 0 (equal cycle forces — a legal engine output): the load line
+        // lies on the x-axis and meets the envelope at (Ssu, 0).
+        let mut f = fatigue_result();
+        f.alternating_stress = Stress::from_megapascals(0.0);
+        let d = goodman_chart(&f, UnitSystem::Metric);
+        assert_eq!(d.lines.len(), 2);
+        assert_eq!(d.markers.len(), 2);
+        let ll = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::LoadLine)
+            .unwrap();
+        let end = *ll.points.last().unwrap();
+        assert_relative_eq!(end.0, 1130.0, max_relative = 1e-9); // x* = Se·Ssu/Se = Ssu
+        assert_relative_eq!(end.1, 0.0, max_relative = 1e-12);
+        assert!(d.markers.iter().any(|m| m.kind == MarkerKind::Operating
+            && (m.x - 200.0).abs() < 1e-9
+            && m.y.abs() < 1e-12));
+        assert!(d.markers.iter().any(|m| m.kind == MarkerKind::Limit
+            && (m.x - 1130.0).abs() < 1e-9
+            && m.y.abs() < 1e-12));
     }
 
     #[test]
