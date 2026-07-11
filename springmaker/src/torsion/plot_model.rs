@@ -1,6 +1,8 @@
 //! Pure chart presenter for the torsion family (ADR 0008): moment vs angle.
-//! The line is the IDEAL rate line θ = M/k′; markers use the solved,
-//! friction-adjusted deflections and may legitimately sit off the line.
+//! The line is the ideal rate line θ = M/k′; markers read the engine's SOLVED
+//! `deflection` field rather than recomputing M/k. With the current linear
+//! engine those coincide, but the presenter must not bake that in — a test
+//! pins that the field is read, not derived.
 
 use crate::plot::{AxisMeta, ChartData, Line, LineRole, Marker, MarkerKind};
 use springcore::torsion::TorsionDesign;
@@ -35,7 +37,8 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
         .map(|lp| lp.moment.newton_meters())
         .fold(0.0_f64, f64::max);
     let k = design.rate.newton_meters_per_degree();
-    let lines = if k.is_finite() && k > 0.0 && max_m_nm.is_finite() && max_m_nm > 0.0 {
+    let rate_ok = k.is_finite() && k > 0.0;
+    let lines = if rate_ok && max_m_nm.is_finite() && max_m_nm > 0.0 {
         let theta = max_m_nm / k;
         let max_m = design
             .load_points
@@ -50,15 +53,23 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
     } else {
         vec![]
     };
-    let markers = design
-        .load_points
-        .iter()
-        .map(|lp| Marker {
-            x: lp.deflection.degrees(),
-            y: display_moment(lp.moment),
-            kind: MarkerKind::Operating,
-        })
-        .collect();
+    // A non-positive or non-finite rate makes the whole design degenerate, not
+    // just the line: the solved deflections came from that rate, so markers are
+    // suppressed too, keeping `chart_extent` None and the chart out of plotters
+    // (round_wire_force_deflection convention).
+    let markers = if rate_ok {
+        design
+            .load_points
+            .iter()
+            .map(|lp| Marker {
+                x: lp.deflection.degrees(),
+                y: display_moment(lp.moment),
+                kind: MarkerKind::Operating,
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     ChartData {
         x_axis,
         y_axis,
@@ -108,20 +119,53 @@ mod tests {
         let theta_deg = max_m_nm / d.rate.newton_meters_per_degree();
         let last = *data.lines[0].points.last().unwrap();
         assert_relative_eq!(last.0, theta_deg, max_relative = 1e-9);
-        assert_relative_eq!(last.1, max_m_nm * 1000.0, max_relative = 1e-9); // display N·mm
+        // Pin the display value against the ENGINE's max-moment load point,
+        // not a recomputation of the presenter's own fold.
+        let max_lp = d
+            .load_points
+            .iter()
+            .max_by(|a, b| {
+                a.moment
+                    .newton_meters()
+                    .total_cmp(&b.moment.newton_meters())
+            })
+            .expect("fixture has load points");
+        assert_relative_eq!(
+            last.1,
+            max_lp.moment.newton_millimeters(),
+            max_relative = 1e-9
+        );
         assert_eq!(data.x_axis.unit, "°");
         assert_eq!(data.y_axis.unit, "N·mm");
     }
 
     #[test]
     fn markers_use_solved_deflections_not_the_ideal_line() {
-        // Friction-adjusted load points may sit off the ideal line — markers must
-        // come from the SOLVED deflection field, not from M/k.
-        let d = design();
+        // The linear engine puts every solved point exactly on M = k′·θ, so a
+        // presenter that recomputed markers from the rate would pass a plain
+        // field comparison. Mutate the solved deflection off the ideal line:
+        // the marker must follow the FIELD, proving it is read, not derived.
+        let mut d = design();
+        let nudged =
+            springcore::units::Angle::from_degrees(d.load_points[0].deflection.degrees() + 3.0);
+        d.load_points[0].deflection = nudged;
         let data = torsion_chart(&d, UnitSystem::Metric);
+        assert_relative_eq!(data.markers[0].x, nudged.degrees(), max_relative = 1e-12);
         for (m, lp) in data.markers.iter().zip(&d.load_points) {
             assert_relative_eq!(m.x, lp.deflection.degrees(), max_relative = 1e-12);
         }
+    }
+
+    #[test]
+    fn invalid_rate_yields_degenerate_chart() {
+        // Zero rate invalidates the whole design: no line, no markers, and
+        // chart_extent must be None so the placeholder path is taken.
+        let mut d = design();
+        d.rate = springcore::units::AngularRate::from_newton_meters_per_radian(0.0);
+        let data = torsion_chart(&d, UnitSystem::Metric);
+        assert!(data.lines.is_empty());
+        assert!(data.markers.is_empty());
+        assert!(crate::plot::chart_extent(&data).is_none());
     }
 
     #[test]
