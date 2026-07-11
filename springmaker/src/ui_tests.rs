@@ -1750,12 +1750,18 @@ fn probe_family_tab_switch_while_in_3d_mode() {
     probe_solve_compression(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
     let custom = drag_orbit(&mut app, 20.0, -85.0);
-    assert!(!shows(&app, SCENE_PLACEHOLDER), "A: solved 3D scene renders");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "A: solved 3D scene renders"
+    );
     assert!(shows(&app, "Spring rate"), "A: populated results");
 
     // A → B with B's form blank: Empty arm, no visual, no stale A content.
     app.update(Message::SelectFamily(Family::Extension));
-    assert!(app.outcome.is_none(), "A's outcome is cleared on tab switch");
+    assert!(
+        app.outcome.is_none(),
+        "A's outcome is cleared on tab switch"
+    );
     assert!(
         shows(&app, "Enter design parameters to see results."),
         "B blank: Empty arm text"
@@ -1768,7 +1774,11 @@ fn probe_family_tab_switch_while_in_3d_mode() {
         !shows(&app, "Spring rate"),
         "B blank: no stale populated panel from tab A"
     );
-    assert_eq!(app.results_visual, VisualMode::Spring3d, "mode follows the user");
+    assert_eq!(
+        app.results_visual,
+        VisualMode::Spring3d,
+        "mode follows the user"
+    );
     assert_eq!(app.orbit, custom, "orbit is untouched by the tab switch");
 
     // Solve B while already in 3D mode: B's own scene, same orbit.
@@ -1781,19 +1791,28 @@ fn probe_family_tab_switch_while_in_3d_mode() {
         !shows(&app, SCENE_PLACEHOLDER),
         "B: 3D scene renders on a tab entered already in Spring3d mode"
     );
-    assert_eq!(app.orbit, custom, "solving B must not corrupt the shared orbit");
+    assert_eq!(
+        app.orbit, custom,
+        "solving B must not corrupt the shared orbit"
+    );
     assert_eq!(app.results_visual, VisualMode::Spring3d);
 
     // B → A: A re-solves from its persisted form; 3D still correct.
     app.update(Message::SelectFamily(Family::Compression));
     assert!(app.outcome.is_some(), "A re-solves from its persisted form");
-    assert!(app.ext_outcome.is_none(), "B's outcome cleared symmetrically");
+    assert!(
+        app.ext_outcome.is_none(),
+        "B's outcome cleared symmetrically"
+    );
     assert!(shows(&app, "Spring rate"), "A: populated again");
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
         "A: 3D scene renders again after the round trip"
     );
-    assert_eq!(app.orbit, custom, "orbit survives the full A→B→A round trip");
+    assert_eq!(
+        app.orbit, custom,
+        "orbit survives the full A→B→A round trip"
+    );
     assert_eq!(app.results_visual, VisualMode::Spring3d);
 }
 
@@ -1838,8 +1857,14 @@ fn probe_resolve_to_invalid_in_3d_shows_error_not_stale_scene() {
 
     // Any 'x' inserted anywhere in "2.0" breaks the f64 parse.
     type_into(&mut app, Field::WireDia, "x");
-    assert!(app.outcome.is_none(), "corrupted input must clear the outcome");
-    assert!(app.error.is_some(), "corrupted input must set the solve error");
+    assert!(
+        app.outcome.is_none(),
+        "corrupted input must clear the outcome"
+    );
+    assert!(
+        app.error.is_some(),
+        "corrupted input must set the solve error"
+    );
     assert!(
         !shows(&app, "Spring rate"),
         "3D mode: no stale populated panel after the failing re-solve"
@@ -1875,10 +1900,16 @@ fn probe_orbit_survives_mode_roundtrip_and_rapid_toggle() {
     let custom = drag_orbit(&mut app, -290.0, 105.0);
 
     app.update(Message::Visual(VisualMode::Chart));
-    assert!(!shows(&app, CHART_PLACEHOLDER), "chart renders mid-roundtrip");
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "chart renders mid-roundtrip"
+    );
     app.update(Message::Visual(VisualMode::Spring3d));
     assert_eq!(app.orbit, custom, "orbit survives the mode round trip");
-    assert!(!shows(&app, SCENE_PLACEHOLDER), "3D renders after round trip");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "3D renders after round trip"
+    );
 
     // Rapid toggling with a full render each time: no panic, no state drift.
     for _ in 0..4 {
@@ -1889,7 +1920,10 @@ fn probe_orbit_survives_mode_roundtrip_and_rapid_toggle() {
     }
     assert_eq!(app.orbit, custom, "orbit untouched by rapid toggling");
     assert_eq!(app.results_visual, VisualMode::Spring3d);
-    assert!(app.outcome.is_some(), "toggling never recomputes or clears results");
+    assert!(
+        app.outcome.is_some(),
+        "toggling never recomputes or clears results"
+    );
 }
 
 /// US↔SI while in 3D mode: `Message::Units` recomputes with the form text
@@ -1914,7 +1948,11 @@ fn probe_units_toggle_while_in_3d_mode() {
         chart.outcome.is_some(),
         "symmetry: unit reinterpretation must resolve identically in both modes"
     );
-    assert_eq!(threed.results_visual, VisualMode::Spring3d, "units must not reset the mode");
+    assert_eq!(
+        threed.results_visual,
+        VisualMode::Spring3d,
+        "units must not reset the mode"
+    );
     assert_eq!(threed.orbit, custom, "units must not reset the orbit");
     // Render both without panic; if unsolved, neither placeholder shows (Error arm).
     if threed.outcome.is_none() {
@@ -1923,12 +1961,21 @@ fn probe_units_toggle_while_in_3d_mode() {
             "US reinterpretation failure renders the Error arm, not a placeholder"
         );
     } else {
-        assert!(!shows(&threed, SCENE_PLACEHOLDER), "US-solved design renders 3D");
+        assert!(
+            !shows(&threed, SCENE_PLACEHOLDER),
+            "US-solved design renders 3D"
+        );
     }
 
     threed.update(Message::Units(UnitSystem::Metric));
-    assert!(threed.outcome.is_some(), "metric flip-back re-solves the same form");
-    assert!(!shows(&threed, SCENE_PLACEHOLDER), "3D restored after the unit round trip");
+    assert!(
+        threed.outcome.is_some(),
+        "metric flip-back re-solves the same form"
+    );
+    assert!(
+        !shows(&threed, SCENE_PLACEHOLDER),
+        "3D restored after the unit round trip"
+    );
     assert_eq!(threed.orbit, custom);
 }
 
@@ -1981,7 +2028,10 @@ fn probe_assembly_member_and_topology_changes_in_3d_mode() {
 
     // Adding a blank member fails the re-solve: Error arm, no stale scene.
     app.update(Message::AsmMemberAdd);
-    assert!(app.asm_outcome.is_none(), "blank third member fails the solve");
+    assert!(
+        app.asm_outcome.is_none(),
+        "blank third member fails the solve"
+    );
     assert!(
         !shows(&app, "Summary"),
         "no stale populated assembly panel in 3D mode"
@@ -1999,8 +2049,14 @@ fn probe_assembly_member_and_topology_changes_in_3d_mode() {
     assert!(app.asm_outcome.is_some(), "filled third member solves");
     assert!(!shows(&app, SCENE_PLACEHOLDER), "three-member 3D renders");
     app.update(Message::AsmMemberRemove(2));
-    assert!(app.asm_outcome.is_some(), "back to two members still solves");
-    assert!(!shows(&app, SCENE_PLACEHOLDER), "two-member 3D renders again");
+    assert!(
+        app.asm_outcome.is_some(),
+        "back to two members still solves"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "two-member 3D renders again"
+    );
     assert_eq!(app.results_visual, VisualMode::Spring3d);
 }
 
@@ -2014,7 +2070,10 @@ fn probe_fatigue_region_renders_in_both_visual_modes() {
     probe_solve_compression(&mut app);
     type_into(&mut app, Field::FatigueMin, "10");
     type_into(&mut app, Field::FatigueMax, "30");
-    assert!(shows(&app, "Goodman FOS"), "compression fatigue rows in Chart mode");
+    assert!(
+        shows(&app, "Goodman FOS"),
+        "compression fatigue rows in Chart mode"
+    );
     app.update(Message::Visual(VisualMode::Spring3d));
     assert!(
         shows(&app, "Goodman FOS"),
@@ -2039,7 +2098,10 @@ fn probe_fatigue_region_renders_in_both_visual_modes() {
         type_into_tor(&mut app, TF::Moments, "1000");
         type_into_tor(&mut app, TF::FatigueMin, "100");
         type_into_tor(&mut app, TF::FatigueMax, "500");
-        assert!(shows(&app, "Gerber FOS"), "torsion fatigue rows in Chart mode");
+        assert!(
+            shows(&app, "Gerber FOS"),
+            "torsion fatigue rows in Chart mode"
+        );
         app.update(Message::Visual(VisualMode::Spring3d));
         assert!(
             shows(&app, "Gerber FOS"),

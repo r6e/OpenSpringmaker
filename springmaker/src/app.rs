@@ -1213,7 +1213,11 @@ mod tests {
         let mut combined = test_app();
         combined.update(Message::Orbit(20.0, 8.0));
 
-        assert_relative_eq!(sequential.orbit.yaw, combined.orbit.yaw, max_relative = 1e-5);
+        assert_relative_eq!(
+            sequential.orbit.yaw,
+            combined.orbit.yaw,
+            max_relative = 1e-5
+        );
         assert_relative_eq!(
             sequential.orbit.pitch,
             combined.orbit.pitch,

@@ -376,13 +376,7 @@ pub(crate) fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Mess
 pub(crate) fn visual_toggle(selected: VisualMode) -> Element<'static, Message> {
     row![
         radio("Chart", VisualMode::Chart, Some(selected), Message::Visual).text_size(SZ_LABEL),
-        radio(
-            "3D",
-            VisualMode::Spring3d,
-            Some(selected),
-            Message::Visual
-        )
-        .text_size(SZ_LABEL),
+        radio("3D", VisualMode::Spring3d, Some(selected), Message::Visual).text_size(SZ_LABEL),
     ]
     .spacing(12)
     .into()
