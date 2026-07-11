@@ -120,8 +120,12 @@ pub struct ChartData {
     pub markers: Vec<Marker>,
 }
 
-/// Finite-positive extent across every line point and marker. `None` means the
-/// chart is degenerate and must not reach plotters (non-finite ranges panic).
+/// Extent across every line point and marker: y must be finite-positive; x
+/// must be finite and non-negative. x == 0 is deliberately allowed — it is
+/// how the extension family's initial-tension jump (a vertical line at
+/// x = 0 from (0, 0) to (0, Fi)) renders when every load is at or below Fi.
+/// `None` means the chart is degenerate and must not reach plotters
+/// (non-finite ranges panic).
 pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
     let pts = data
         .lines
@@ -132,7 +136,8 @@ pub fn chart_extent(data: &ChartData) -> Option<(f64, f64)> {
         (f64::NEG_INFINITY, f64::NEG_INFINITY),
         |(xm, ym), (x, y)| (xm.max(x), ym.max(y)),
     );
-    (x_max.is_finite() && x_max > 0.0 && y_max.is_finite() && y_max > 0.0).then_some((x_max, y_max))
+    (x_max.is_finite() && x_max >= 0.0 && y_max.is_finite() && y_max > 0.0)
+        .then_some((x_max, y_max))
 }
 
 /// Hover readout line, e.g. `y = 12.30 mm · F = 45.60 N`.
@@ -344,6 +349,23 @@ mod tests {
             vec![],
         );
         assert!(chart_extent(&d).is_none()); // only finite point is the origin → no positive extent
+    }
+
+    #[test]
+    fn chart_extent_allows_zero_x_when_y_positive() {
+        // The extension family's Fi jump: x stays at 0, y is the (positive)
+        // Fi value — must be renderable, not treated as degenerate.
+        let d = data_with(
+            vec![Line {
+                points: vec![(0.0, 0.0), (0.0, 20.0)],
+                role: LineRole::Primary,
+                name: None,
+            }],
+            vec![],
+        );
+        let (x, y) = chart_extent(&d).expect("x = 0, y > 0 must be a valid extent");
+        assert_relative_eq!(x, 0.0, max_relative = 1e-12);
+        assert_relative_eq!(y, 20.0, max_relative = 1e-12);
     }
 
     #[test]
