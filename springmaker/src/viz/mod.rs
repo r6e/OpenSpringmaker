@@ -148,6 +148,21 @@ pub fn close_wound_coil(radius_mm: f64, turns: f64, wire_mm: f64) -> SceneData {
     scene_from_radius(|_| radius_mm, radius_mm, turns, turns, wire_mm, wire_mm)
 }
 
+/// Whether a scene's coil BODY — `polylines[0]`, the helix polyline that
+/// `scene_from_radius` (and thus `close_wound_coil`) always puts first —
+/// came back EMPTY: the capped/hostile-turns outcome of [`helix`]'s guard.
+/// Every family presenter that builds ON the body (attaching `Detail`
+/// hooks/legs, or composing members) MUST check this before touching the
+/// body's points; otherwise it indexes into an empty Vec (panic) or renders
+/// floating details around a missing body. Centralized so a future
+/// Detail-building family cannot reintroduce the gap.
+pub(crate) fn coil_body_is_empty(scene: &SceneData) -> bool {
+    scene
+        .polylines
+        .first()
+        .is_none_or(|body| body.points.is_empty())
+}
+
 /// 3D bounding extent: max radial distance from the y axis plus the axial
 /// span. `None` when no finite point exists (degenerate scene — must not
 /// reach the renderer). Coordinates are SIGNED (x/z span ±R); only

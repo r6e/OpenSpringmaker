@@ -72,4 +72,17 @@ mod tests {
             max_relative = 1e-9
         );
     }
+
+    /// Symmetry pin (panel-R2 test matrix): a coil count past the helix
+    /// render cap forwards the sampler's empty body unchanged — extent
+    /// `None`, placeholder — at THIS family's scene level, not just inside
+    /// the shared sampler.
+    #[test]
+    fn capped_coils_yield_degenerate_scene() {
+        let mut d = design();
+        d.inputs.active_coils = 2001.0;
+        d.total_coils = 2003.0;
+        let s = conical_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
+    }
 }

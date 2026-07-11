@@ -10,7 +10,7 @@
 //! thick outer member from a thin inner one honestly rather than flattening
 //! both to one shared scale.
 
-use crate::viz::{scene_from_radius, SceneData, SceneRole};
+use crate::viz::{coil_body_is_empty, scene_from_radius, SceneData, SceneRole};
 use springcore::assembly::{AssemblyDesign, Topology};
 
 pub fn assembly_scene(design: &AssemblyDesign) -> SceneData {
@@ -36,6 +36,20 @@ pub fn assembly_scene(design: &AssemblyDesign) -> SceneData {
             d.pitch.millimeters(),
             d.wire_dia.millimeters(),
         );
+        // Contrast with the NaN-cascade semantics pinned in the tests below:
+        // a NaN-poisoned member still CONTRIBUTES points (non-finite,
+        // filtered per point by `finite3`) because the solver output was
+        // already poisoned upstream, and a partial render is the accepted
+        // trade-off. A CAPPED member is different — its input is VALID and
+        // solvable, and the sampler returned an EMPTY body; rendering the
+        // assembly minus one member would silently misrepresent the design.
+        // Honest bail instead: any empty member body degrades the WHOLE
+        // scene (empty SceneData → extent None → placeholder).
+        if coil_body_is_empty(&member_scene) {
+            return SceneData {
+                polylines: Vec::new(),
+            };
+        }
         let mut line = member_scene
             .polylines
             .into_iter()
@@ -163,6 +177,25 @@ mod tests {
         let s = assembly_scene(&d);
         assert_eq!(s.polylines[0].role, SceneRole::Wire);
         assert_eq!(s.polylines[1].role, SceneRole::Member);
+    }
+
+    /// A member coil count past the helix render cap (`MAX_RENDER_TURNS`)
+    /// is VALID form input — active "2001" with free length "5000" solves —
+    /// but that member's capped body comes back EMPTY. Panel-R2 contract:
+    /// any empty member body makes the WHOLE scene degenerate (extent
+    /// `None` → placeholder) rather than silently rendering the assembly
+    /// minus one member, which would misrepresent the design.
+    #[test]
+    fn capped_member_makes_the_whole_scene_degenerate() {
+        let mut form = two_member_form("series");
+        form.members[1].active = "2001".into();
+        form.members[1].free_length = "5000".into();
+        let d = solve(&form);
+        let s = assembly_scene(&d);
+        assert!(
+            scene_extent(&s).is_none(),
+            "a capped (empty) member must degrade the whole scene, not vanish from it"
+        );
     }
 
     /// Nested has no cross-member coupling (every polyline is independent),

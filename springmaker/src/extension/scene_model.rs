@@ -3,7 +3,7 @@
 //! hook arcs (spec-documented simplification — arcs, not exact hook
 //! developments), each attached exactly at its body endpoint.
 
-use crate::viz::{close_wound_coil, Polyline3, SceneData, SceneRole};
+use crate::viz::{close_wound_coil, coil_body_is_empty, Polyline3, SceneData, SceneRole};
 use springcore::extension::ExtensionDesign;
 use std::f64::consts::{PI, TAU};
 
@@ -38,6 +38,13 @@ pub fn extension_scene(design: &ExtensionDesign) -> SceneData {
     let wire = design.wire_dia.millimeters();
     let turns = design.active_coils;
     let mut scene = close_wound_coil(r, turns, wire);
+    // Capped/hostile coil count → empty body: the hooks are positioned from
+    // radius and coil count alone, so building them anyway would render two
+    // floating arcs around a missing body (finite extent — the placeholder
+    // would NOT fire). Return the bodyless scene — extent None → placeholder.
+    if coil_body_is_empty(&scene) {
+        return scene;
+    }
     // Decision: size the hook strokes off the body-only stroke rather than
     // recomputing against the full body+hooks extent (see task report) —
     // the difference is cosmetic and stroke_for clamps to [1, 8] px anyway.
@@ -121,6 +128,41 @@ mod tests {
         assert_relative_eq!(t0.0, last.0, max_relative = 1e-9);
         assert_relative_eq!(t0.1, last.1, max_relative = 1e-9);
         assert_relative_eq!(t0.2, last.2, epsilon = 1e-9);
+    }
+
+    /// An active-coil count past the helix render cap (`MAX_RENDER_TURNS`)
+    /// is VALID form input — active "2001" with free length "5000" solves —
+    /// but the capped sampler returns an empty body. Both hooks are
+    /// positioned from radius and coil count alone (independent of the body
+    /// points), so without an empty-body bail the scene keeps finite hook
+    /// points and renders two disembodied arcs; it must instead degrade to
+    /// extent-`None` (the placeholder).
+    #[test]
+    fn capped_active_coils_yield_degenerate_scene_not_floating_hooks() {
+        let materials = store();
+        let form = ExtFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            active: "2001".to_string(),
+            free_length: "5000".to_string(),
+            initial_tension: "5".to_string(),
+            loads: "10, 30".to_string(),
+            ..Default::default()
+        };
+        let d = parse_and_solve(
+            &form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .unwrap()
+        .design;
+        let s = extension_scene(&d);
+        assert!(
+            crate::viz::scene_extent(&s).is_none(),
+            "an empty capped body must not leave floating hook arcs behind"
+        );
     }
 
     /// Post-solve-mutation degenerate fixture (spec §Degenerate handling,

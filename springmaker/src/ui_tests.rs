@@ -1531,6 +1531,39 @@ fn every_family_renders_3d_after_solve() {
     }
 }
 
+/// CRITICAL reproduction (panel R2, item 1): a body-coil count past the
+/// helix render cap (`MAX_RENDER_TURNS` = 2000) is plain positive form
+/// input — "2001" solves fine — but the capped sampler returns an EMPTY
+/// body. Toggling to Spring3d must surface the 3D placeholder, not panic
+/// inside `view()` indexing `polylines[0].points[0]` on the empty body.
+#[test]
+fn torsion_capped_body_coils_shows_placeholder_not_panic() {
+    use crate::torsion::form::Field as TF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    type_into_tor(&mut app, TF::WireDia, "2");
+    type_into_tor(&mut app, TF::MeanDia, "20");
+    type_into_tor(&mut app, TF::BodyCoils, "2001");
+    type_into_tor(&mut app, TF::Leg1, "0");
+    type_into_tor(&mut app, TF::Leg2, "0");
+    type_into_tor(&mut app, TF::Moments, "1000");
+    assert!(
+        app.tor_outcome.is_some(),
+        "2001 body coils is valid input and must solve"
+    );
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        shows(&app, SCENE_PLACEHOLDER),
+        "a capped (empty) coil body must show the 3D placeholder"
+    );
+    assert!(
+        shows(&app, "Geometry"),
+        "the results panel must stay populated — only the 3D slot degrades"
+    );
+}
+
 /// When a compression design's chart becomes degenerate (rate=0, making
 /// chart_extent None), the 3D scene remains valid (it derives only from
 /// mean_dia, active_coils, total_coils, pitch, wire_dia; not rate). This

@@ -2,7 +2,7 @@
 //! via the shared `close_wound_coil` helper) plus two straight tangential
 //! legs at the solved lengths.
 
-use crate::viz::{close_wound_coil, Polyline3, SceneData, SceneRole};
+use crate::viz::{close_wound_coil, coil_body_is_empty, Polyline3, SceneData, SceneRole};
 use springcore::torsion::TorsionDesign;
 use std::f64::consts::TAU;
 
@@ -11,6 +11,12 @@ pub fn torsion_scene(design: &TorsionDesign) -> SceneData {
     let wire = design.inputs.wire_dia.millimeters();
     let turns = design.inputs.body_coils;
     let mut scene = close_wound_coil(r, turns, wire);
+    // Capped/hostile coil count → empty body: the legs below attach at the
+    // body's endpoints (`points[0]`/`.last()`), which would panic on an
+    // empty Vec. Return the bodyless scene — extent None → placeholder.
+    if coil_body_is_empty(&scene) {
+        return scene;
+    }
     // Decision: size the leg strokes off the body-only stroke rather than
     // recomputing against the full body+legs extent (see task report) — the
     // difference is cosmetic and stroke_for clamps to [1, 8] px anyway.
@@ -109,6 +115,30 @@ mod tests {
         };
         assert_relative_eq!(radial_dot_tangent(leg1), 0.0, epsilon = 1e-6);
         assert_relative_eq!(radial_dot_tangent(leg2), 0.0, epsilon = 1e-6);
+    }
+
+    /// A body-coil count past the helix render cap (`MAX_RENDER_TURNS`) is
+    /// VALID form input — "2001" solves fine — but the capped sampler
+    /// returns an empty body. The scene must degrade to extent-`None` (the
+    /// placeholder), not panic indexing `points[0]` on the empty body
+    /// polyline to attach the legs.
+    #[test]
+    fn capped_body_coils_yield_degenerate_scene() {
+        let materials = store();
+        let form = TorFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            body_coils: "2001".to_string(),
+            leg1: "15".to_string(),
+            leg2: "10".to_string(),
+            moments: "500, 1000".to_string(),
+            ..Default::default()
+        };
+        let d = parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
+            .unwrap()
+            .design;
+        let s = torsion_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
     }
 
     /// Post-solve-mutation degenerate fixture (spec §Degenerate handling,
