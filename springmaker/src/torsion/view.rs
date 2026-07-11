@@ -281,10 +281,23 @@ fn render_tor_load_table(lt: &TorLoadTable) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
     let content: Element<'_, Message> = match tor_results_view(app) {
         TorResultsView::Error(msg) => results_error(msg),
         TorResultsView::Empty => results_empty(),
         TorResultsView::Populated(p) => {
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            let chart = app
+                .tor_outcome
+                .as_ref()
+                .map(|o| {
+                    crate::plot::chart_element(crate::torsion::plot_model::torsion_chart(
+                        &o.design, us,
+                    ))
+                })
+                .expect("TorResultsView::Populated implies app.tor_outcome is Some");
+
             // Angular rate section — two ResultRows (per-degree and per-revolution).
             let mut rate_col = column![section_heading("Angular rate")].spacing(6);
             rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
@@ -298,6 +311,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 rows_section("Geometry", &p.geometry),
                 section_divider(),
                 render_tor_load_table(&p.load_table),
+                section_divider(),
+                chart,
             ]
             .spacing(6);
 
