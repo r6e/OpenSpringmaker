@@ -128,15 +128,22 @@ pub struct SceneExtent {
     pub y_max: f64,
 }
 
+/// Whether all three coordinates of a 3D point are finite — shared by
+/// `scene_extent` and the renderer's point filter (`render3d`) so the two
+/// cannot drift apart (mirrors why `plot::plottable` exists).
+pub(crate) fn finite3(p: (f64, f64, f64)) -> bool {
+    p.0.is_finite() && p.1.is_finite() && p.2.is_finite()
+}
+
 pub fn scene_extent(scene: &SceneData) -> Option<SceneExtent> {
     let mut radial = f64::NEG_INFINITY;
     let mut y_min = f64::INFINITY;
     let mut y_max = f64::NEG_INFINITY;
     for p in scene.polylines.iter().flat_map(|l| l.points.iter()) {
-        let (x, y, z) = *p;
-        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+        if !finite3(*p) {
             continue;
         }
+        let (x, y, z) = *p;
         radial = radial.max((x * x + z * z).sqrt());
         y_min = y_min.min(y);
         y_max = y_max.max(y);

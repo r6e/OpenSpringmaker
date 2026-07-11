@@ -3,8 +3,8 @@
 
 use super::mapping::ChartMapping;
 use super::{
-    chart_extent, ensure_font, to_rgb, ChartData, LineRole, MarkerKind, CHART_H, CHART_W, MARGIN,
-    X_LABEL_AREA, Y_LABEL_AREA,
+    chart_extent, ensure_font, rgb_to_rgba, to_rgb, ChartData, LineRole, MarkerKind, CHART_H,
+    CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA,
 };
 use crate::app::C;
 use plotters::prelude::*;
@@ -121,11 +121,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         root.present().expect("present chart bitmap");
     }
 
-    let mut rgba = Vec::with_capacity((CHART_W * CHART_H * 4) as usize);
-    for px in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-    }
-    Some((rgba, ChartMapping { x_max, y_max }))
+    Some((rgb_to_rgba(&rgb), ChartMapping { x_max, y_max }))
 }
 
 #[cfg(test)]

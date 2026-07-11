@@ -2,9 +2,9 @@
 //! RGBA bitmap (the shipped 760×300 pipeline shape). Axes and mesh are
 //! deliberately suppressed — the scene reads as a clean engineering sketch.
 
-use super::{scene_extent, Orbit, SceneData, SceneRole};
+use super::{finite3, scene_extent, Orbit, SceneData, SceneExtent, SceneRole};
 use crate::app::C;
-use crate::plot::{ensure_font, to_rgb, CHART_H, CHART_W};
+use crate::plot::{ensure_font, rgb_to_rgba, to_rgb, CHART_H, CHART_W};
 use plotters::prelude::*;
 
 fn role_color(role: SceneRole) -> RGBColor {
@@ -15,13 +15,42 @@ fn role_color(role: SceneRole) -> RGBColor {
     }
 }
 
-/// Render the scene under the given orbit. `None` iff the scene has no
-/// finite extent (degenerate — the caller shows the placeholder).
-pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
-    let extent = scene_extent(scene)?;
+/// Frame a scene's bounding extent into plotters axis ranges. plotters'
+/// `Cartesian3d` normalizes EVERY axis onto the same logical length
+/// (vendored plotters-0.3.7 `cartesian3d.rs:50-51,107-113`), so handing x/z
+/// a `±radial` range while y gets a separately-padded data span would
+/// squash the aspect ratio onto a cube (the standard fixture: 23mm radial
+/// vs ~60mm axial rendered squashed 2.6×). Framing all three axes with ONE
+/// physical half-span `s = max(padded radial, padded y half-span)` keeps
+/// millimetres-per-unit equal on every axis (spec: "Coordinates stay in
+/// true mm (aspect-honest)"); x/z stay symmetric about the origin, y stays
+/// centered on the data's own midpoint.
+///
+/// `None` when a computed bound is non-finite — e.g. a near-`f64::MAX` y
+/// span overflows the padding arithmetic to infinity, and plotters accepts
+/// an infinite range without complaint, silently rendering garbage pixels
+/// instead of panicking (the latent twin of `plot::render::render_chart`'s
+/// guarded headroom overflow).
+pub(crate) fn frame_ranges(extent: &SceneExtent) -> Option<((f64, f64), (f64, f64))> {
     let r = extent.radial * 1.15;
     let y_pad = ((extent.y_max - extent.y_min) * 0.05).max(1e-9);
-    let (y_lo, y_hi) = (extent.y_min - y_pad, extent.y_max + y_pad);
+    let y_mid = (extent.y_max + extent.y_min) / 2.0;
+    let y_half = (extent.y_max - extent.y_min) / 2.0 + y_pad;
+    let s = r.max(y_half);
+    let (x_lo, x_hi) = (-s, s);
+    let (y_lo, y_hi) = (y_mid - s, y_mid + s);
+    [x_lo, x_hi, y_lo, y_hi]
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(((x_lo, x_hi), (y_lo, y_hi)))
+}
+
+/// Render the scene under the given orbit. `None` iff the scene has no
+/// finite extent, or the framed ranges overflow (degenerate — the caller
+/// shows the placeholder).
+pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
+    let extent = scene_extent(scene)?;
+    let ((x_lo, x_hi), (y_lo, y_hi)) = frame_ranges(&extent)?;
 
     ensure_font();
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
@@ -30,7 +59,7 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
         root.fill(&to_rgb(C::PANEL)).expect("fill scene background");
         let mut chart = ChartBuilder::on(&root)
             .margin(8)
-            .build_cartesian_3d(-r..r, y_lo..y_hi, -r..r)
+            .build_cartesian_3d(x_lo..x_hi, y_lo..y_hi, x_lo..x_hi)
             .expect("scene axes");
         chart.with_projection(|mut pb| {
             pb.yaw = f64::from(orbit.yaw);
@@ -50,7 +79,7 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
                 .points
                 .iter()
                 .copied()
-                .filter(|&(x, y, z)| x.is_finite() && y.is_finite() && z.is_finite())
+                .filter(|&p| finite3(p))
                 .collect();
             chart
                 .draw_series(LineSeries::new(pts, style))
@@ -59,17 +88,14 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
         root.present().expect("present scene bitmap");
     }
 
-    let mut rgba = Vec::with_capacity((CHART_W * CHART_H * 4) as usize);
-    for px in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-    }
-    Some(rgba)
+    Some(rgb_to_rgba(&rgb))
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::helix;
     use super::*;
+    use approx::assert_relative_eq;
 
     fn test_scene() -> SceneData {
         SceneData {
@@ -133,5 +159,98 @@ mod tests {
             clean, dirty,
             "non-finite points must be filtered, not drawn"
         );
+    }
+
+    #[test]
+    fn frame_ranges_tall_spring_y_drives_the_shared_half_span() {
+        // 23mm radial, 60mm axial — the standard fixture the aspect bug was
+        // proven against (per-axis framing would render this 2.6x squashed).
+        let extent = SceneExtent {
+            radial: 23.0,
+            y_min: 0.0,
+            y_max: 60.0,
+        };
+        let ((x_lo, x_hi), (y_lo, y_hi)) = frame_ranges(&extent).unwrap();
+        // y's padded half-span (33.0) exceeds the padded radial (26.45), so
+        // it drives s — x/z get the SAME half-span as y, not `±radial`.
+        assert_relative_eq!(x_lo, -33.0, max_relative = 1e-12);
+        assert_relative_eq!(x_hi, 33.0, max_relative = 1e-12);
+        assert_relative_eq!(y_lo, -3.0, max_relative = 1e-12); // y_min - pad(3.0)
+        assert_relative_eq!(y_hi, 63.0, max_relative = 1e-12); // y_max + pad(3.0)
+        assert_relative_eq!(
+            x_hi - x_lo,
+            y_hi - y_lo,
+            max_relative = 1e-12,
+            epsilon = 1e-9
+        ); // equal mm-per-unit on every axis
+    }
+
+    #[test]
+    fn frame_ranges_wide_spring_radial_drives_the_shared_half_span() {
+        // 50mm radial, 10mm axial — the opposite regime: radial dominates.
+        let extent = SceneExtent {
+            radial: 50.0,
+            y_min: 0.0,
+            y_max: 10.0,
+        };
+        let ((x_lo, x_hi), (y_lo, y_hi)) = frame_ranges(&extent).unwrap();
+        assert_relative_eq!(x_lo, -57.5, max_relative = 1e-12); // radial * 1.15
+        assert_relative_eq!(x_hi, 57.5, max_relative = 1e-12);
+        assert_relative_eq!(
+            x_hi - x_lo,
+            y_hi - y_lo,
+            max_relative = 1e-12,
+            epsilon = 1e-9
+        );
+    }
+
+    #[test]
+    fn frame_ranges_centers_y_on_the_data_midpoint() {
+        // y spans [10, 50] — midpoint 30, not 0 — must stay centered even
+        // though the shared half-span is driven by the (much larger) radial.
+        let extent = SceneExtent {
+            radial: 100.0,
+            y_min: 10.0,
+            y_max: 50.0,
+        };
+        let ((_, _), (y_lo, y_hi)) = frame_ranges(&extent).unwrap();
+        assert_relative_eq!((y_lo + y_hi) / 2.0, 30.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn frame_ranges_none_for_overflowing_y_span() {
+        // y_max - y_min alone overflows f64 (±~1e308 exceeds f64::MAX) —
+        // frame_ranges must bail, never hand plotters an infinite bound.
+        let extent = SceneExtent {
+            radial: 1.0,
+            y_min: -1e308,
+            y_max: 1e308,
+        };
+        assert!(frame_ranges(&extent).is_none());
+    }
+
+    #[test]
+    fn frame_ranges_none_for_overflowing_radial() {
+        let extent = SceneExtent {
+            radial: f64::MAX,
+            y_min: 0.0,
+            y_max: 1.0,
+        };
+        assert!(frame_ranges(&extent).is_none());
+    }
+
+    #[test]
+    fn render_scene_none_for_near_max_extent() {
+        // All-finite points whose y span alone overflows f64 — the latent
+        // twin of `render_chart_clamps_headroom_for_near_max_extent`, except
+        // 3D bails to None rather than clamping (see `frame_ranges` doc).
+        let scene = SceneData {
+            polylines: vec![super::super::Polyline3 {
+                points: vec![(1.0, -1e308, 0.0), (1.0, 1e308, 0.0)],
+                role: SceneRole::Wire,
+                stroke_px: 1,
+            }],
+        };
+        assert!(render_scene(&scene, Orbit::default()).is_none());
     }
 }
