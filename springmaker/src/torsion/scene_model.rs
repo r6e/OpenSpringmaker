@@ -99,11 +99,30 @@ mod tests {
         };
         assert_relative_eq!(len(leg1), d.inputs.leg1.millimeters(), max_relative = 1e-9);
         assert_relative_eq!(len(leg2), d.inputs.leg2.millimeters(), max_relative = 1e-9);
-        // Legs are tangential: perpendicular to the radial direction at attach.
-        let a = leg1.points[0];
-        let b = leg1.points[1];
-        let dir = (b.0 - a.0, b.2 - a.2);
-        let radial = (a.0, a.2);
-        assert_relative_eq!(dir.0 * radial.0 + dir.1 * radial.1, 0.0, epsilon = 1e-6);
+        // Legs are tangential: perpendicular to the radial direction at
+        // attach, on BOTH legs — a mutant swapping leg2's tangent to
+        // (cos φ, -sin φ) (a 90° error) would still pass every other assert
+        // here, so this must check leg2 too, not just leg1.
+        let radial_dot_tangent = |l: &Polyline3| {
+            let a = l.points[0];
+            let b = l.points[1];
+            let dir = (b.0 - a.0, b.2 - a.2);
+            let radial = (a.0, a.2);
+            dir.0 * radial.0 + dir.1 * radial.1
+        };
+        assert_relative_eq!(radial_dot_tangent(leg1), 0.0, epsilon = 1e-6);
+        assert_relative_eq!(radial_dot_tangent(leg2), 0.0, epsilon = 1e-6);
+    }
+
+    /// Post-solve-mutation degenerate fixture (spec §Degenerate handling,
+    /// "the chart precedent"): torsion builds legs (family-specific `Detail`
+    /// geometry) outside the shared `scene_from_radius` path, so this isn't
+    /// covered by compression's degenerate test alone.
+    #[test]
+    fn degenerate_design_yields_empty_scene() {
+        let mut d = design();
+        d.inputs.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        let s = torsion_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
     }
 }

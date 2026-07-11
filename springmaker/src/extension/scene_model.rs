@@ -126,4 +126,18 @@ mod tests {
         assert_relative_eq!(t0.1, last.1, max_relative = 1e-9);
         assert_relative_eq!(t0.2, last.2, epsilon = 1e-9);
     }
+
+    /// Post-solve-mutation degenerate fixture (spec §Degenerate handling,
+    /// "the chart precedent"): a NaN solved field must yield a scene with no
+    /// finite extent, not a partially-broken scene reaching the renderer.
+    /// Extension builds hooks (family-specific `Detail` geometry) outside
+    /// the shared `scene_from_radius` path, so this isn't covered by
+    /// compression's degenerate test alone.
+    #[test]
+    fn degenerate_design_yields_empty_scene() {
+        let mut d = design();
+        d.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        let s = extension_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
+    }
 }

@@ -194,4 +194,51 @@ mod tests {
             "a NaN first-member height must poison every later member's offset"
         );
     }
+
+    /// Companion to the FIRST-member cascade above: when a MIDDLE member is
+    /// poisoned instead, the members BEFORE it are untouched (the running
+    /// y-offset accumulator only starts poisoning once it reaches the broken
+    /// member), so the scene is NOT wholly degenerate — `scene_extent` is
+    /// still `Some`, derived from the surviving earlier member. The poisoned
+    /// member's own points, and every member after it (whose offset now
+    /// inherits the NaN), are individually non-finite and get filtered by
+    /// the shared `finite3` check rather than taking down the whole scene.
+    /// Documented accepted cascade semantics (task report / spec §Degenerate
+    /// handling's "partial-render" case).
+    #[test]
+    fn series_degenerate_middle_member_erases_only_itself_and_later_members() {
+        let mut form = two_member_form("series");
+        form.members.push(AsmMemberForm {
+            wire_dia: "1".into(),
+            mean_dia: "12".into(),
+            active: "6".into(),
+            free_length: "60".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        });
+        let mut d = solve(&form);
+        d.members[1].design.pitch = springcore::units::Length::from_millimeters(f64::NAN);
+        let s = assembly_scene(&d);
+
+        assert!(
+            scene_extent(&s).is_some(),
+            "member 0 (before the poisoned member) stays finite, so the scene is not wholly degenerate"
+        );
+        let all_finite = |line: &crate::viz::Polyline3| {
+            line.points
+                .iter()
+                .all(|p| p.0.is_finite() && p.1.is_finite() && p.2.is_finite())
+        };
+        assert!(
+            all_finite(&s.polylines[0]),
+            "member 0, before the poisoned member, must stay fully finite"
+        );
+        assert!(
+            s.polylines[1].points.iter().all(|p| !p.1.is_finite()),
+            "the poisoned member's own points must be non-finite (filtered, not just member 0)"
+        );
+        assert!(
+            s.polylines[2].points.iter().all(|p| !p.1.is_finite()),
+            "a member AFTER the poisoned one must be erased too via the cascading y-offset"
+        );
+    }
 }
