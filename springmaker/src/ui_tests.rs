@@ -1932,51 +1932,51 @@ fn probe_orbit_survives_mode_roundtrip_and_rapid_toggle() {
 /// back to Metric must restore the solved 3D scene.
 #[test]
 fn probe_units_toggle_while_in_3d_mode() {
-    let mut threed = test_app();
-    probe_solve_compression(&mut threed);
-    threed.update(Message::Visual(VisualMode::Spring3d));
-    let custom = drag_orbit(&mut threed, -50.0, 65.0);
+    let mut app_3d = test_app();
+    probe_solve_compression(&mut app_3d);
+    app_3d.update(Message::Visual(VisualMode::Spring3d));
+    let custom = drag_orbit(&mut app_3d, -50.0, 65.0);
 
     let mut chart = test_app();
     probe_solve_compression(&mut chart);
 
-    threed.update(Message::Units(UnitSystem::Us));
+    app_3d.update(Message::Units(UnitSystem::Us));
     chart.update(Message::Units(UnitSystem::Us));
 
     assert_eq!(
-        threed.outcome.is_some(),
+        app_3d.outcome.is_some(),
         chart.outcome.is_some(),
         "symmetry: unit reinterpretation must resolve identically in both modes"
     );
     assert_eq!(
-        threed.results_visual,
+        app_3d.results_visual,
         VisualMode::Spring3d,
         "units must not reset the mode"
     );
-    assert_eq!(threed.orbit, custom, "units must not reset the orbit");
+    assert_eq!(app_3d.orbit, custom, "units must not reset the orbit");
     // Render both without panic; if unsolved, neither placeholder shows (Error arm).
-    if threed.outcome.is_none() {
+    if app_3d.outcome.is_none() {
         assert!(
-            !shows(&threed, SCENE_PLACEHOLDER) && !shows(&threed, CHART_PLACEHOLDER),
+            !shows(&app_3d, SCENE_PLACEHOLDER) && !shows(&app_3d, CHART_PLACEHOLDER),
             "US reinterpretation failure renders the Error arm, not a placeholder"
         );
     } else {
         assert!(
-            !shows(&threed, SCENE_PLACEHOLDER),
+            !shows(&app_3d, SCENE_PLACEHOLDER),
             "US-solved design renders 3D"
         );
     }
 
-    threed.update(Message::Units(UnitSystem::Metric));
+    app_3d.update(Message::Units(UnitSystem::Metric));
     assert!(
-        threed.outcome.is_some(),
+        app_3d.outcome.is_some(),
         "metric flip-back re-solves the same form"
     );
     assert!(
-        !shows(&threed, SCENE_PLACEHOLDER),
+        !shows(&app_3d, SCENE_PLACEHOLDER),
         "3D restored after the unit round trip"
     );
-    assert_eq!(threed.orbit, custom);
+    assert_eq!(app_3d.orbit, custom);
 }
 
 /// `Message::Orbit` arriving with no results at all (blank form): angles are
