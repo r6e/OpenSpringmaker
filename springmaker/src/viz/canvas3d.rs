@@ -1,9 +1,11 @@
 //! Humble orbit canvas: draws the pre-rendered scene bitmap and converts
-//! mouse drags into `Message::Orbit` (committed angles are App state — they
-//! must survive re-render, unlike chart hover). Drag TRACKING (the last
-//! cursor position) is ephemeral canvas state.
+//! mouse drags into `Message::Orbit` drag deltas (the committed angles are
+//! App state, accumulated in `App::update` via `orbit_step` — they must
+//! survive re-render, unlike chart hover). Drag TRACKING (the last cursor
+//! position) is ephemeral canvas state; the canvas never reads the
+//! committed orbit itself, so it cannot publish against a stale base.
 
-use super::{orbit_step, Orbit, SceneData};
+use super::{Orbit, SceneData};
 use crate::app::Message;
 use crate::plot::mapping::letterbox;
 use crate::plot::{CHART_H, CHART_W};
@@ -13,7 +15,6 @@ use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
 pub struct OrbitCanvas {
     pub handle: iced::widget::image::Handle,
-    pub orbit: Orbit,
 }
 
 #[derive(Default)]
@@ -40,8 +41,16 @@ impl canvas::Program<Message> for OrbitCanvas {
                 let pos = cursor.position_in(bounds)?;
                 let last = state.last?;
                 state.last = Some(pos);
-                let next = orbit_step(self.orbit, pos.x - last.x, pos.y - last.y);
-                Some(canvas::Action::publish(Message::Orbit(next)))
+                // Publish the raw delta, not an orbit computed here: this
+                // struct is rebuilt from the App's committed orbit only when
+                // `view()` re-runs, so a value read from `self` could be
+                // stale for events arriving before that re-render. Deltas
+                // compose correctly regardless — `App::update` accumulates
+                // them one at a time via `orbit_step`.
+                Some(canvas::Action::publish(Message::Orbit(
+                    pos.x - last.x,
+                    pos.y - last.y,
+                )))
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Mouse(mouse::Event::CursorLeft) => {
@@ -98,17 +107,16 @@ pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design 
 /// Build the 3D element: orbitable canvas, or the placeholder for a
 /// degenerate scene.
 ///
-/// Called from every family's results panel: compression and conical
-/// (Task 4), extension and torsion (Task 5), assembly (Task 6). This body is
-/// what keeps
-/// `render_scene`, `OrbitCanvas`, `SCENE_PLACEHOLDER` (and, via the trait
-/// impl, `orbit_step`) alive in the bin target.
+/// Called from every family's results panel (compression, conical,
+/// extension, torsion, assembly) via the shared `widgets::visual_toggle`
+/// slot. `orbit` is only needed to render the bitmap up front — the
+/// resulting canvas never reads it back (see the module doc).
 pub fn scene_element(scene: SceneData, orbit: Orbit) -> Element<'static, Message> {
     match super::render3d::render_scene(&scene, orbit) {
         None => iced::widget::text(SCENE_PLACEHOLDER).into(),
         Some(pixels) => {
             let handle = iced::widget::image::Handle::from_rgba(CHART_W, CHART_H, pixels);
-            Canvas::new(OrbitCanvas { handle, orbit })
+            Canvas::new(OrbitCanvas { handle })
                 .width(Length::Fill)
                 .height(Length::Fixed(CHART_H as f32))
                 .into()

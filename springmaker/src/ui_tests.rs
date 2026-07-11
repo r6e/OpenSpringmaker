@@ -59,6 +59,16 @@ fn shows(app: &App, label: &str) -> bool {
     ui(app).find(label).is_ok()
 }
 
+/// Apply an orbit drag delta (as `OrbitCanvas` would publish it — see
+/// `viz::canvas3d`) and return the resulting committed orbit. Tests use the
+/// RETURNED value for later equality checks rather than a hardcoded target
+/// angle, since `Message::Orbit` carries a delta, not an absolute angle —
+/// the achieved orbit depends on `app.orbit`'s value before the call.
+fn drag_orbit(app: &mut App, dx: f32, dy: f32) -> Orbit {
+    app.update(Message::Orbit(dx, dy));
+    app.orbit
+}
+
 /// Focus a calculator field's input by its stable id and type `text` into it,
 /// then apply the resulting messages. Focus is UI-internal (not in `App`), so
 /// the focusing click and the `typewrite` must share one simulator instance.
@@ -1377,12 +1387,13 @@ fn orbit_message_rerenders_without_disturbing_results() {
 
     app.update(Message::Visual(VisualMode::Spring3d));
 
-    let target = Orbit {
-        yaw: 1.0,
-        pitch: 0.3,
-    };
-    app.update(Message::Orbit(target));
+    let before = app.orbit;
+    let target = drag_orbit(&mut app, 40.0, 15.0);
 
+    assert_ne!(
+        target, before,
+        "the committed orbit must update in response to the drag delta"
+    );
     assert_eq!(
         app.orbit, target,
         "the committed orbit must update to the dragged angles"

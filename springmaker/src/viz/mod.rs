@@ -52,10 +52,13 @@ const MAX_RENDER_TURNS: f64 = 2_000.0;
 
 /// Sample a helix: `radius_at`/`height_at` are functions of t ∈ [0, 1] along
 /// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
-/// + 1` points (inclusive endpoint). Hostile `turns` (non-finite, or beyond
-/// [`MAX_RENDER_TURNS`]) returns an empty `Vec` instead of sampling, so the
-/// existing `scene_extent → None → placeholder` discipline fires rather than
-/// the allocation overflowing or blowing up the frame budget.
+/// + 1` points (inclusive endpoint).
+///
+/// Hostile `turns` (non-finite, or beyond [`MAX_RENDER_TURNS`]) returns an
+/// empty `Vec` instead of sampling, so the existing degenerate-scene
+/// discipline (`scene_extent` returning `None`, the caller showing the
+/// placeholder) fires rather than the allocation overflowing or blowing up
+/// the frame budget.
 pub fn helix(
     radius_at: impl Fn(f64) -> f64,
     height_at: impl Fn(f64) -> f64,
