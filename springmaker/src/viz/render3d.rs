@@ -78,12 +78,7 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
                 filled: false,
                 stroke_width: line.stroke_px,
             };
-            let pts: Vec<(f64, f64, f64)> = line
-                .points
-                .iter()
-                .copied()
-                .filter(|&p| finite3(p))
-                .collect();
+            let pts = line.points.iter().copied().filter(|&p| finite3(p));
             chart
                 .draw_series(LineSeries::new(pts, style))
                 .expect("scene polyline");

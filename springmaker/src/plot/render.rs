@@ -84,12 +84,11 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         let mut any_named = false;
         for line in &data.lines {
             let style = line_style(line.role);
-            let pts: Vec<(f64, f64)> = line
+            let pts = line
                 .points
                 .iter()
                 .copied()
-                .filter(|&(x, y)| super::plottable(x, y))
-                .collect();
+                .filter(|&(x, y)| super::plottable(x, y));
             let series = chart
                 .draw_series(LineSeries::new(pts, style))
                 .expect("line");
