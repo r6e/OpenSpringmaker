@@ -142,9 +142,6 @@ pub enum MatField {
 pub enum VisualMode {
     #[default]
     Chart,
-    /// Not yet constructed by any live view (Tasks 4-6 add the results-panel
-    /// toggle); dead in the bin target until then.
-    #[allow(dead_code)] // consumed from Tasks 4-6; remove this allow then
     Spring3d,
 }
 
@@ -188,10 +185,10 @@ pub enum Message {
     // Results panel — 3D visualization (shared across families; orbit and
     // visual-mode choice persist across family tabs, unlike per-family form
     // state). `Orbit` is published by `OrbitCanvas::update` (a trait-impl
-    // body, which counts as a dead-code use-site); `Visual` has no
-    // constructor until Tasks 4-6 add the results-panel toggle.
+    // body, which counts as a dead-code use-site); `Visual` is constructed by
+    // the compression/conical toggle radios (Task 4) — the remaining
+    // families' toggles land in Tasks 5-6.
     Orbit(crate::viz::Orbit),
-    #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
     Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),

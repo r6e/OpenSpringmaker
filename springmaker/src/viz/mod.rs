@@ -13,17 +13,18 @@ use std::f64::consts::TAU;
 pub mod canvas3d;
 pub mod render3d;
 
-// Not yet called from a live view (Tasks 4-6 wire it into the results panel).
-#[allow(unused_imports)] // consumed from Tasks 4-6; remove this allow then
 pub use canvas3d::scene_element;
 
 /// Stroke/color role of one polyline (mapped to palette tokens in the
 /// renderer only). `Detail` = hooks and legs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // variants constructed from Tasks 4-6 (family presenters); remove this allow then
 pub enum SceneRole {
     Wire,
+    /// Not yet constructed (Tasks 5-6 add assembly/member-composite scenes).
+    #[allow(dead_code)] // constructed from Tasks 5-6; remove this allow then
     Member,
+    /// Not yet constructed (Tasks 5-6 add hooks/legs detail geometry).
+    #[allow(dead_code)] // constructed from Tasks 5-6; remove this allow then
     Detail,
 }
 
@@ -43,7 +44,6 @@ pub struct SceneData {
 /// Sample a helix: `radius_at`/`height_at` are functions of t ∈ [0, 1] along
 /// the wire; the angle sweeps `turns · 2π`. Returns `turns × samples_per_turn
 /// + 1` points (inclusive endpoint).
-#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn helix(
     radius_at: impl Fn(f64) -> f64,
     height_at: impl Fn(f64) -> f64,
@@ -66,7 +66,6 @@ pub fn helix(
 /// driven by the SOLVED coil counts, so every `EndType` renders correctly
 /// without matching on it (plain ends have total == active ⇒ no flattening).
 /// `t` spans the TOTAL coil count.
-#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn coil_height_fn(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> impl Fn(f64) -> f64 {
     let dead_per_end = ((total - active) / 2.0).max(0.0);
     move |t: f64| {
@@ -82,7 +81,6 @@ pub fn coil_height_fn(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> i
 /// scene's largest dimension, clamped to a legible pixel range. A non-finite
 /// ratio (zero or non-finite `extent_mm`) floors to 1 rather than propagating
 /// NaN/inf through `as u32` (which would silently truncate to 0).
-#[allow(dead_code)] // consumed from Tasks 4-6 (family presenters); remove this allow then
 pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
     let ratio = wire_mm / extent_mm;
     if !ratio.is_finite() {

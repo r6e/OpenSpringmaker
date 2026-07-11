@@ -98,12 +98,10 @@ pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design 
 /// Build the 3D element: orbitable canvas, or the placeholder for a
 /// degenerate scene.
 ///
-/// Not yet called from any live view (Tasks 4-6 wire this into each family's
-/// results panel) — the one genuinely dead item on this path, and the live
-/// root for the rest: an `#[allow(dead_code)]` item still counts as a use
-/// site, so this body keeps `render_scene`, `OrbitCanvas`, `SCENE_PLACEHOLDER`
-/// (and, via the trait impl, `orbit_step`) alive in the bin target.
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
+/// Called from the compression and conical results panels (Task 4); the
+/// remaining families wire in during Tasks 5-6. This body is what keeps
+/// `render_scene`, `OrbitCanvas`, `SCENE_PLACEHOLDER` (and, via the trait
+/// impl, `orbit_step`) alive in the bin target.
 pub fn scene_element(scene: SceneData, orbit: Orbit) -> Element<'static, Message> {
     match super::render3d::render_scene(&scene, orbit) {
         None => iced::widget::text(SCENE_PLACEHOLDER).into(),

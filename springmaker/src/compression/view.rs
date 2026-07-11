@@ -3,7 +3,7 @@
 //! All business logic lives in `form` and `springcore`. This module only
 //! assembles iced widgets from the current [`App`] state.
 
-use iced::widget::{column, container, row, text};
+use iced::widget::{column, container, radio, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, C};
@@ -294,7 +294,41 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .and_then(|o| fatigue_chart_data(o, us))
                 .map(crate::plot::chart_element);
 
-            render_populated(&p, chart, fatigue_chart)
+            // The results panel's shared visual slot: chart or orbitable 3D
+            // scene, selected by `app.results_visual`.
+            let visual: Element<'_, Message> = match app.results_visual {
+                crate::app::VisualMode::Chart => chart,
+                crate::app::VisualMode::Spring3d => app
+                    .outcome
+                    .as_ref()
+                    .map(|o| {
+                        crate::viz::scene_element(
+                            crate::compression::scene_model::compression_scene(&o.design),
+                            app.orbit,
+                        )
+                    })
+                    .expect("ResultsView::Populated implies app.outcome is Some"),
+            };
+            let toggle: Element<'_, Message> = row![
+                radio(
+                    "Chart",
+                    crate::app::VisualMode::Chart,
+                    Some(app.results_visual),
+                    Message::Visual
+                )
+                .text_size(SZ_LABEL),
+                radio(
+                    "3D",
+                    crate::app::VisualMode::Spring3d,
+                    Some(app.results_visual),
+                    Message::Visual
+                )
+                .text_size(SZ_LABEL),
+            ]
+            .spacing(12)
+            .into();
+
+            render_populated(&p, toggle, visual, fatigue_chart)
         }
     };
 
@@ -303,10 +337,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Assemble the populated results column from the presenter data plus the chart.
+/// Assemble the populated results column from the presenter data plus the
+/// chart/3D toggle and the selected visual.
 fn render_populated<'a>(
     p: &PopulatedResults,
-    chart: Element<'a, Message>,
+    toggle: Element<'a, Message>,
+    visual: Element<'a, Message>,
     fatigue_chart: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut col = column![
@@ -318,7 +354,8 @@ fn render_populated<'a>(
         section_divider(),
         render_load_table(&p.load_table),
         section_divider(),
-        chart,
+        toggle,
+        visual,
         render_fatigue(&p.fatigue),
     ]
     .spacing(6);
