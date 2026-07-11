@@ -1,10 +1,9 @@
 //! Pure 3D scene presenter for the extension family: close-wound body
-//! (pitch = wire diameter, built via the shared `scene_from_radius` coil-body
-//! helper) plus two representative hook arcs (spec-documented simplification
-//! — arcs, not exact hook developments), each attached exactly at its body
-//! endpoint.
+//! (built via the shared `close_wound_coil` helper) plus two representative
+//! hook arcs (spec-documented simplification — arcs, not exact hook
+//! developments), each attached exactly at its body endpoint.
 
-use crate::viz::{scene_from_radius, Polyline3, SceneData, SceneRole};
+use crate::viz::{close_wound_coil, Polyline3, SceneData, SceneRole};
 use springcore::extension::ExtensionDesign;
 use std::f64::consts::{PI, TAU};
 
@@ -38,10 +37,7 @@ pub fn extension_scene(design: &ExtensionDesign) -> SceneData {
     let r = design.mean_dia.millimeters() / 2.0;
     let wire = design.wire_dia.millimeters();
     let turns = design.active_coils;
-    // Close-wound body via the shared coil-body helper: pitch = wire
-    // collapses `coil_height_fn` to the linear close-wound ramp (no dead
-    // coils, since active == total here).
-    let mut scene = scene_from_radius(|_| r, r, turns, turns, wire, wire);
+    let mut scene = close_wound_coil(r, turns, wire);
     // Decision: size the hook strokes off the body-only stroke rather than
     // recomputing against the full body+hooks extent (see task report) —
     // the difference is cosmetic and stroke_for clamps to [1, 8] px anyway.

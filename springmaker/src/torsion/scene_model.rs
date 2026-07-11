@@ -1,8 +1,8 @@
 //! Pure 3D scene presenter for the torsion family: close-wound body (built
-//! via the shared `scene_from_radius` coil-body helper) plus two straight
-//! tangential legs at the solved lengths.
+//! via the shared `close_wound_coil` helper) plus two straight tangential
+//! legs at the solved lengths.
 
-use crate::viz::{scene_from_radius, Polyline3, SceneData, SceneRole};
+use crate::viz::{close_wound_coil, Polyline3, SceneData, SceneRole};
 use springcore::torsion::TorsionDesign;
 use std::f64::consts::TAU;
 
@@ -10,10 +10,7 @@ pub fn torsion_scene(design: &TorsionDesign) -> SceneData {
     let r = design.inputs.mean_dia.millimeters() / 2.0;
     let wire = design.inputs.wire_dia.millimeters();
     let turns = design.inputs.body_coils;
-    // Close-wound body via the shared coil-body helper: pitch = wire
-    // collapses `coil_height_fn` to the linear close-wound ramp (no dead
-    // coils, since active == total here).
-    let mut scene = scene_from_radius(|_| r, r, turns, turns, wire, wire);
+    let mut scene = close_wound_coil(r, turns, wire);
     // Decision: size the leg strokes off the body-only stroke rather than
     // recomputing against the full body+legs extent (see task report) — the
     // difference is cosmetic and stroke_for clamps to [1, 8] px anyway.

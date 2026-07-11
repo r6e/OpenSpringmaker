@@ -1,12 +1,13 @@
 //! 3D spring visualization core: the pure `SceneData` contract (family
 //! presenters → renderer), the shared helix sampler every family
 //! parameterizes, and the orbit math. The humble renderer/canvas live in
-//! `render3d`/`canvas3d` (Tasks 2–3).
+//! `render3d`/`canvas3d`.
 //!
 //! Accepted limitations (spec §Per-family geometry): the wire renders as a
 //! stroked polyline (round cross-section for every family — rectangular wire
 //! would need a mesh renderer); hooks are representative arcs, not exact hook
-//! developments. Scene coordinates are true millimetres; y is the spring axis.
+//! developments; no self-intersection/clearance rendering beyond what true
+//! geometry shows. Scene coordinates are true millimetres; y is the spring axis.
 
 use std::f64::consts::TAU;
 
@@ -14,6 +15,8 @@ pub mod canvas3d;
 pub mod render3d;
 
 pub use canvas3d::scene_element;
+#[cfg(test)]
+pub(crate) use canvas3d::SCENE_PLACEHOLDER;
 
 /// Stroke/color role of one polyline (mapped to palette tokens in the
 /// renderer only). `Detail` = hooks and legs.
@@ -21,10 +24,10 @@ pub use canvas3d::scene_element;
 pub enum SceneRole {
     Wire,
     /// Alternates with `Wire` by member index; constructed by
-    /// `assembly::scene_model` (Task 6).
+    /// `assembly::scene_model`.
     Member,
     /// Hooks (extension) and legs (torsion); constructed by
-    /// `extension::scene_model`/`torsion::scene_model` (Task 5).
+    /// `extension::scene_model`/`torsion::scene_model`.
     Detail,
 }
 
@@ -134,6 +137,15 @@ pub fn scene_from_radius(
             stroke_px: stroke_for(wire_mm, extent),
         }],
     }
+}
+
+/// Close-wound coil body shared by extension and torsion: pitch = wire
+/// diameter collapses `coil_height_fn` to a linear close-wound ramp (no dead
+/// coils, since active == total for a close-wound body). A thin wrapper over
+/// `scene_from_radius` with a constant radius and active == total == `turns`,
+/// hosting the explanation once instead of at each call site.
+pub fn close_wound_coil(radius_mm: f64, turns: f64, wire_mm: f64) -> SceneData {
+    scene_from_radius(|_| radius_mm, radius_mm, turns, turns, wire_mm, wire_mm)
 }
 
 /// 3D bounding extent: max radial distance from the y axis plus the axial
