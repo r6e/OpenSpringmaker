@@ -75,13 +75,14 @@ pub struct AxisMeta {
 /// - `Envelope`: a fatigue failure envelope
 /// - `LoadLine`: a fatigue load line from the origin
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-// Envelope/LoadLine constructed from Tasks 7-8 (assembly legend uses Member
-// from Task 7; fatigue uses Envelope/LoadLine from Task 8); remove then
-#[allow(dead_code)]
 pub enum LineRole {
     Primary,
     Member,
+    // Consumed once the fatigue family emits its envelope/load-line overlay
+    // (Task 8); remove then.
+    #[allow(dead_code)]
     Envelope,
+    #[allow(dead_code)]
     LoadLine,
 }
 
@@ -105,8 +106,6 @@ pub struct Line {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MarkerKind {
     Operating,
-    // Consumed once a family emits limit markers (travel-limit/fatigue-amplitude, later tasks); remove then.
-    #[allow(dead_code)]
     Limit,
 }
 

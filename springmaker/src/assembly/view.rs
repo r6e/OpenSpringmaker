@@ -81,10 +81,27 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let us = app.unit_system;
     let inner: Element<'_, Message> = match asm_results_view(app) {
         AsmResultsView::Error(msg) => results_error(msg),
         AsmResultsView::Empty => results_empty(),
-        AsmResultsView::Populated(p) => render_populated(&p),
+        AsmResultsView::Populated(p) => {
+            // The chart is pure rendering of the design (no decision); build it
+            // from the outcome the Populated variant guarantees is present.
+            // Unlike the other families, the assembly outcome IS the design —
+            // no wrapper struct to unwrap first.
+            let chart = app
+                .asm_outcome
+                .as_ref()
+                .map(|design| {
+                    crate::plot::chart_element(crate::assembly::plot_model::assembly_chart(
+                        design, us,
+                    ))
+                })
+                .expect("AsmResultsView::Populated implies app.asm_outcome is Some");
+
+            render_populated(&p, chart)
+        }
     };
     container(panel_container(inner))
         .width(Length::FillPortion(1))
@@ -96,9 +113,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 /// Render the populated assembly results: hero rate → Summary section →
-/// assembly load table → per-member sections. Status is handled by the
-/// calculator's shared status panel (not rendered here — see ADR 0008).
-fn render_populated(p: &AsmPopulatedResults) -> Element<'static, Message> {
+/// assembly load table → chart → per-member sections. Status is handled by
+/// the calculator's shared status panel (not rendered here — see ADR 0008).
+fn render_populated<'a>(
+    p: &AsmPopulatedResults,
+    chart: Element<'a, Message>,
+) -> Element<'a, Message> {
     let mut col = column![
         section_heading("Results"),
         section_divider(),
@@ -107,6 +127,8 @@ fn render_populated(p: &AsmPopulatedResults) -> Element<'static, Message> {
         rows_section("Summary", &p.summary),
         section_divider(),
         render_asm_load_table(&p.assembly_loads),
+        section_divider(),
+        chart,
     ]
     .spacing(6);
 
