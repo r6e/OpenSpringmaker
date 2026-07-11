@@ -16,7 +16,7 @@ pub mod render3d;
 
 pub use canvas3d::scene_element;
 #[cfg(test)]
-pub(crate) use canvas3d::SCENE_PLACEHOLDER;
+pub(crate) use canvas3d::{SCENE_PLACEHOLDER, SCENE_PLACEHOLDER_CAPPED};
 
 /// Stroke/color role of one polyline (mapped to palette tokens in the
 /// renderer only). `Detail` = hooks and legs.

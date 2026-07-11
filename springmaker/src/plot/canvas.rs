@@ -4,9 +4,10 @@
 //! ephemeral — no Message is ever published; `Action::request_redraw()` only
 //! repaints this canvas (plotters never re-rasterizes on mouse movement).
 
-use super::mapping::{letterbox, ChartMapping, Letterbox};
+use super::mapping::{draw_letterboxed_bitmap, letterbox, ChartMapping, Letterbox};
 use super::{hover_readout, ChartData, CHART_H, CHART_W};
 use crate::app::{Message, Palette};
+use crate::widgets::placeholder_text;
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
@@ -45,12 +46,7 @@ impl canvas::Program<Message> for ChartCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let lb = letterbox(bounds.width, bounds.height);
-        let (ox, oy) = (lb.offset_x, lb.offset_y);
-        let (w, h) = (CHART_W as f32 * lb.scale, CHART_H as f32 * lb.scale);
-        frame.draw_image(
-            Rectangle::new(Point::new(ox, oy), Size::new(w, h)),
-            &self.handle,
-        );
+        draw_letterboxed_bitmap(&mut frame, &lb, &self.handle);
 
         if let Some(pos) = cursor.position_in(bounds) {
             let (bx, by) = lb.widget_to_bitmap(pos.x, pos.y);
@@ -110,7 +106,7 @@ pub(crate) const CHART_PLACEHOLDER: &str = "Chart unavailable for this design (c
 /// degenerate design (plotters must never see a non-finite range).
 pub fn chart_element(pal: &'static Palette, data: ChartData) -> Element<'static, Message> {
     match super::render::render_chart(pal, &data) {
-        None => iced::widget::text(CHART_PLACEHOLDER).into(),
+        None => placeholder_text(pal, CHART_PLACEHOLDER),
         Some((pixels, mapping)) => {
             let handle = iced::widget::image::Handle::from_rgba(CHART_W, CHART_H, pixels);
             Canvas::new(ChartCanvas {

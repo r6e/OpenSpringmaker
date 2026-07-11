@@ -12,9 +12,10 @@ use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
 use crate::presenter::{Emphasis, LoadTable};
 use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
-    material_picker_for_member, panel_container, render_governing_rate, render_result_row,
-    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
+    material_picker_for_member, member_sub_card, panel_container, render_governing_rate,
+    render_result_row, results_empty, results_error, rows_section, section_divider,
+    section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS,
+    SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -235,7 +236,7 @@ fn render_member_section(
         col = col.push(render_member_load_table(pal, &m.loads));
     }
 
-    col.into()
+    member_sub_card(pal, col)
 }
 
 /// Per-member load table: 6 columns (Pt / Force / Deflection / Length /

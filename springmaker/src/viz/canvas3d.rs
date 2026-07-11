@@ -7,11 +7,11 @@
 
 use super::{Orbit, SceneData};
 use crate::app::{Message, Palette};
-use crate::plot::mapping::letterbox;
+use crate::plot::mapping::{draw_letterboxed_bitmap, letterbox};
 use crate::plot::{CHART_H, CHART_W};
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Event, Frame, Geometry};
-use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::{Element, Length, Point, Rectangle, Renderer, Theme};
 
 pub struct OrbitCanvas {
     pub handle: iced::widget::image::Handle,
@@ -71,11 +71,7 @@ impl canvas::Program<Message> for OrbitCanvas {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let lb = letterbox(bounds.width, bounds.height);
-        let (w, h) = (CHART_W as f32 * lb.scale, CHART_H as f32 * lb.scale);
-        frame.draw_image(
-            Rectangle::new(Point::new(lb.offset_x, lb.offset_y), Size::new(w, h)),
-            &self.handle,
-        );
+        draw_letterboxed_bitmap(&mut frame, &lb, &self.handle);
         vec![frame.into_geometry()]
     }
 
@@ -101,8 +97,30 @@ impl canvas::Program<Message> for OrbitCanvas {
     }
 }
 
-/// Placeholder shown when the scene is degenerate (same pattern as the chart).
+/// Placeholder shown when the scene is degenerate from truly bad (non-finite)
+/// geometry — the design's inputs need attention.
 pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design (check inputs).";
+
+/// Placeholder shown when the scene is degenerate because the (otherwise
+/// valid) coil count exceeds the renderer's `MAX_RENDER_TURNS` cap — the
+/// design itself is fine, only the 3D render self-defended.
+pub(crate) const SCENE_PLACEHOLDER_CAPPED: &str =
+    "3D view unavailable: coil count exceeds the renderable 3D limit.";
+
+/// Choose which placeholder wording applies to a degenerate scene (the
+/// `render_scene` `None` path only). Data-driven by
+/// [`super::coil_body_is_empty`]: an empty coil body is the capped/hostile
+/// coil-count outcome (valid input past the render cap — for BOTH a single
+/// family's capped body and an assembly's capped whole-scene composition),
+/// while a non-empty body reaching `None` means the geometry itself is
+/// non-finite (bad input).
+fn placeholder_for(scene: &SceneData) -> &'static str {
+    if super::coil_body_is_empty(scene) {
+        SCENE_PLACEHOLDER_CAPPED
+    } else {
+        SCENE_PLACEHOLDER
+    }
+}
 
 /// Build the 3D element: orbitable canvas, or the placeholder for a
 /// degenerate scene.
@@ -117,7 +135,7 @@ pub fn scene_element(
     orbit: Orbit,
 ) -> Element<'static, Message> {
     match super::render3d::render_scene(pal, &scene, orbit) {
-        None => iced::widget::text(SCENE_PLACEHOLDER).into(),
+        None => crate::widgets::placeholder_text(pal, placeholder_for(&scene)),
         Some(pixels) => {
             let handle = iced::widget::image::Handle::from_rgba(CHART_W, CHART_H, pixels);
             Canvas::new(OrbitCanvas { handle })
@@ -125,5 +143,34 @@ pub fn scene_element(
                 .height(Length::Fixed(CHART_H as f32))
                 .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::viz::{close_wound_coil, coil_body_is_empty, Polyline3, SceneRole};
+
+    fn scene_with_nan_points() -> SceneData {
+        SceneData {
+            polylines: vec![Polyline3 {
+                points: vec![(0.0, f64::NAN, 0.0), (1.0, 2.0, 3.0)],
+                role: SceneRole::Wire,
+                stroke_px: 1,
+            }],
+        }
+    }
+
+    #[test]
+    fn scene_element_picks_the_capped_wording_for_an_empty_body() {
+        let scene = close_wound_coil(10.0, 2001.0, 2.0); // capped ⇒ empty body
+        assert!(coil_body_is_empty(&scene)); // sanity: the discriminator
+        assert_eq!(placeholder_for(&scene), SCENE_PLACEHOLDER_CAPPED);
+    }
+
+    #[test]
+    fn scene_element_keeps_check_inputs_for_nonfinite_geometry() {
+        let scene = scene_with_nan_points();
+        assert_eq!(placeholder_for(&scene), SCENE_PLACEHOLDER);
     }
 }

@@ -4,14 +4,15 @@
 //! `app.rs`, `materials_form.rs`, and `springcore`.
 
 use iced::widget::{button, checkbox, column, container, row, scrollable, space, text, text_input};
-use iced::{Background, Element, Font, Length};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, MatField, Message, Palette, Screen};
 use crate::materials_view_model::{edit_panel, feedback, list_rows, Badge, FeedbackKind};
 use crate::widgets::{
     accent_button_style, danger_button_style, field_label, ghost_button_style, mono_value,
-    nav_button_style, panel_container, section_divider, section_heading, styled_pick_list,
-    text_input_style, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XL, SP_XS, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    nav_button_style, panel_container, screen_shell, section_divider, section_heading,
+    styled_pick_list, text_input_style, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_BODY, SZ_LABEL,
+    SZ_TITLE,
 };
 use springcore::{MtsForm, StrengthUnits};
 
@@ -320,7 +321,6 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     let mut content = column![header, section_divider(pal)]
         .spacing(SP_LG)
-        .max_width(1200)
         .height(Length::Fill);
 
     if let Some(fb) = feedback(app) {
@@ -333,18 +333,5 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     let content = content.push(panels);
 
-    let root = container(
-        container(content)
-            .padding(SP_XL)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| iced::widget::container::Style {
-        background: Some(Background::Color(pal.ink)),
-        ..Default::default()
-    });
-
-    root.into()
+    screen_shell(pal, content, false)
 }

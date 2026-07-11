@@ -3,7 +3,7 @@
 //! the app shell's color palette (`Palette`) and `Message`. Screen-specific widgets
 //! live in that screen's own view module.
 
-use iced::widget::{button, column, container, pick_list, row, rule, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, rule, scrollable, text, text_input};
 use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Message, Palette, VisualMode};
@@ -71,6 +71,69 @@ pub(crate) fn panel_container<'a>(
             ..Default::default()
         })
         .into()
+}
+
+/// A member-level sub-card: a `raised`-background bordered box (radius 4,
+/// padding `SP_SM`) — one step lighter and tighter than [`panel_container`]'s
+/// larger `panel`-background parent panels. Groups one assembly member's
+/// results visually within the shared results panel.
+pub(crate) fn member_sub_card<'a>(
+    pal: &'static Palette,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(content)
+        .padding(SP_SM)
+        .style(move |_theme| iced::widget::container::Style {
+            background: Some(Background::Color(pal.raised)),
+            border: Border {
+                color: pal.line,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Shared root chrome for every screen (calculator, materials, settings):
+/// padding `SP_XL`, a 1200px max content width, and the app's `ink`
+/// background — collapses the three near-identical root-container copies
+/// that used to duplicate this (and let Settings drift to its own 800px
+/// cap) into one definition. `scroll` wraps the padded content in an outer
+/// `scrollable`; materials passes `false` since its list/edit panels already
+/// scroll internally and an outer scrollable would fight them over height.
+pub(crate) fn screen_shell<'a>(
+    pal: &'static Palette,
+    content: impl Into<Element<'a, Message>>,
+    scroll: bool,
+) -> Element<'a, Message> {
+    let padded = container(content)
+        .padding(SP_XL)
+        .max_width(1200)
+        .width(Length::Fill);
+
+    let inner: Element<'a, Message> = if scroll {
+        scrollable(padded).into()
+    } else {
+        padded.height(Length::Fill).into()
+    };
+
+    container(inner)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_theme| iced::widget::container::Style {
+            background: Some(Background::Color(pal.ink)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A muted placeholder message shown when a chart or 3D scene cannot be
+/// rendered for the current design. Extracted so `chart_element` and
+/// `scene_element`'s `None` arms (previously each built a bare, unstyled
+/// `text()` inline) render identically styled, state-aware wording.
+pub(crate) fn placeholder_text(pal: &'static Palette, msg: &str) -> Element<'static, Message> {
+    text(msg.to_string()).size(SZ_BODY).color(pal.muted).into()
 }
 
 pub(crate) fn styled_pick_list<'a, T, L>(

@@ -4,15 +4,15 @@
 //! family's design and results panels. The active family is dispatched via
 //! [`App::family`]; the inner panels are supplied by the family's own view module.
 
-use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{Background, Element, Font, Length};
+use iced::widget::{button, column, row, space, text};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
-    accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, segmented, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XL,
-    SZ_BODY, SZ_LABEL, SZ_TITLE,
+    accent_button_style, ghost_button_style, nav_button_style, panel_container, screen_shell,
+    section_divider, section_heading, segmented, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD,
+    SP_ROW, SP_SM, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 use springcore::{Family, UnitSystem};
 
@@ -54,20 +54,9 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         status,
         footer,
     ]
-    .spacing(SP_LG)
-    .max_width(1200);
+    .spacing(SP_LG);
 
-    let root = container(scrollable(
-        container(content).padding(SP_XL).width(Length::Fill),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| iced::widget::container::Style {
-        background: Some(Background::Color(pal.ink)),
-        ..Default::default()
-    });
-
-    root.into()
+    screen_shell(pal, content, true)
 }
 
 // --------------------------------------------------------------------------

@@ -2,13 +2,13 @@
 //! No logic or branching; all rendering decisions live in `settings_view_model`.
 
 use iced::widget::{button, column, container, row, space, text};
-use iced::{Background, Element, Font, Length};
+use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, Screen};
 use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
 use crate::widgets::{
-    nav_button_style, panel_container, section_divider, section_heading, segmented_style, SP_LG,
-    SP_MD, SP_SM, SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    nav_button_style, panel_container, screen_shell, section_divider, section_heading,
+    segmented_style, SP_LG, SP_MD, SP_SM, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 
 /// Build the Settings screen.
@@ -65,9 +65,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .into();
 
-    let mut content = column![header, section_divider(pal), correction_panel]
-        .spacing(SP_LG)
-        .max_width(800);
+    let mut content = column![header, section_divider(pal), correction_panel].spacing(SP_LG);
 
     // Surface a settings-save error below the correction panel (spec §5).
     // The in-memory preference still applies regardless of this status.
@@ -78,18 +76,5 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         content = content.push(text(fb.text).size(SZ_LABEL).color(color));
     }
 
-    let root = container(
-        container(content)
-            .padding(SP_XL)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| iced::widget::container::Style {
-        background: Some(Background::Color(pal.ink)),
-        ..Default::default()
-    });
-
-    root.into()
+    screen_shell(pal, content, true)
 }

@@ -16,7 +16,7 @@ use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use crate::plot::CHART_PLACEHOLDER;
-use crate::viz::{Orbit, SCENE_PLACEHOLDER};
+use crate::viz::{Orbit, SCENE_PLACEHOLDER, SCENE_PLACEHOLDER_CAPPED};
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
@@ -59,6 +59,26 @@ fn click(app: &mut App, label: &str) {
 /// Whether a widget matching `label` is present in the current render.
 fn shows(app: &App, label: &str) -> bool {
     ui(app).find(label).is_ok()
+}
+
+/// Substring-matching companion to `shows`: `&str`'s `Selector` impl matches
+/// a `Text` widget's content by EXACT equality, which makes it unsuitable
+/// for pinning that a full sentence merely NAMES a phrase (rather than pinning
+/// the whole sentence verbatim, which `shows` already does elsewhere). True
+/// if any rendered `Text` widget's content contains `needle`.
+fn shows_containing(app: &App, needle: &str) -> bool {
+    ui(app)
+        .find(
+            |candidate: iced_test::selector::Candidate<'_>| match candidate {
+                iced_test::selector::Candidate::Text { content, .. }
+                    if content.contains(needle) =>
+                {
+                    Some(())
+                }
+                _ => None,
+            },
+        )
+        .is_ok()
 }
 
 /// Apply an orbit drag delta (as `OrbitCanvas` would publish it — see
@@ -1615,34 +1635,37 @@ fn every_family_renders_3d_after_solve() {
 /// CRITICAL reproduction (panel R2, item 1): a body-coil count past the
 /// helix render cap (`MAX_RENDER_TURNS` = 2000) is plain positive form
 /// input — "2001" solves fine — but the capped sampler returns an EMPTY
-/// body. Toggling to Spring3d must surface the 3D placeholder, not panic
-/// inside `view()` indexing `polylines[0].points[0]` on the empty body.
+/// body. Toggling to Spring3d must surface the CAPPED 3D placeholder (this
+/// is valid input hitting a renderer limit, not a bad-input case), not
+/// panic inside `view()` indexing `polylines[0].points[0]` on the empty body.
 #[test]
 fn torsion_capped_body_coils_shows_placeholder_not_panic() {
-    use crate::torsion::form::Field as TF;
-    let mut app = test_app();
-    app.update(Message::SelectFamily(Family::Torsion));
-    type_into_tor(&mut app, TF::WireDia, "2");
-    type_into_tor(&mut app, TF::MeanDia, "20");
-    type_into_tor(&mut app, TF::BodyCoils, "2001");
-    type_into_tor(&mut app, TF::Leg1, "0");
-    type_into_tor(&mut app, TF::Leg2, "0");
-    type_into_tor(&mut app, TF::Moments, "1000");
-    assert!(
-        app.tor_outcome.is_some(),
-        "2001 body coils is valid input and must solve"
-    );
+    let mut app = probe_solve_torsion_with_body_coils("2001");
 
     app.update(Message::Visual(VisualMode::Spring3d));
 
     assert!(
-        shows(&app, SCENE_PLACEHOLDER),
-        "a capped (empty) coil body must show the 3D placeholder"
+        shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "a capped (empty) coil body must show the capped-wording 3D placeholder"
     );
     assert!(
         shows(&app, "Geometry"),
         "the results panel must stay populated — only the 3D slot degrades"
     );
+}
+
+/// The capped-coils wording must name the RENDER LIMIT, not imply the
+/// design's inputs are bad — "2001" body coils is valid, solved input; only
+/// the renderer's `MAX_RENDER_TURNS` self-defense caps it. Companion to
+/// `torsion_capped_body_coils_shows_placeholder_not_panic` (content pin,
+/// not a duplicate — that test also asserts the results panel stays
+/// populated).
+#[test]
+fn capped_torsion_names_the_render_limit_not_bad_inputs() {
+    let mut app = probe_solve_torsion_with_body_coils("2001");
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(shows_containing(&app, "renderable 3D limit"));
+    assert!(!shows_containing(&app, "check inputs"));
 }
 
 /// When a compression design's chart becomes degenerate (rate=0, making
@@ -1857,10 +1880,25 @@ fn probe_solve_extension(app: &mut App) {
 /// Drive the torsion fixture used by the shipped 3D pins (the caller
 /// selects the Torsion tab first, mirroring the other probe helpers).
 fn probe_solve_torsion(app: &mut App) {
+    probe_solve_torsion_with_coils(app, "5");
+}
+
+/// Generalizes `probe_solve_torsion` over the body-coil count, so capped
+/// (`"2001"`, past `MAX_RENDER_TURNS`) and ordinary (`"5"`) fixtures share
+/// one field-filling implementation. Selects the Torsion tab itself and
+/// returns a ready `App`, since every current caller needs a fresh instance.
+fn probe_solve_torsion_with_body_coils(coils: &str) -> App {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion_with_coils(&mut app, coils);
+    app
+}
+
+fn probe_solve_torsion_with_coils(app: &mut App, coils: &str) {
     use crate::torsion::form::Field as TF;
     type_into_tor(app, TF::WireDia, "2");
     type_into_tor(app, TF::MeanDia, "20");
-    type_into_tor(app, TF::BodyCoils, "5");
+    type_into_tor(app, TF::BodyCoils, coils);
     type_into_tor(app, TF::Leg1, "0");
     type_into_tor(app, TF::Leg2, "0");
     type_into_tor(app, TF::Moments, "1000");
