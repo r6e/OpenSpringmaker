@@ -159,18 +159,24 @@ mod tests {
         }
     }
 
-    /// Negative coordinates are never drawn: axes are always 0-based, so a
-    /// negative point would render outside the plot area (defense in depth —
+    /// Negative coordinates are never drawn: axes are always 0-based, and
+    /// plotters CLAMPS out-of-range coordinates onto the plot-area edge
+    /// (`Rect::truncate`), so an unfiltered negative point would draw a
+    /// fabricated on-edge point — not merely clip (defense in depth —
     /// presenters emit non-negative values from engine-guarded designs).
     /// Pinned by buffer equality: injecting a negative line point and a
-    /// negative marker must not change a single pixel.
+    /// negative marker must not change a single pixel. The injected line
+    /// point is deliberately NOT collinear with the fixture line: a
+    /// collinear one would clamp onto the existing origin vertex and could
+    /// retrace the clean path pixel-for-pixel, leaving the line half of
+    /// this pin vacuous.
     #[test]
-    fn negative_coordinates_are_filtered_before_plotters() {
+    fn render_chart_filters_negative_coordinates() {
         let clean = simple_data(false);
         let (clean_pixels, _) = render_chart(&clean).unwrap();
 
         let mut dirty = simple_data(false);
-        dirty.lines[0].points.push((-5.0, -10.0));
+        dirty.lines[0].points.push((-5.0, 8.0));
         dirty.markers.push(Marker {
             x: -3.0,
             y: 8.0,

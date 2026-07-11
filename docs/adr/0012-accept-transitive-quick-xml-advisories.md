@@ -51,7 +51,7 @@ exists. The fix is not reachable without a full GUI-stack upgrade.
 The acceptance is made explicit in CI via the `deny.toml` advisory `ignore` list
 (`RUSTSEC-2026-0194`, `RUSTSEC-2026-0195`), with a comment pointing back to this ADR, so
 the gate documents the decision rather than silently passing. The same two IDs are
-mirrored in `.cargo/audit.toml` for the separate `cargo-audit` workflow (added 2026-07-11:
+mirrored in `.cargo/audit.toml` for the separate `cargo-audit` workflow (added 2026-07-10:
 that gate reads its own config, not `deny.toml`, and failed on the already-accepted
 advisories the first time a `Cargo.*` change path-triggered it after their publication).
 Both files must stay in lockstep; the revisit condition below removes the ignores from
