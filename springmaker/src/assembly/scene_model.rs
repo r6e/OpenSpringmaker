@@ -256,11 +256,8 @@ mod tests {
             scene_extent(&s).is_some(),
             "member 0 (before the poisoned member) stays finite, so the scene is not wholly degenerate"
         );
-        let all_finite = |line: &crate::viz::Polyline3| {
-            line.points
-                .iter()
-                .all(|p| p.0.is_finite() && p.1.is_finite() && p.2.is_finite())
-        };
+        let all_finite =
+            |line: &crate::viz::Polyline3| line.points.iter().copied().all(crate::viz::finite3);
         assert!(
             all_finite(&s.polylines[0]),
             "member 0, before the poisoned member, must stay fully finite"
