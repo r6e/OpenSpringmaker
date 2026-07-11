@@ -317,9 +317,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::extension::plot_model::extension_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::extension::scene_model::extension_scene(&outcome.design),
                     app.orbit,
                 ),

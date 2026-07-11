@@ -312,9 +312,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("TorResultsView::Populated implies app.tor_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::torsion::plot_model::torsion_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::torsion::scene_model::torsion_scene(&outcome.design),
                     app.orbit,
                 ),
@@ -325,7 +327,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             // hidden with the fatigue rows on min-weight runs); the view only
             // renders the data it hands back. Reuses the `outcome` binding
             // above rather than re-deriving it from `app.tor_outcome`.
-            let fatigue_chart = tor_fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
+            let fatigue_chart =
+                tor_fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
             // Angular rate section — two ResultRows (per-degree and per-revolution).
             let mut rate_col = column![section_heading(pal, "Angular rate")].spacing(6);

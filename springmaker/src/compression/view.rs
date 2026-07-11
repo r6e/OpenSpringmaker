@@ -297,9 +297,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("ResultsView::Populated implies app.outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::compression::plot_model::compression_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::compression::scene_model::compression_scene(&outcome.design),
                     app.orbit,
                 ),
@@ -310,7 +312,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             // hidden with the fatigue rows on min-weight runs); the view only
             // renders the data it hands back. Reuses the `outcome` binding
             // above rather than re-deriving it from `app.outcome`.
-            let fatigue_chart = fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
+            let fatigue_chart =
+                fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
             render_populated(pal, &p, toggle, visual, fatigue_chart)
         }

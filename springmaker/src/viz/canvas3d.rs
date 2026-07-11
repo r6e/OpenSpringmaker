@@ -6,7 +6,7 @@
 //! committed orbit itself, so it cannot publish against a stale base.
 
 use super::{Orbit, SceneData};
-use crate::app::Message;
+use crate::app::{Message, Palette};
 use crate::plot::mapping::letterbox;
 use crate::plot::{CHART_H, CHART_W};
 use iced::mouse;
@@ -111,8 +111,12 @@ pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design 
 /// extension, torsion, assembly) via the shared `widgets::visual_toggle`
 /// slot. `orbit` is only needed to render the bitmap up front — the
 /// resulting canvas never reads it back (see the module doc).
-pub fn scene_element(scene: SceneData, orbit: Orbit) -> Element<'static, Message> {
-    match super::render3d::render_scene(&scene, orbit) {
+pub fn scene_element(
+    pal: &'static Palette,
+    scene: SceneData,
+    orbit: Orbit,
+) -> Element<'static, Message> {
+    match super::render3d::render_scene(pal, &scene, orbit) {
         None => iced::widget::text(SCENE_PLACEHOLDER).into(),
         Some(pixels) => {
             let handle = iced::widget::image::Handle::from_rgba(CHART_W, CHART_H, pixels);

@@ -103,9 +103,11 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("AsmResultsView::Populated implies app.asm_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::assembly::plot_model::assembly_chart(outcome, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::assembly::scene_model::assembly_scene(outcome),
                     app.orbit,
                 ),
