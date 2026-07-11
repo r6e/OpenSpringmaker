@@ -48,7 +48,9 @@ no App state changes.
 One `segmented(options, selected, on_pick)` widget in `widgets.rs` replaces
 every radio cluster:
 
-- Units toggle (Metric / US) in the calculator header.
+- Units toggle (Metric / US) — moved to the calculator footer beside Save/Load
+  during Task 5 (plan-authorized: the five-tab header exceeded the 1200 px budget
+  with the units control in it).
 - Chart / 3D visual toggle (replaces `visual_toggle`'s radios; same
   `Message::Visual` dispatch).
 - Extension hook-mode (Default / Custom).

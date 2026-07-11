@@ -2311,7 +2311,7 @@ fn probe_units_toggle_in_3d_stays_solved_when_valid_both_ways() {
 // like the settings correction picker already was.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/// The units toggle (calculator header) must be clickable by its own label,
+/// The units toggle (calculator footer) must be clickable by its own label,
 /// not just settable via `Message::Units` directly.
 #[test]
 fn units_toggle_switches_by_clicking_the_label() {
