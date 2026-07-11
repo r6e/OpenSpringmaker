@@ -82,7 +82,9 @@ impl ChartCanvas {
         let content = hover_readout(&self.data, dx, dy);
         let (flip_x, flip_y) = ChartMapping::readout_flips(bx, by);
         // Approximate box metrics; the flip DECISION is the tested part.
-        let box_w = 8.0 + content.len() as f32 * 7.0;
+        // chars(), not len(): the readout carries multi-byte glyphs (·, °,
+        // σ, τ), and byte-counting over-widened the box by ~7 px per glyph.
+        let box_w = 8.0 + content.chars().count() as f32 * 7.0;
         let box_h = 20.0;
         let tx = if flip_x { cx - 10.0 - box_w } else { cx + 10.0 };
         let ty = if flip_y { cy + 10.0 } else { cy - 10.0 - box_h };
