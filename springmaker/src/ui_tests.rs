@@ -8,11 +8,13 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
-use crate::app::{App, Message, Screen};
+use crate::app::{App, Message, Screen, VisualMode};
 use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use crate::plot::CHART_PLACEHOLDER;
+use crate::viz::canvas3d::SCENE_PLACEHOLDER;
+use crate::viz::Orbit;
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
@@ -1297,4 +1299,224 @@ fn fatigue_chart_only_when_computed() {
         !shows(&app, "Enter min and max cycle forces to compute fatigue."),
         "the Skipped note must be gone once fatigue is Computed"
     );
+}
+
+// ── 3D visualization wiring pins ─────────────────────────────────────────────
+
+/// Switching the shared visual slot between Chart and Spring3d must swap the
+/// rendered pane without disturbing the solved results or falling back to
+/// either placeholder in either direction.
+///
+/// Note: this does NOT assert that the toggle's own "Chart"/"3D" radio labels
+/// render, despite that being queryable text on other controls in this app.
+/// Unlike `settings_view`'s correction picker (which deliberately renders
+/// `button(text(label))` — see its comment — specifically so
+/// `iced_test::Simulator` can locate it), the family views' chart/3D toggle
+/// uses iced's built-in `radio` widget directly. `iced_widget::radio::Radio`
+/// draws its label directly in `draw()` with no child `Text` widget and no
+/// `operate()` override, so it never feeds a `Candidate::Text` — the label is
+/// structurally undiscoverable via `Simulator::find`/`shows`. (Verified: an
+/// earlier version of this test asserted `shows(&app, "Chart")` and failed
+/// even though the toggle renders correctly.) Making the toggle control
+/// itself queryable would require swapping every family's `radio` for a
+/// `button`-based look-alike — a real UI behavior change across five view
+/// files, out of this task's scope and requiring its own review.
+#[test]
+fn visual_toggle_swaps_chart_for_3d() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(app.outcome.is_some(), "fixture must solve before toggling");
+
+    // Switch to the 3D visual: neither placeholder appears, and the
+    // populated-proof label survives the swap.
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert_eq!(app.results_visual, VisualMode::Spring3d);
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "switching to 3D must not surface the chart placeholder"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene, not the placeholder"
+    );
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated while the 3D visual is shown"
+    );
+
+    // Switch back to Chart: symmetric — no placeholder, results still shown.
+    app.update(Message::Visual(VisualMode::Chart));
+    assert_eq!(app.results_visual, VisualMode::Chart);
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "switching back to Chart must render the real chart, not the placeholder"
+    );
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated after switching back to Chart"
+    );
+}
+
+/// Dragging the 3D orbit while the Spring3d visual is active must update the
+/// committed orbit angles (`Message::Orbit` is published by `OrbitCanvas`)
+/// without disturbing the solved results or surfacing either placeholder —
+/// `Message::Orbit` recomputes nothing (see `app.rs`'s `update`).
+#[test]
+fn orbit_message_rerenders_without_disturbing_results() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(app.outcome.is_some(), "fixture must solve before orbiting");
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    let target = Orbit {
+        yaw: 1.0,
+        pitch: 0.3,
+    };
+    app.update(Message::Orbit(target));
+
+    assert_eq!(
+        app.orbit, target,
+        "the committed orbit must update to the dragged angles"
+    );
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated after an orbit drag"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "an orbit drag must not surface the chart placeholder"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "an orbit drag must not surface the 3D placeholder"
+    );
+}
+
+/// Every family must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `*_chart_renders_after_solve` family, reusing each one's drive
+/// sequence verbatim.
+#[test]
+fn every_family_renders_3d_after_solve() {
+    // Compression.
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(
+        shows(&app, "Spring rate"),
+        "compression: results must be Populated"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "compression: a solved design must render a real 3D scene"
+    );
+
+    // Extension.
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    type_into_ext(&mut app, ExtField::WireDia, "2.0");
+    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
+    type_into_ext(&mut app, ExtField::Active, "10");
+    type_into_ext(&mut app, ExtField::FreeLength, "60");
+    type_into_ext(&mut app, ExtField::InitialTension, "10");
+    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(
+        matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
+        "extension: results must be Populated"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "extension: a solved design must render a real 3D scene"
+    );
+
+    // Torsion.
+    {
+        use crate::torsion::form::Field as TF;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Torsion));
+        type_into_tor(&mut app, TF::WireDia, "2");
+        type_into_tor(&mut app, TF::MeanDia, "20");
+        type_into_tor(&mut app, TF::BodyCoils, "5");
+        type_into_tor(&mut app, TF::Leg1, "0");
+        type_into_tor(&mut app, TF::Leg2, "0");
+        type_into_tor(&mut app, TF::Moments, "1000");
+        app.update(Message::Visual(VisualMode::Spring3d));
+        assert!(app.tor_outcome.is_some(), "torsion: design must solve");
+        assert!(
+            shows(&app, "Geometry"),
+            "torsion: results must be Populated"
+        );
+        assert!(
+            !shows(&app, SCENE_PLACEHOLDER),
+            "torsion: a solved design must render a real 3D scene"
+        );
+    }
+
+    // Conical.
+    {
+        use crate::conical::form::Field as CF;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(Family::Conical));
+        type_into_con(&mut app, CF::WireDia, "2");
+        type_into_con(&mut app, CF::LargeMeanDia, "20");
+        type_into_con(&mut app, CF::SmallMeanDia, "12");
+        type_into_con(&mut app, CF::Active, "10");
+        type_into_con(&mut app, CF::FreeLength, "60");
+        type_into_con(&mut app, CF::Loads, "10, 25");
+        app.update(Message::Visual(VisualMode::Spring3d));
+        assert!(app.con_outcome.is_some(), "conical: solve must succeed");
+        assert!(
+            shows(&app, "Geometry"),
+            "conical: results must be Populated"
+        );
+        assert!(
+            !shows(&app, SCENE_PLACEHOLDER),
+            "conical: a solved design must render a real 3D scene"
+        );
+    }
+
+    // Assembly.
+    {
+        use crate::assembly::form::MemberField as F;
+        let mut app = test_app();
+        app.update(Message::SelectFamily(springcore::Family::Assembly));
+        type_into_asm_member(&mut app, 0, F::WireDia, "2");
+        type_into_asm_member(&mut app, 0, F::MeanDia, "20");
+        type_into_asm_member(&mut app, 0, F::Active, "10");
+        type_into_asm_member(&mut app, 0, F::FreeLength, "60");
+        app.update(Message::AsmMemberAdd);
+        type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
+        type_into_asm_member(&mut app, 1, F::MeanDia, "16");
+        type_into_asm_member(&mut app, 1, F::Active, "8");
+        type_into_asm_member(&mut app, 1, F::FreeLength, "60");
+        app.update(Message::AsmLoads("10, 25".into()));
+        app.update(Message::Visual(VisualMode::Spring3d));
+        assert!(
+            app.asm_outcome.is_some(),
+            "assembly: two-member assembly must solve"
+        );
+        assert!(
+            shows(&app, "Summary"),
+            "assembly: results must be Populated"
+        );
+        assert!(
+            !shows(&app, SCENE_PLACEHOLDER),
+            "assembly: a solved design must render a real 3D scene"
+        );
+    }
 }
