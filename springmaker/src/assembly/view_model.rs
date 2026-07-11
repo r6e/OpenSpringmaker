@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
     fmt_row_value, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
-    GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    Emphasis, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 use springcore::assembly::{evaluate_status, AssemblyDesign, MemberResult, Topology};
 use springcore::{SpringDesign, UnitSystem};
@@ -30,7 +30,7 @@ pub struct AsmMemberResultView {
     pub heading: String,
     /// Share %, rate, spring index, buckling flag.
     pub rows: Vec<ResultRow>,
-    /// Per-member load table: full force / deflection / length / stress / %MTS.
+    /// Per-member load table: full force / deflection / length / stress / % MTS.
     pub loads: LoadTable,
 }
 
@@ -144,6 +144,7 @@ fn asm_assembly_load_table(out: &AssemblyDesign, us: UnitSystem) -> LoadTable {
             ),
             stress: String::new(),
             pct_mts: String::new(),
+            stress_emphasis: Emphasis::Normal,
         })
         .collect();
     // stress_unit="" signals to the view that the stress columns are absent.
@@ -176,7 +177,7 @@ fn asm_member_result_view(i: usize, mr: &MemberResult, us: UnitSystem) -> AsmMem
 }
 
 /// Per-member load table: full 6-column force / deflection / length / stress /
-/// %MTS. Mirrors `con_load_table` in the conical presenter.
+/// % MTS. Mirrors `con_load_table` in the conical presenter.
 fn member_load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
     let rows = d
         .load_points
@@ -203,6 +204,11 @@ fn member_load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
+                stress_emphasis: if lp.pct_mts > 1.0 {
+                    Emphasis::Danger
+                } else {
+                    Emphasis::Normal
+                },
             }
         })
         .collect();
@@ -404,6 +410,36 @@ mod tests {
                 .map(|m| m.loads.rows.iter().map(|r| &r.stress).collect::<Vec<_>>())
                 .collect::<Vec<_>>()
         );
+    }
+
+    // ── stress_emphasis ────────────────────────────────────────────────────────
+
+    #[test]
+    fn overstressed_member_load_point_carries_danger_emphasis() {
+        // Reuses the huge_finite_load fixture: loads = "1e9" N drives every
+        // member's pct_mts far past 1.0.
+        let mut app = fresh_asm_app();
+        app.assembly = AsmFormState {
+            loads: "1e9".into(),
+            ..two_member_form()
+        };
+        app.recompute();
+        let p = asm_populated(&app);
+        assert_eq!(p.members[0].loads.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn normal_member_load_point_carries_normal_emphasis() {
+        let p = asm_populated(&solved_asm_app());
+        assert_eq!(p.members[0].loads.rows[0].stress_emphasis, Emphasis::Normal);
+    }
+
+    #[test]
+    fn assembly_level_empty_stress_row_carries_normal_emphasis() {
+        // Assembly-level rows have no per-load stress (String::new()); the
+        // presenter must set Normal rather than leave emphasis undetermined.
+        let p = asm_populated(&solved_asm_app());
+        assert_eq!(p.assembly_loads.rows[0].stress_emphasis, Emphasis::Normal);
     }
 
     // ── member_prefixed_status_passthrough ────────────────────────────────────

@@ -9,7 +9,7 @@ use crate::assembly::view_model::{
     asm_results_view, AsmMemberResultView, AsmPopulatedResults, AsmResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
-use crate::presenter::LoadTable;
+use crate::presenter::{Emphasis, LoadTable};
 use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, panel_container, render_governing_rate, render_result_row,
@@ -160,7 +160,7 @@ fn render_populated<'a>(
 
 /// Assembly-level load table: 4 columns (Pt / Force / Deflection / Length).
 /// The assembly `LoadTable` has no stress — `stress_unit` is empty and the
-/// stress/%MTS columns are omitted.
+/// stress/% MTS columns are omitted.
 fn render_asm_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
     let mut col = column![section_heading(pal, "Assembly load points")].spacing(SP_XS);
 
@@ -239,7 +239,7 @@ fn render_member_section(
 }
 
 /// Per-member load table: 6 columns (Pt / Force / Deflection / Length /
-/// Stress(unit) / %MTS). Mirrors `render_con_load_table` in the conical view.
+/// Stress(unit) / % MTS). Mirrors `render_con_load_table` in the conical view.
 fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
     let mut col = column![section_heading(pal, "Member load points")].spacing(SP_XS);
 
@@ -265,7 +265,7 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%MTS")
+            text("% MTS")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
@@ -274,6 +274,10 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
     );
 
     for lp in &lt.rows {
+        let stress_color = match lp.stress_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
         col = col.push(
             row![
                 text(lp.point.clone())
@@ -299,12 +303,12 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
                 text(lp.stress.clone())
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
-                    .color(pal.text)
+                    .color(stress_color)
                     .width(Length::FillPortion(2)),
                 text(lp.pct_mts.clone())
                     .font(Font::MONOSPACE)
                     .size(SZ_LABEL)
-                    .color(pal.text)
+                    .color(stress_color)
                     .width(Length::FillPortion(1)),
             ]
             .spacing(SP_XS),

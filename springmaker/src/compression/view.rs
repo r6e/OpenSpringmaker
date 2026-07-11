@@ -13,7 +13,7 @@ use crate::compression::view_model::{
     ResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES};
-use crate::presenter::{FieldDescriptor, LoadTable};
+use crate::presenter::{Emphasis, FieldDescriptor, LoadTable};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
@@ -204,7 +204,7 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%MTS")
+            text("% MTS")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
@@ -213,6 +213,10 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
     );
 
     for lp in &lt.rows {
+        let stress_color = match lp.stress_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
         let load_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
@@ -237,12 +241,12 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(stress_color)
                 .width(Length::FillPortion(2)),
             text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(stress_color)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(SP_XS);

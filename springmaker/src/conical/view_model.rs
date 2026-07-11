@@ -6,8 +6,8 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    unit_force_label, unit_length_label, unit_stress_label, FieldDescriptor, GoverningRate,
-    LoadRow, LoadTable, ResultRow, StatusLine,
+    unit_force_label, unit_length_label, unit_stress_label, Emphasis, FieldDescriptor,
+    GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 
 use super::form::Field;
@@ -139,6 +139,11 @@ fn con_load_table(d: &springcore::conical::ConicalDesign, us: springcore::UnitSy
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
+                stress_emphasis: if lp.pct_mts > 1.0 {
+                    Emphasis::Danger
+                } else {
+                    Emphasis::Normal
+                },
             }
         })
         .collect();
@@ -339,6 +344,28 @@ mod tests {
             stress_cell.contains('e') && stress_cell.len() < 12,
             "expected scientific notation in stress cell, got '{stress_cell}'"
         );
+    }
+
+    // ── stress_emphasis ──────────────────────────────────────────────────────
+
+    #[test]
+    fn overstressed_load_point_carries_danger_emphasis() {
+        // Reuses the huge_finite_load fixture: loads="1e9" N drives pct_mts far
+        // past 1.0.
+        let mut app = fresh_app_conical();
+        app.conical = ConFormState {
+            loads: "1e9".into(),
+            ..metric_form()
+        };
+        app.recompute();
+        let p = con_populated(&app);
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn normal_load_point_carries_normal_emphasis() {
+        let p = con_populated(&solved_metric_app());
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Normal);
     }
 
     // ── telescoping_message_passes_through ──────────────────────────────────

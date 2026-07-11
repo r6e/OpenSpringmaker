@@ -11,8 +11,8 @@ use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor,
-    GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    unit_force_label, unit_length_label, unit_rate_label, unit_stress_label, Emphasis,
+    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 use springcore::{BindingConstraint, SpringDesign, UnitSystem};
 
@@ -153,6 +153,11 @@ fn load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
+                stress_emphasis: if lp.pct_mts > 1.0 {
+                    Emphasis::Danger
+                } else {
+                    Emphasis::Normal
+                },
             }
         })
         .collect();
@@ -481,6 +486,24 @@ mod tests {
             None => unreachable!(),
         };
         assert_eq!(p.load_table.rows[0].stress, format!("{first_stress:.3}"));
+    }
+
+    #[test]
+    fn overstressed_load_point_carries_danger_emphasis() {
+        // Reuses the huge_finite_stress fixture: loads = "1e9" N drives pct_mts
+        // far past 1.0.
+        let form = FormState {
+            loads: "1e9".into(),
+            ..rate_based_metric()
+        };
+        let p = populated(&app_with(form));
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn normal_load_point_carries_normal_emphasis() {
+        let p = populated(&app_with(rate_based_metric()));
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Normal);
     }
 
     // ── fatigue gating ──

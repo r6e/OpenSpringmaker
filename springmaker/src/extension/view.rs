@@ -12,7 +12,7 @@ use crate::extension::form::{ExtFormState, Field, HookMode, ALL_EXT_SCENARIOS};
 use crate::extension::view_model::{
     ext_inputs_view, ext_results_view, ExtLoadTable, ExtPopulatedResults, ExtResultsView,
 };
-use crate::presenter::unit_length_label;
+use crate::presenter::{unit_length_label, Emphasis};
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, segmented,
@@ -207,15 +207,15 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%\u{03c4}_body")
+            text("% \u{03c4}_body")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
-            text("%\u{03c3}")
+            text("% \u{03c3}")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
-            text("%\u{03c4}_hook")
+            text("% \u{03c4}_hook")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
@@ -224,6 +224,18 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
     );
 
     for lp in &lt.rows {
+        let body_color = match lp.body_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
+        let bending_color = match lp.bending_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
+        let torsion_color = match lp.torsion_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
         let data_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
@@ -248,32 +260,32 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
             text(lp.body_shear.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(body_color)
                 .width(Length::FillPortion(2)),
             text(lp.hook_bending.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(bending_color)
                 .width(Length::FillPortion(2)),
             text(lp.hook_torsion.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(torsion_color)
                 .width(Length::FillPortion(2)),
             text(lp.pct_body.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(body_color)
                 .width(Length::FillPortion(1)),
             text(lp.pct_bending.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(bending_color)
                 .width(Length::FillPortion(1)),
             text(lp.pct_torsion.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(torsion_color)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(SP_XS);

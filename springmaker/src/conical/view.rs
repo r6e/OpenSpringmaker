@@ -11,7 +11,7 @@ use crate::conical::view_model::{
     con_inputs_view, con_results_view, ConPopulatedResults, ConResultsView, CON_LINEAR_MODEL_NOTE,
 };
 use crate::picker::{find_by_key, END_TYPES};
-use crate::presenter::LoadTable;
+use crate::presenter::{Emphasis, LoadTable};
 use crate::widgets::{
     field_label, labeled_input, material_picker, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
@@ -184,7 +184,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%MTS")
+            text("% MTS")
                 .size(SZ_CAPTION)
                 .color(pal.muted)
                 .width(Length::FillPortion(1)),
@@ -193,6 +193,10 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
     );
 
     for lp in &lt.rows {
+        let stress_color = match lp.stress_emphasis {
+            Emphasis::Normal => pal.text,
+            Emphasis::Danger => pal.danger,
+        };
         let load_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
@@ -217,12 +221,12 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(stress_color)
                 .width(Length::FillPortion(2)),
             text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(pal.text)
+                .color(stress_color)
                 .width(Length::FillPortion(1)),
         ]
         .spacing(SP_XS);
@@ -233,7 +237,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
 }
 
 /// The always-present linear-model disclosure footer.
-/// Mirrors compression's `render_fatigue` Note arm idiom exactly.
+/// Mirrors compression's fatigue Note-arm rendering idiom.
 fn render_linear_model_footer(pal: &'static Palette) -> Element<'static, Message> {
     column![
         section_divider(pal),

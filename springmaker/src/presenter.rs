@@ -62,6 +62,9 @@ pub(crate) struct LoadRow {
     pub length: String,
     pub stress: String,
     pub pct_mts: String,
+    /// Danger when `pct_mts > 1.0`; the view maps this to a danger color.
+    /// Assembly-level rows (no per-load stress) always carry `Normal`.
+    pub stress_emphasis: Emphasis,
 }
 
 /// The load-points table: a stress-unit header label plus per-point rows.
