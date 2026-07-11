@@ -187,9 +187,9 @@ pub enum Message {
     AsmMemberRemove(usize),
     // Results panel — 3D visualization (shared across families; orbit and
     // visual-mode choice persist across family tabs, unlike per-family form
-    // state). Not yet dispatched by any live view (Tasks 4-6 wire the orbit
-    // canvas and visual toggle in); dead in the bin target until then.
-    #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
+    // state). `Orbit` is published by `OrbitCanvas::update` (a trait-impl
+    // body, which counts as a dead-code use-site); `Visual` has no
+    // constructor until Tasks 4-6 add the results-panel toggle.
     Orbit(crate::viz::Orbit),
     #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
     Visual(VisualMode),

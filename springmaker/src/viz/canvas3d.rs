@@ -11,14 +11,12 @@ use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Event, Frame, Geometry};
 use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub struct OrbitCanvas {
     pub handle: iced::widget::image::Handle,
     pub orbit: Orbit,
 }
 
 #[derive(Default)]
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub struct DragState {
     last: Option<Point>,
 }
@@ -95,15 +93,16 @@ impl canvas::Program<Message> for OrbitCanvas {
 }
 
 /// Placeholder shown when the scene is degenerate (same pattern as the chart).
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub(crate) const SCENE_PLACEHOLDER: &str = "3D view unavailable for this design (check inputs).";
 
 /// Build the 3D element: orbitable canvas, or the placeholder for a
 /// degenerate scene.
 ///
 /// Not yet called from any live view (Tasks 4-6 wire this into each family's
-/// results panel) — still dead in the bin target. Verified empirically via
-/// `cargo clippy -p springmaker -- -D warnings` (no `--all-targets`).
+/// results panel) — the one genuinely dead item on this path, and the live
+/// root for the rest: an `#[allow(dead_code)]` item still counts as a use
+/// site, so this body keeps `render_scene`, `OrbitCanvas`, `SCENE_PLACEHOLDER`
+/// (and, via the trait impl, `orbit_step`) alive in the bin target.
 #[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub fn scene_element(scene: SceneData, orbit: Orbit) -> Element<'static, Message> {
     match super::render3d::render_scene(&scene, orbit) {

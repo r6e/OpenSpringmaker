@@ -141,25 +141,14 @@ impl Default for Orbit {
 }
 
 /// Drag sensitivity in radians per pixel.
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 const ORBIT_SENSITIVITY: f32 = 0.01;
 /// Pitch clamp — stops short of the poles so the projection never flips.
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 const PITCH_LIMIT: f32 = 1.4;
 
 /// Apply a drag delta: yaw wraps into (-π, π], pitch clamps to ±`PITCH_LIMIT`.
 /// A non-finite delta (NaN/inf, e.g. a degenerate cursor-position subtraction)
 /// leaves `current` unchanged rather than poisoning the committed orbit with
 /// NaN, which would propagate forever (NaN + x = NaN on every future drag).
-//
-// Still dead in the bin target: `OrbitCanvas::update` (canvas3d.rs) is the
-// only non-test caller, and trait-impl methods are exempt from the dead-code
-// *report* but don't themselves count as reachability roots — since
-// `OrbitCanvas` is never constructed until Tasks 4-6 wire `scene_element`
-// into a live view, `update`'s body (and therefore this call) stays
-// unreached in that build. Verified empirically via `cargo clippy -p
-// springmaker -- -D warnings` (no `--all-targets`).
-#[allow(dead_code)] // consumed from Tasks 4-6 (family results views); remove this allow then
 pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
     if !dx.is_finite() || !dy.is_finite() {
         return current;
