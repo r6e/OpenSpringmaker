@@ -2,53 +2,14 @@
 //! No logic or branching; all rendering decisions live in `settings_view_model`.
 
 use iced::widget::{button, column, container, row, space, text};
-use iced::{Background, Border, Color, Element, Font, Length};
+use iced::{Background, Element, Font, Length};
 
-use crate::app::{App, Message, Palette, Screen};
+use crate::app::{App, Message, Screen};
 use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
 use crate::widgets::{
-    nav_button_style, panel_container, section_divider, section_heading, SP_LG, SP_MD, SP_SM,
-    SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    nav_button_style, panel_container, section_divider, section_heading, segmented_style, SP_LG,
+    SP_MD, SP_SM, SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
-
-/// Style for a correction-option row: highlighted when selected, muted when not.
-fn correction_option_style(
-    pal: &'static Palette,
-    selected: bool,
-) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    move |_theme, status| {
-        let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
-        let bg_color = if selected {
-            Color {
-                r: pal.accent.r * 0.15,
-                g: pal.accent.g * 0.15,
-                b: pal.accent.b * 0.15,
-                a: 1.0,
-            }
-        } else if is_hovered {
-            Color {
-                r: pal.raised.r + 0.05,
-                g: pal.raised.g + 0.05,
-                b: pal.raised.b + 0.05,
-                a: 1.0,
-            }
-        } else {
-            Color::TRANSPARENT
-        };
-        let border_color = if selected { pal.accent } else { pal.line };
-        iced::widget::button::Style {
-            background: Some(Background::Color(bg_color)),
-            text_color: if selected { pal.accent } else { pal.text },
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: Default::default(),
-            snap: Default::default(),
-        }
-    }
-}
 
 /// Build the Settings screen.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
@@ -69,10 +30,10 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .align_y(iced::Alignment::Center);
 
     // Build correction-option buttons. Each option emits SetCorrection on press;
-    // the presenter's `selected` flag drives visual differentiation. Using
-    // `button(text(label))` (rather than iced's `radio`) makes the label text a
-    // first-class `Candidate::Text` widget, which the iced_test Simulator can
-    // locate and click by label in headless tests.
+    // the presenter's `selected` flag drives visual differentiation via the
+    // shared `segmented_style` (Task 4). Full-width rows (rather than the
+    // shared `segmented` row widget) because option labels are long prose
+    // ("Bergsträsser (EN 13906-1 / Shigley default)"), not short chips.
     let mut options_col = column![
         section_heading(pal, "Curvature-correction factor"),
         section_divider(pal),
@@ -94,7 +55,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         let label_text = text(label).size(SZ_BODY);
         let btn = button(label_text)
             .on_press(Message::SetCorrection(value))
-            .style(correction_option_style(pal, selected))
+            .style(segmented_style(pal, selected))
             .width(Length::Fill)
             .padding([SP_SM, SP_MD]);
         options_col = options_col.push(btn);

@@ -202,8 +202,8 @@ pub enum Message {
     // than an orbit computed against the canvas's own possibly-stale
     // `Orbit`) means the single accumulation point is `App::update`, so
     // coalesced drag events compose instead of dropping intermediate steps.
-    // `Visual` is constructed by the shared `widgets::visual_toggle` radios
-    // used by every family (compression, conical, extension, torsion,
+    // `Visual` is constructed by the shared `widgets::visual_toggle` segmented
+    // control used by every family (compression, conical, extension, torsion,
     // assembly).
     Orbit(f32, f32),
     Visual(VisualMode),

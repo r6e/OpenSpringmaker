@@ -1316,20 +1316,11 @@ fn fatigue_chart_only_when_computed() {
 /// rendered pane without disturbing the solved results or falling back to
 /// either placeholder in either direction.
 ///
-/// Note: this does NOT assert that the toggle's own "Chart"/"3D" radio labels
-/// render, despite that being queryable text on other controls in this app.
-/// Unlike `settings_view`'s correction picker (which deliberately renders
-/// `button(text(label))` — see its comment — specifically so
-/// `iced_test::Simulator` can locate it), the family views' chart/3D toggle
-/// uses iced's built-in `radio` widget directly. `iced_widget::radio::Radio`
-/// draws its label directly in `draw()` with no child `Text` widget and no
-/// `operate()` override, so it never feeds a `Candidate::Text` — the label is
-/// structurally undiscoverable via `Simulator::find`/`shows`. (Verified: an
-/// earlier version of this test asserted `shows(&app, "Chart")` and failed
-/// even though the toggle renders correctly.) Making the toggle control
-/// itself queryable would require swapping every family's `radio` for a
-/// `button`-based look-alike — a real UI behavior change across five view
-/// files, out of this task's scope and requiring its own review.
+/// The toggle's own "Chart"/"3D" labels are now real `text()` children of the
+/// shared `segmented` widget (Task 4), so — unlike the previous single-select
+/// widget it replaced — both labels are queryable via `Simulator::find`/`shows`
+/// in either selection state; this test pins that directly instead of only
+/// inferring it from placeholder absence.
 #[test]
 fn visual_toggle_swaps_chart_for_3d() {
     let mut app = test_app();
@@ -1339,6 +1330,10 @@ fn visual_toggle_swaps_chart_for_3d() {
     type_into(&mut app, Field::FreeLength, "60");
     type_into(&mut app, Field::Loads, "10, 30");
     assert!(app.outcome.is_some(), "fixture must solve before toggling");
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must render before any selection is made"
+    );
 
     // Switch to the 3D visual: neither placeholder appears, and the
     // populated-proof label survives the swap.
@@ -1356,6 +1351,10 @@ fn visual_toggle_swaps_chart_for_3d() {
         shows(&app, "Spring rate"),
         "the results panel must remain populated while the 3D visual is shown"
     );
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must remain queryable while 3D is selected"
+    );
 
     // Switch back to Chart: symmetric — no placeholder, results still shown.
     app.update(Message::Visual(VisualMode::Chart));
@@ -1367,6 +1366,10 @@ fn visual_toggle_swaps_chart_for_3d() {
     assert!(
         shows(&app, "Spring rate"),
         "the results panel must remain populated after switching back to Chart"
+    );
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must remain queryable while Chart is selected"
     );
 }
 
@@ -2217,4 +2220,44 @@ fn probe_units_toggle_in_3d_stays_solved_when_valid_both_ways() {
         "the 3D scene re-renders from the re-solved US design"
     );
     assert!(shows(&app, "Spring rate"), "populated panel under US units");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 4: shared `segmented` control — every single-select cluster now
+// renders real `text()` labels, so (unlike the previous per-screen widgets
+// they replaced) these are clickable by label through the Simulator, exactly
+// like the settings correction picker already was.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The units toggle (calculator header) must be clickable by its own label,
+/// not just settable via `Message::Units` directly.
+#[test]
+fn units_toggle_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(app.unit_system, UnitSystem::Metric, "default is Metric");
+    click(&mut app, "US (in, lbf)");
+    assert_eq!(app.unit_system, UnitSystem::Us);
+}
+
+/// The chart/3D visual toggle must be clickable by its own label ("3D"),
+/// which the previous widget it replaced structurally could not offer (see
+/// the doc comment on `visual_toggle_swaps_chart_for_3d`).
+#[test]
+fn visual_toggle_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    click(&mut app, "3D");
+    assert_eq!(app.results_visual, VisualMode::Spring3d);
+    assert!(!shows(&app, CHART_PLACEHOLDER) && !shows(&app, SCENE_PLACEHOLDER));
+}
+
+/// The extension hook-mode toggle must be clickable by its own label.
+#[test]
+fn hook_mode_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    probe_solve_extension(&mut app);
+    click(&mut app, "Custom radii");
+    assert_eq!(app.extension.hook_mode, HookMode::Custom);
 }

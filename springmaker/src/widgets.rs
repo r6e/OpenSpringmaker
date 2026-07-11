@@ -3,7 +3,7 @@
 //! the app shell's color palette (`Palette`) and `Message`. Screen-specific widgets
 //! live in that screen's own view module.
 
-use iced::widget::{column, container, pick_list, radio, row, rule, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, rule, text, text_input};
 use iced::{Background, Border, Color, Element, Font, Length};
 
 use crate::app::{App, Message, Palette, VisualMode};
@@ -434,22 +434,84 @@ pub(crate) fn render_governing_rate(
     column![rate_label, rate_value].spacing(SP_ROW).into()
 }
 
+/// Style for a `segmented` option button: highlighted when selected, muted
+/// otherwise. Shared by every one-of-N chooser in the app (chart/3D toggle,
+/// units, hook mode, settings' correction picker) so the highlight look is
+/// defined exactly once.
+pub(crate) fn segmented_style(
+    pal: &'static Palette,
+    selected: bool,
+) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+    move |_theme, status| {
+        let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+        let bg = if selected {
+            Color {
+                r: pal.accent.r * 0.15,
+                g: pal.accent.g * 0.15,
+                b: pal.accent.b * 0.15,
+                a: 1.0,
+            }
+        } else if is_hovered {
+            Color {
+                r: pal.raised.r + 0.05,
+                g: pal.raised.g + 0.05,
+                b: pal.raised.b + 0.05,
+                a: 1.0,
+            }
+        } else {
+            Color::TRANSPARENT
+        };
+        iced::widget::button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: if selected { pal.accent } else { pal.text },
+            border: Border {
+                color: if selected { pal.accent } else { pal.line },
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: Default::default(),
+            snap: Default::default(),
+        }
+    }
+}
+
+/// One-of-N chooser rendered as a row of styled buttons (labels are real
+/// `text()` children, so the Simulator can find and click them — iced's
+/// built-in single-select widget draws its label directly with no child
+/// `Text` widget, so it never feeds a `Candidate::Text` and is structurally
+/// invisible to `Simulator::find`).
+pub(crate) fn segmented<'a, T: PartialEq + Copy + 'a>(
+    pal: &'static Palette,
+    options: &[(&'static str, T)],
+    selected: T,
+    on_pick: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message> {
+    let mut r = row![].spacing(SP_XS);
+    for (label, value) in options {
+        r = r.push(
+            button(text(*label).size(SZ_LABEL))
+                .on_press(on_pick(*value))
+                .style(segmented_style(pal, *value == selected))
+                .padding([SP_XS, SP_MD]),
+        );
+    }
+    r.into()
+}
+
 /// The results panel's shared chart/3D toggle: identical in every family
 /// (compression, conical, extension, torsion, assembly) — only the visual it
 /// switches between differs, so it collapses to one call rather than five
-/// byte-identical copies. `selected` is `app.results_visual`. `_pal` is
-/// unused today (the radios carry no palette-dependent styling); Task 4
-/// replaces them with the shared `segmented` widget, which needs it.
+/// byte-identical copies. `selected` is `app.results_visual`.
 pub(crate) fn visual_toggle(
-    _pal: &'static Palette,
+    pal: &'static Palette,
     selected: VisualMode,
 ) -> Element<'static, Message> {
-    row![
-        radio("Chart", VisualMode::Chart, Some(selected), Message::Visual).text_size(SZ_LABEL),
-        radio("3D", VisualMode::Spring3d, Some(selected), Message::Visual).text_size(SZ_LABEL),
-    ]
-    .spacing(SP_MD)
-    .into()
+    segmented(
+        pal,
+        &[("Chart", VisualMode::Chart), ("3D", VisualMode::Spring3d)],
+        selected,
+        Message::Visual,
+    )
 }
 
 // ── Labeled input ────────────────────────────────────────────────────────────

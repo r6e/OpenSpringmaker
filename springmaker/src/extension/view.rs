@@ -4,7 +4,7 @@
 //! iced widgets from the current [`App`] state, delegating data decisions to
 //! the presenter layer (ADR 0008).
 
-use iced::widget::{column, container, radio, row, text};
+use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, Palette};
@@ -15,8 +15,9 @@ use crate::extension::view_model::{
 use crate::presenter::unit_length_label;
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
+    results_empty, results_error, rows_section, section_divider, section_heading, segmented,
+    styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION,
+    SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -78,28 +79,17 @@ fn hooks_group(app: &App) -> Element<'_, Message> {
     let len_label = unit_length_label(app.unit_system);
     let mode = app.extension.hook_mode;
 
-    let default_radio = radio(
-        "Default (machine loops)",
-        HookMode::Default,
-        Some(mode),
+    let mode_toggle = segmented(
+        pal,
+        &[
+            ("Default (machine loops)", HookMode::Default),
+            ("Custom radii", HookMode::Custom),
+        ],
+        mode,
         Message::ExtHookMode,
-    )
-    .text_size(SZ_LABEL);
+    );
 
-    let custom_radio = radio(
-        "Custom radii",
-        HookMode::Custom,
-        Some(mode),
-        Message::ExtHookMode,
-    )
-    .text_size(SZ_LABEL);
-
-    let mut col = column![
-        section_heading(pal, "Hook geometry"),
-        default_radio,
-        custom_radio,
-    ]
-    .spacing(SP_SM);
+    let mut col = column![section_heading(pal, "Hook geometry"), mode_toggle].spacing(SP_SM);
 
     if mode == HookMode::Custom {
         col = col

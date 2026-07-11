@@ -4,15 +4,15 @@
 //! family's design and results panels. The active family is dispatched via
 //! [`App::family`]; the inner panels are supplied by the family's own view module.
 
-use iced::widget::{button, column, container, radio, row, scrollable, space, text};
+use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Element, Font, Length};
 
 use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, styled_pick_list, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD, SP_ROW, SP_SM,
-    SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    section_heading, segmented, styled_pick_list, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD,
+    SP_ROW, SP_SM, SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
 use springcore::{Family, UnitSystem, ALL_FAMILIES};
 
@@ -92,21 +92,15 @@ fn header(app: &App) -> Element<'_, Message> {
     ))
     .width(Length::Fixed(180.0));
 
-    let unit_metric = radio(
-        "Metric (mm, N)",
-        UnitSystem::Metric,
-        Some(app.unit_system),
+    let units_toggle = segmented(
+        pal,
+        &[
+            ("Metric (mm, N)", UnitSystem::Metric),
+            ("US (in, lbf)", UnitSystem::Us),
+        ],
+        app.unit_system,
         Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let unit_us = radio(
-        "US (in, lbf)",
-        UnitSystem::Us,
-        Some(app.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
+    );
 
     let materials_btn = button(text("Materials →").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Materials))
@@ -123,8 +117,7 @@ fn header(app: &App) -> Element<'_, Message> {
         space().width(Length::Fill),
         materials_btn,
         settings_btn,
-        unit_metric,
-        unit_us,
+        units_toggle,
     ]
     .spacing(SP_LG)
     .align_y(iced::Alignment::Center)
