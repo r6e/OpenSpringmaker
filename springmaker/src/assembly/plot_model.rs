@@ -155,13 +155,19 @@ mod tests {
         assert_eq!(data.lines[0].role, LineRole::Primary);
         assert_eq!(data.lines[0].name.as_deref(), Some("Assembly"));
         assert_eq!(data.lines[1].name.as_deref(), Some("Member 1"));
-        // Nested: every member rate < composite rate ⇒ member end-y < composite end-y at shared x.
+        // Nested: every member rate < composite rate ⇒ member end-y strictly
+        // below the composite end-y, at exactly the shared x-extent (kᵢ <
+        // k_total means f_cap/kᵢ > x_max, so the x_max clamp always wins —
+        // member lines reach the chart's right edge, never overshoot it).
         let comp_end = *data.lines[0].points.last().unwrap();
         for member_line in &data.lines[1..] {
             let end = *member_line.points.last().unwrap();
+            assert_relative_eq!(end.0, comp_end.0, max_relative = 1e-9);
             assert!(
-                end.1 <= comp_end.1 + 1e-9,
-                "nested member lines sit at/below the composite"
+                end.1 < comp_end.1,
+                "nested member lines sit strictly below the composite: {} vs {}",
+                end.1,
+                comp_end.1
             );
             assert_eq!(member_line.role, LineRole::Member);
         }
@@ -175,11 +181,39 @@ mod tests {
         let comp_end = *data.lines[0].points.last().unwrap();
         for member_line in &data.lines[1..] {
             let end = *member_line.points.last().unwrap();
-            // Series members are STIFFER than the composite; their lines clip at the
-            // composite y extent instead of overshooting the chart.
-            assert!(end.1 <= comp_end.1 * (1.0 + 1e-9));
-            assert!(end.0 <= comp_end.0 * (1.0 + 1e-9));
+            // Series members are STIFFER than the composite (harmonic-mean
+            // k_total < every kᵢ), so each member line hits the chart's TOP
+            // edge first: it clips at exactly the composite y-extent
+            // (kᵢ · f_cap/kᵢ = f_cap) at an x strictly left of the composite's.
+            assert_relative_eq!(end.1, comp_end.1, max_relative = 1e-9);
+            assert!(
+                end.0 < comp_end.0,
+                "series member lines end strictly left of the composite: {} vs {}",
+                end.0,
+                comp_end.0
+            );
         }
+    }
+
+    /// Identity case: a single-member assembly's composite IS its member
+    /// (k_total = k₁), so the chart still carries both lines — "Assembly" +
+    /// "Member 1" — with coinciding endpoints (the member clips at neither
+    /// edge "early"; f_cap/k₁ = x_max).
+    #[test]
+    fn single_member_assembly_chart_has_two_lines() {
+        let mut form = two_member_form("nested");
+        form.members.truncate(1);
+        let d = solve(&form);
+        let data = assembly_chart(&d, UnitSystem::Metric);
+        assert_eq!(data.lines.len(), 2);
+        assert_eq!(data.lines[0].name.as_deref(), Some("Assembly"));
+        assert_eq!(data.lines[0].role, LineRole::Primary);
+        assert_eq!(data.lines[1].name.as_deref(), Some("Member 1"));
+        assert_eq!(data.lines[1].role, LineRole::Member);
+        let comp_end = *data.lines[0].points.last().unwrap();
+        let member_end = *data.lines[1].points.last().unwrap();
+        assert_relative_eq!(member_end.0, comp_end.0, max_relative = 1e-9);
+        assert_relative_eq!(member_end.1, comp_end.1, max_relative = 1e-9);
     }
 
     #[test]
