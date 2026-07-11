@@ -119,6 +119,15 @@ const SAMPLES_PER_TURN: usize = 32;
 /// profile, and a stroke sized against the scene extent. `max_radius_mm` is
 /// the largest value `radius_at` attains (the closure hides it, so callers
 /// pass it explicitly); extent = max(2·max_radius, total height).
+///
+/// Hostile coil counts (non-finite or negative `active`/`total`, or `total`
+/// past [`MAX_RENDER_TURNS`]) return the degenerate empty-body scene
+/// (`scene_extent` → `None`, the caller shows the placeholder). The guard
+/// lives HERE and not only in [`helix`] because the unconditional
+/// stroke-sizing `height(1.0)` call below runs BEFORE helix's turns guard —
+/// and `coil_height_fn`'s `clamp(0.0, active)` panics when `active` is NaN
+/// or negative (std clamp: "min > max, or either was NaN"). Helix keeps its
+/// own guard as defense in depth.
 pub fn scene_from_radius(
     radius_at: impl Fn(f64) -> f64,
     max_radius_mm: f64,
@@ -127,6 +136,23 @@ pub fn scene_from_radius(
     pitch_mm: f64,
     wire_mm: f64,
 ) -> SceneData {
+    // The range check rejects a NaN/±inf total too (`contains` is false for
+    // all three); active needs its own finiteness test since `+inf < 0.0`
+    // and `NaN < 0.0` are both false.
+    let coils_hostile =
+        !active.is_finite() || active < 0.0 || !(0.0..=MAX_RENDER_TURNS).contains(&total);
+    if coils_hostile {
+        // Same shape as the normal path (exactly one Wire polyline, here
+        // with no points) so the documented one-polyline invariant holds
+        // for every caller and `coil_body_is_empty` reads it uniformly.
+        return SceneData {
+            polylines: vec![Polyline3 {
+                points: Vec::new(),
+                role: SceneRole::Wire,
+                stroke_px: 1,
+            }],
+        };
+    }
     let height = coil_height_fn(active, total, pitch_mm, wire_mm);
     let extent = (2.0 * max_radius_mm).max(height(1.0));
     let points = helix(radius_at, height, total, SAMPLES_PER_TURN);
@@ -301,6 +327,31 @@ mod tests {
         // free=1e19` solves, then the scene build panics).
         let scene = scene_from_radius(|_| 10.0, 10.0, 1e18, 1e18, 5.0, 2.0);
         assert!(scene_extent(&scene).is_none());
+    }
+
+    #[test]
+    fn scene_from_radius_non_finite_or_negative_coils_yield_a_degenerate_scene() {
+        // A NaN or negative active count reaches `coil_height_fn`'s
+        // `clamp(0.0, active)` through the unconditional stroke-sizing
+        // `height(1.0)` call BEFORE helix's turns guard can fire — std clamp
+        // PANICS when max is NaN or min > max ("min > max, or either was
+        // NaN"). The entry guard must return the degenerate scene instead.
+        let nan_active = scene_from_radius(|_| 10.0, 10.0, f64::NAN, 10.0, 5.0, 2.0);
+        assert!(scene_extent(&nan_active).is_none());
+        let negative_active = scene_from_radius(|_| 10.0, 10.0, -1.0, 1.0, 5.0, 2.0);
+        assert!(scene_extent(&negative_active).is_none());
+        let nan_total = scene_from_radius(|_| 10.0, 10.0, 10.0, f64::NAN, 5.0, 2.0);
+        assert!(scene_extent(&nan_total).is_none());
+        let negative_total = scene_from_radius(|_| 10.0, 10.0, 10.0, -2.0, 5.0, 2.0);
+        assert!(scene_extent(&negative_total).is_none());
+    }
+
+    #[test]
+    fn close_wound_coil_nan_turns_yield_a_degenerate_scene() {
+        // `close_wound_coil` passes `turns` as BOTH active and total, so a
+        // NaN reaches the clamp-panic path exactly like the case above —
+        // this is the extension/torsion families' route into the guard.
+        assert!(scene_extent(&close_wound_coil(10.0, f64::NAN, 2.0)).is_none());
     }
 
     #[test]

@@ -26,11 +26,14 @@ fn role_color(role: SceneRole) -> RGBColor {
 /// true mm (aspect-honest)"); x/z stay symmetric about the origin, y stays
 /// centered on the data's own midpoint.
 ///
-/// `None` when a computed bound is non-finite — e.g. a near-`f64::MAX` y
-/// span overflows the padding arithmetic to infinity, and plotters accepts
-/// an infinite range without complaint, silently rendering garbage pixels
-/// instead of panicking (the latent twin of `plot::render::render_chart`'s
-/// guarded headroom overflow).
+/// `None` when a computed bound OR SPAN is non-finite — e.g. a near-
+/// `f64::MAX` y span overflows the padding arithmetic to infinity, and
+/// plotters accepts an infinite range without complaint, silently rendering
+/// garbage pixels instead of panicking (the latent twin of
+/// `plot::render::render_chart`'s guarded headroom overflow). The spans are
+/// checked separately because all four bounds can be individually finite
+/// (±~9e307) while `hi − lo` still overflows — plotters then maps every
+/// point to 0: a blank canvas instead of the placeholder.
 pub(crate) fn frame_ranges(extent: &SceneExtent) -> Option<((f64, f64), (f64, f64))> {
     let r = extent.radial * 1.15;
     let y_pad = ((extent.y_max - extent.y_min) * 0.05).max(1e-9);
@@ -39,7 +42,7 @@ pub(crate) fn frame_ranges(extent: &SceneExtent) -> Option<((f64, f64), (f64, f6
     let s = r.max(y_half);
     let (x_lo, x_hi) = (-s, s);
     let (y_lo, y_hi) = (y_mid - s, y_mid + s);
-    [x_lo, x_hi, y_lo, y_hi]
+    [x_lo, x_hi, y_lo, y_hi, x_hi - x_lo, y_hi - y_lo]
         .into_iter()
         .all(f64::is_finite)
         .then_some(((x_lo, x_hi), (y_lo, y_hi)))
@@ -225,6 +228,20 @@ mod tests {
             radial: 1.0,
             y_min: -1e308,
             y_max: 1e308,
+        };
+        assert!(frame_ranges(&extent).is_none());
+    }
+
+    #[test]
+    fn frame_ranges_none_for_finite_bounds_with_overflowing_span() {
+        // All four BOUNDS are finite (±9.35e307) but the SPAN x_hi − x_lo
+        // (= 2s ≈ 1.87e308) overflows f64 — plotters would accept the
+        // ranges and map every point to 0: a silently blank canvas instead
+        // of the placeholder. The span check must return None.
+        let extent = SceneExtent {
+            radial: 1.0,
+            y_min: -8.5e307,
+            y_max: 8.5e307,
         };
         assert!(frame_ranges(&extent).is_none());
     }

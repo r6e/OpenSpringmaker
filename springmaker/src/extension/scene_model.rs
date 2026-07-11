@@ -178,4 +178,16 @@ mod tests {
         let s = extension_scene(&d);
         assert!(crate::viz::scene_extent(&s).is_none());
     }
+
+    /// NaN ACTIVE COILS (unlike the NaN mean_dia above, which only poisons
+    /// coordinates) used to reach `coil_height_fn`'s `clamp(0.0, active)`
+    /// via stroke sizing before helix's turns guard could fire — a panic,
+    /// not a degenerate scene. Must degrade to the placeholder instead.
+    #[test]
+    fn nan_active_coils_yield_degenerate_scene_not_panic() {
+        let mut d = design();
+        d.active_coils = f64::NAN;
+        let s = extension_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
+    }
 }
