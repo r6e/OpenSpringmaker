@@ -79,63 +79,20 @@ mod tests {
         MaterialStore::new(MaterialSet::load_default())
     }
 
-    /// Mirror the golden metric fixture from extension/view_model.rs tests.
-    fn design() -> ExtensionDesign {
+    /// Solved fixture parameterized on initial tension and loads (wire=2mm,
+    /// mean=20mm, active=10 coils, free=100mm — mirrors the golden metric
+    /// fixture from extension/view_model.rs tests); see
+    /// `assembly/plot_model.rs`'s `two_member_form(topology)` for the
+    /// parameterized-fixture precedent.
+    fn solved(initial_tension: &str, loads: &str) -> ExtensionDesign {
         let materials = store();
         let form = crate::extension::form::ExtFormState {
             wire_dia: "2".to_string(),
             mean_dia: "20".to_string(),
             active: "10".to_string(),
             free_length: "100".to_string(),
-            initial_tension: "5".to_string(),
-            loads: "10, 30".to_string(),
-            ..Default::default()
-        };
-        parse_and_solve(
-            &form,
-            "Music Wire",
-            UnitSystem::Metric,
-            &materials,
-            CurvatureCorrection::default(),
-        )
-        .unwrap()
-        .design
-    }
-
-    /// Design with loads below initial tension to test two-point line.
-    fn design_with_loads_below_fi() -> ExtensionDesign {
-        let materials = store();
-        let form = crate::extension::form::ExtFormState {
-            wire_dia: "2".to_string(),
-            mean_dia: "20".to_string(),
-            active: "10".to_string(),
-            free_length: "100".to_string(),
-            initial_tension: "20".to_string(),
-            loads: "10".to_string(),
-            ..Default::default()
-        };
-        parse_and_solve(
-            &form,
-            "Music Wire",
-            UnitSystem::Metric,
-            &materials,
-            CurvatureCorrection::default(),
-        )
-        .unwrap()
-        .design
-    }
-
-    /// Design with Fi = 0 (engine-valid: `accepts_zero_initial_tension`) to
-    /// test the plain-rate-line shape — no jump segment.
-    fn design_with_zero_initial_tension() -> ExtensionDesign {
-        let materials = store();
-        let form = crate::extension::form::ExtFormState {
-            wire_dia: "2".to_string(),
-            mean_dia: "20".to_string(),
-            active: "10".to_string(),
-            free_length: "100".to_string(),
-            initial_tension: "0".to_string(),
-            loads: "30".to_string(),
+            initial_tension: initial_tension.to_string(),
+            loads: loads.to_string(),
             ..Default::default()
         };
         parse_and_solve(
@@ -151,7 +108,9 @@ mod tests {
 
     #[test]
     fn line_jumps_to_initial_tension_then_climbs_to_max_load() {
-        let d = design();
+        // Golden fixture: Fi = 5 N, loads 10/30 N — max load exceeds Fi, so
+        // the line gets the full three-point jump.
+        let d = solved("5", "10, 30");
         let data = extension_chart(&d, UnitSystem::Metric);
         let pts = &data.lines[0].points;
         assert_eq!(pts.len(), 3);
@@ -178,8 +137,9 @@ mod tests {
 
     #[test]
     fn loads_below_initial_tension_yield_two_point_line() {
-        // All loads ≤ Fi: no third segment; extent is Fi itself.
-        let d = design_with_loads_below_fi();
+        // Fi = 20 N, load = 10 N: all loads ≤ Fi, so no third segment;
+        // extent is Fi itself.
+        let d = solved("20", "10");
         let data = extension_chart(&d, UnitSystem::Metric);
         let pts = &data.lines[0].points;
         assert_eq!(pts.len(), 2);
@@ -198,7 +158,7 @@ mod tests {
         // Fi = 0 is engine-valid (`accepts_zero_initial_tension`): no jump
         // segment, just a two-point origin -> max-load line, with markers
         // present (their validity hinges on the rate, not Fi).
-        let d = design_with_zero_initial_tension();
+        let d = solved("0", "30");
         let data = extension_chart(&d, UnitSystem::Metric);
         assert_eq!(data.lines.len(), 1);
         let pts = &data.lines[0].points;
@@ -226,7 +186,7 @@ mod tests {
         // A NaN Fi is genuinely invalid (never engine-reachable, but the
         // presenter defends in depth): no lines, and markers are suppressed
         // too since the whole design is degenerate.
-        let mut d = design();
+        let mut d = solved("5", "10, 30");
         d.initial_tension = springcore::units::Force::from_newtons(f64::NAN);
         let data = extension_chart(&d, UnitSystem::Metric);
         assert!(data.lines.is_empty());
@@ -238,7 +198,7 @@ mod tests {
         // A degenerate rate invalidates the whole design (the
         // `round_wire_force_deflection` convention): no lines, no markers,
         // and chart_extent must be None so the placeholder path is taken.
-        let mut d = design();
+        let mut d = solved("5", "10, 30");
         d.rate = springcore::SpringRate::from_newtons_per_meter(0.0);
         let data = extension_chart(&d, UnitSystem::Metric);
         assert!(data.lines.is_empty());

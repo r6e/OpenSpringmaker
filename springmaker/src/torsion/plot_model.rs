@@ -35,10 +35,8 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
 
     let k = design.rate.newton_meters_per_degree();
     let rate_ok = k.is_finite() && k > 0.0;
-    // Single fold selecting the max-moment load point; both θ and the
-    // displayed moment are derived from that SAME point (previously two
-    // independent folds, one per unit system, could in principle disagree on
-    // which point is "max" under a pathological ordering).
+    // A single fold picks the max-moment point, so θ and the displayed
+    // moment always come from the same load point.
     let lines: Vec<Line> = 'lines: {
         if !rate_ok {
             break 'lines vec![];

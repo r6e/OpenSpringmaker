@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn letterbox_round_trip_and_centering() {
-        let lb = letterbox(1520.0, 300.0); // 2× width, exact height → scale 1.0? No: fit → scale = min(2.0, 1.0) = 1.0, centered horizontally
+        let lb = letterbox(1520.0, 300.0); // 2× width, exact height: scale = min(2.0, 1.0) = 1.0, centered horizontally
         assert_relative_eq!(lb.scale, 1.0, max_relative = 1e-6);
         assert_relative_eq!(lb.offset_x, 380.0, max_relative = 1e-6);
         let (bx, by) = lb.widget_to_bitmap(380.0 + 88.0, 24.0);
@@ -162,8 +162,7 @@ mod tests {
         assert_relative_eq!(wy, 24.0, max_relative = 1e-6);
     }
 
-    /// Pins the review-mandated zero-bounds guard: a zero/degenerate
-    /// widget bounds must never produce a zero scale, so
+    /// Zero/degenerate widget bounds must never produce a zero scale, so
     /// `widget_to_bitmap`/`bitmap_to_widget` stay finite (no NaN/∞ reaching
     /// `ChartMapping::in_plot_rect`).
     #[test]
