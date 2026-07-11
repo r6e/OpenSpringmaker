@@ -1134,6 +1134,32 @@ fn compression_chart_renders_after_solve() {
     );
 }
 
+/// A solved design mutated post-solve into a degenerate state (zero rate —
+/// the compression presenter suppresses both lines and markers, so
+/// `chart_extent` is `None`) must fall back to the chart placeholder rather
+/// than panic or keep showing a stale chart.
+#[test]
+fn degenerate_design_shows_chart_placeholder() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "sanity: the design must solve and render a real chart before mutation"
+    );
+
+    app.outcome.as_mut().unwrap().design.rate = springcore::SpringRate::from_newtons_per_meter(0.0);
+
+    assert!(
+        shows(&app, CHART_PLACEHOLDER),
+        "a degenerate post-solve design must fall back to the chart placeholder"
+    );
+}
+
 /// Extension: drive the same PowerUser design as `ext_solve_flow_renders_results`.
 #[test]
 fn ext_chart_renders_after_solve() {
