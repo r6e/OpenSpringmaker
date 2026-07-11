@@ -2343,3 +2343,23 @@ fn hook_mode_switches_by_clicking_the_label() {
     click(&mut app, "Custom radii");
     assert_eq!(app.extension.hook_mode, HookMode::Custom);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 5: family tab row replaces the header `pick_list` — all five families
+// render as a `segmented` control, so (unlike the pick_list it replaced, whose
+// menu labels are only real widgets once opened) they're all simultaneously
+// visible and clickable by label, same idiom as Task 4's toggles.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The family tab row must be clickable by its own label, not just settable via
+/// `Message::SelectFamily` directly — and all five tabs must render at once
+/// (the demo-breadth requirement the pick_list couldn't satisfy).
+#[test]
+fn family_tab_row_switches_family_by_clicking_the_label() {
+    let mut app = test_app();
+    click(&mut app, "Torsion");
+    assert_eq!(app.family, Family::Torsion);
+    for name in ["Compression", "Extension", "Torsion", "Conical", "Assembly"] {
+        assert!(shows(&app, name), "tab {name} must be visible");
+    }
+}

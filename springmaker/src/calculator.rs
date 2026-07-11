@@ -11,10 +11,10 @@ use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
     accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, segmented, styled_pick_list, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD,
-    SP_ROW, SP_SM, SP_XL, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    section_heading, segmented, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XL,
+    SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
-use springcore::{Family, UnitSystem, ALL_FAMILIES};
+use springcore::{Family, UnitSystem};
 
 /// Build the complete Calculator screen UI.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
@@ -43,7 +43,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ),
     };
     let status = status_panel(app);
-    let footer = footer(pal);
+    let footer = footer(app);
 
     let header_divider = section_divider(pal);
 
@@ -84,22 +84,17 @@ fn header(app: &App) -> Element<'_, Message> {
             ..Font::DEFAULT
         });
 
-    let family_selector = container(styled_pick_list(
-        pal,
-        ALL_FAMILIES.to_vec(),
-        Some(app.family),
-        Message::SelectFamily,
-    ))
-    .width(Length::Fixed(180.0));
-
-    let units_toggle = segmented(
+    let family_tabs = segmented(
         pal,
         &[
-            ("Metric (mm, N)", UnitSystem::Metric),
-            ("US (in, lbf)", UnitSystem::Us),
+            ("Compression", Family::Compression),
+            ("Extension", Family::Extension),
+            ("Torsion", Family::Torsion),
+            ("Conical", Family::Conical),
+            ("Assembly", Family::Assembly),
         ],
-        app.unit_system,
-        Message::Units,
+        app.family,
+        Message::SelectFamily,
     );
 
     let materials_btn = button(text("Materials →").size(SZ_LABEL).color(pal.accent))
@@ -113,11 +108,10 @@ fn header(app: &App) -> Element<'_, Message> {
     row![
         app_name,
         space().width(Length::Fixed(HEADER_GAP)),
-        family_selector,
+        family_tabs,
         space().width(Length::Fill),
         materials_btn,
         settings_btn,
-        units_toggle,
     ]
     .spacing(SP_LG)
     .align_y(iced::Alignment::Center)
@@ -173,7 +167,8 @@ fn render_status_line(pal: &'static Palette, line: &StatusLine) -> Element<'stat
 // Footer
 // --------------------------------------------------------------------------
 
-fn footer(pal: &'static Palette) -> Element<'static, Message> {
+fn footer(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let save_btn = button(text("Save design").size(SZ_BODY).color(pal.ink))
         .on_press(Message::Save)
         .style(accent_button_style(pal));
@@ -182,5 +177,23 @@ fn footer(pal: &'static Palette) -> Element<'static, Message> {
         .on_press(Message::Load)
         .style(ghost_button_style(pal));
 
-    row![save_btn, load_btn].spacing(SP_MD).into()
+    let units_toggle = segmented(
+        pal,
+        &[
+            ("Metric (mm, N)", UnitSystem::Metric),
+            ("US (in, lbf)", UnitSystem::Us),
+        ],
+        app.unit_system,
+        Message::Units,
+    );
+
+    row![
+        save_btn,
+        load_btn,
+        space().width(Length::Fill),
+        units_toggle
+    ]
+    .spacing(SP_MD)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
