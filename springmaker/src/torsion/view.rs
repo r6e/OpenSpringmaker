@@ -18,7 +18,7 @@ use crate::torsion::view_model::{
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
     render_result_row, results_empty, results_error, rows_section, section_divider,
-    section_heading, styled_pick_list, SZ_CAPTION, SZ_LABEL,
+    section_heading, styled_pick_list, visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -286,26 +286,33 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         TorResultsView::Error(msg) => results_error(msg),
         TorResultsView::Empty => results_empty(),
         TorResultsView::Populated(p) => {
-            // The chart is pure rendering of the design (no decision); build it
-            // from the outcome the Populated variant guarantees is present.
-            let chart = app
+            // The results panel's shared visual slot: chart or orbitable 3D
+            // scene, selected by `app.results_visual`. Each visual is pure
+            // rendering of the design (no decision), built from the outcome
+            // the Populated variant guarantees is present — and built ONLY in
+            // its own arm, so exactly one load-deflection bitmap is
+            // rasterized per render (orbit drags re-render every frame; an
+            // eagerly-built chart would be thrown away each time).
+            let outcome = app
                 .tor_outcome
                 .as_ref()
-                .map(|o| {
-                    crate::plot::chart_element(crate::torsion::plot_model::torsion_chart(
-                        &o.design, us,
-                    ))
-                })
                 .expect("TorResultsView::Populated implies app.tor_outcome is Some");
+            let visual: Element<'_, Message> = match app.results_visual {
+                crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    crate::torsion::plot_model::torsion_chart(&outcome.design, us),
+                ),
+                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    crate::torsion::scene_model::torsion_scene(&outcome.design),
+                    app.orbit,
+                ),
+            };
+            let toggle = visual_toggle(app.results_visual);
 
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only
-            // renders the data it hands back.
-            let fatigue_chart = app
-                .tor_outcome
-                .as_ref()
-                .and_then(|o| tor_fatigue_chart_data(o, us))
-                .map(crate::plot::chart_element);
+            // renders the data it hands back. Reuses the `outcome` binding
+            // above rather than re-deriving it from `app.tor_outcome`.
+            let fatigue_chart = tor_fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
 
             // Angular rate section — two ResultRows (per-degree and per-revolution).
             let mut rate_col = column![section_heading("Angular rate")].spacing(6);
@@ -321,7 +328,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 section_divider(),
                 render_tor_load_table(&p.load_table),
                 section_divider(),
-                chart,
+                toggle,
+                visual,
             ]
             .spacing(6);
 

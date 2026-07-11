@@ -14,7 +14,7 @@ use crate::widgets::{
     danger_button_style, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, panel_container, render_governing_rate, render_result_row,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    SZ_CAPTION, SZ_LABEL,
+    visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -86,21 +86,31 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         AsmResultsView::Error(msg) => results_error(msg),
         AsmResultsView::Empty => results_empty(),
         AsmResultsView::Populated(p) => {
-            // The chart is pure rendering of the design (no decision); build it
-            // from the outcome the Populated variant guarantees is present.
-            // Unlike the other families, the assembly outcome IS the design —
-            // no wrapper struct to unwrap first.
-            let chart = app
+            // The results panel's shared visual slot: chart or orbitable 3D
+            // scene, selected by `app.results_visual`. Each visual is pure
+            // rendering of the design (no decision), built from the outcome
+            // the Populated variant guarantees is present — and built ONLY in
+            // its own arm, so exactly one bitmap is rasterized per render
+            // (orbit drags re-render every frame; an eagerly-built chart
+            // would be thrown away each time). Unlike the other families,
+            // the assembly outcome IS the design — no wrapper struct to
+            // unwrap first.
+            let outcome = app
                 .asm_outcome
                 .as_ref()
-                .map(|design| {
-                    crate::plot::chart_element(crate::assembly::plot_model::assembly_chart(
-                        design, us,
-                    ))
-                })
                 .expect("AsmResultsView::Populated implies app.asm_outcome is Some");
+            let visual: Element<'_, Message> = match app.results_visual {
+                crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    crate::assembly::plot_model::assembly_chart(outcome, us),
+                ),
+                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    crate::assembly::scene_model::assembly_scene(outcome),
+                    app.orbit,
+                ),
+            };
+            let toggle = visual_toggle(app.results_visual);
 
-            render_populated(&p, chart)
+            render_populated(&p, toggle, visual)
         }
     };
     container(panel_container(inner))
@@ -113,11 +123,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 /// Render the populated assembly results: hero rate → Summary section →
-/// assembly load table → chart → per-member sections. Status is handled by
-/// the calculator's shared status panel (not rendered here — see ADR 0008).
+/// assembly load table → chart/3D toggle + visual → per-member sections.
+/// Status is handled by the calculator's shared status panel (not rendered
+/// here — see ADR 0008).
 fn render_populated<'a>(
     p: &AsmPopulatedResults,
-    chart: Element<'a, Message>,
+    toggle: Element<'a, Message>,
+    visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let mut col = column![
         section_heading("Results"),
@@ -128,7 +140,8 @@ fn render_populated<'a>(
         section_divider(),
         render_asm_load_table(&p.assembly_loads),
         section_divider(),
-        chart,
+        toggle,
+        visual,
     ]
     .spacing(6);
 

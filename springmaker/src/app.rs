@@ -137,6 +137,14 @@ pub enum MatField {
     MaxTemp,
 }
 
+/// Which visual occupies the results panel's shared slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VisualMode {
+    #[default]
+    Chart,
+    Spring3d,
+}
+
 /// All UI events.
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -174,6 +182,18 @@ pub enum Message {
     AsmMemberEndType(usize, String),
     AsmMemberAdd,
     AsmMemberRemove(usize),
+    // Results panel — 3D visualization (shared across families; orbit and
+    // visual-mode choice persist across family tabs, unlike per-family form
+    // state). `Orbit` carries a per-drag-event delta (dx, dy) in pixels,
+    // published by `OrbitCanvas::update`: publishing the raw delta (rather
+    // than an orbit computed against the canvas's own possibly-stale
+    // `Orbit`) means the single accumulation point is `App::update`, so
+    // coalesced drag events compose instead of dropping intermediate steps.
+    // `Visual` is constructed by the shared `widgets::visual_toggle` radios
+    // used by every family (compression, conical, extension, torsion,
+    // assembly).
+    Orbit(f32, f32),
+    Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Navigation and materials-editor variants.
@@ -231,6 +251,11 @@ pub struct App {
     /// or load is surfaced (in the status panel) without wiping the design the
     /// user is looking at. Cleared on the next save/load attempt and on recompute.
     pub action_error: Option<String>,
+    /// Committed 3D orbit angles for the results panel's `Spring3d` visual.
+    /// Shared across families so the orientation follows the user.
+    pub orbit: crate::viz::Orbit,
+    /// Which visual (chart or 3D) occupies the results panel's shared slot.
+    pub results_visual: VisualMode,
     // Screen routing
     pub screen: Screen,
     // Materials editor
@@ -278,6 +303,8 @@ impl App {
             outcome: None,
             error: None,
             action_error: None,
+            orbit: crate::viz::Orbit::default(),
+            results_visual: VisualMode::default(),
             screen: Screen::Calculator,
             mat_form: MaterialsFormState::default(),
             editing: None,
@@ -616,6 +643,21 @@ impl App {
             }
             // Load recomputes only on success (apply_saved mutates the form).
             Message::Load => self.load_dialog(),
+
+            // ── Results panel: 3D visualization ────────────────────────────
+            // Orbiting and switching visuals touch neither the solved outcome
+            // nor `action_error` — same non-recompute shape as `Message::Save`.
+            // `orbit_step` is the single consumer of a raw drag delta, so its
+            // non-finite guard keeps `self.orbit` finite by induction — no
+            // other code path can write to `self.orbit`.
+            Message::Orbit(dx, dy) => {
+                self.orbit = crate::viz::orbit_step(self.orbit, dx, dy);
+                false
+            }
+            Message::Visual(v) => {
+                self.results_visual = v;
+                false
+            }
 
             // ── Settings ────────────────────────────────────────────────────
             Message::SetCorrection(c) => {
@@ -1137,6 +1179,58 @@ mod tests {
         assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
         // No save attempted → no error surfaced.
         assert!(app.settings_error.is_none());
+    }
+
+    #[test]
+    fn orbit_message_composes_the_delta_via_orbit_step_without_recompute() {
+        let mut app = test_app();
+        // Seed an action error; a non-recompute message must not clear it.
+        app.action_error = Some("sentinel".into());
+        let before = app.orbit;
+        app.update(Message::Orbit(5.0, -3.0));
+        assert_eq!(
+            app.orbit,
+            crate::viz::orbit_step(before, 5.0, -3.0),
+            "App::update must delegate to orbit_step, not duplicate its math"
+        );
+        assert_eq!(app.action_error.as_deref(), Some("sentinel"));
+    }
+
+    /// The regression this fix targets: publishing per-event DELTAS (rather
+    /// than an absolute orbit computed against a possibly-stale base) means
+    /// repeated `Message::Orbit` updates must compose additively — applying
+    /// two small deltas in sequence must land (within float rounding) where
+    /// one combined delta would, so coalesced drag events never drop
+    /// intermediate steps.
+    #[test]
+    fn orbit_message_composes_across_repeated_updates() {
+        use approx::assert_relative_eq;
+
+        let mut sequential = test_app();
+        sequential.update(Message::Orbit(10.0, 4.0));
+        sequential.update(Message::Orbit(10.0, 4.0));
+
+        let mut combined = test_app();
+        combined.update(Message::Orbit(20.0, 8.0));
+
+        assert_relative_eq!(
+            sequential.orbit.yaw,
+            combined.orbit.yaw,
+            max_relative = 1e-5
+        );
+        assert_relative_eq!(
+            sequential.orbit.pitch,
+            combined.orbit.pitch,
+            max_relative = 1e-5
+        );
+    }
+
+    #[test]
+    fn visual_mode_message_toggles_and_defaults_to_chart() {
+        let mut app = test_app();
+        assert_eq!(app.results_visual, VisualMode::Chart);
+        app.update(Message::Visual(VisualMode::Spring3d));
+        assert_eq!(app.results_visual, VisualMode::Spring3d);
     }
 
     #[test]

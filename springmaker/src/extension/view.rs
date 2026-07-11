@@ -16,7 +16,7 @@ use crate::presenter::unit_length_label;
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
     results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    SZ_CAPTION, SZ_LABEL,
+    visual_toggle, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -297,19 +297,29 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ExtResultsView::Error(msg) => results_error(msg),
         ExtResultsView::Empty => results_empty(),
         ExtResultsView::Populated(p) => {
-            // The chart is pure rendering of the design (no decision); build it
-            // from the outcome the Populated variant guarantees is present.
-            let chart = app
+            // The results panel's shared visual slot: chart or orbitable 3D
+            // scene, selected by `app.results_visual`. Each visual is pure
+            // rendering of the design (no decision), built from the outcome
+            // the Populated variant guarantees is present — and built ONLY in
+            // its own arm, so exactly one bitmap is rasterized per render
+            // (orbit drags re-render every frame; an eagerly-built chart
+            // would be thrown away each time).
+            let outcome = app
                 .ext_outcome
                 .as_ref()
-                .map(|o| {
-                    crate::plot::chart_element(crate::extension::plot_model::extension_chart(
-                        &o.design, us,
-                    ))
-                })
                 .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
+            let visual: Element<'_, Message> = match app.results_visual {
+                crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    crate::extension::plot_model::extension_chart(&outcome.design, us),
+                ),
+                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    crate::extension::scene_model::extension_scene(&outcome.design),
+                    app.orbit,
+                ),
+            };
+            let toggle = visual_toggle(app.results_visual);
 
-            render_populated(&p, chart)
+            render_populated(&p, toggle, visual)
         }
     };
 
@@ -318,10 +328,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         .into()
 }
 
-/// Assemble the populated results column from the presenter data plus the chart.
+/// Assemble the populated results column from the presenter data plus the
+/// chart/3D toggle and the selected visual.
 fn render_populated<'a>(
     p: &ExtPopulatedResults,
-    chart: Element<'a, Message>,
+    toggle: Element<'a, Message>,
+    visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let mut col = column![
         section_heading("Results"),
@@ -332,7 +344,8 @@ fn render_populated<'a>(
         section_divider(),
         render_ext_load_table(&p.load_table),
         section_divider(),
-        chart,
+        toggle,
+        visual,
     ]
     .spacing(6);
     if let Some(rows) = &p.min_weight {

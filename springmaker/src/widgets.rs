@@ -3,10 +3,10 @@
 //! the app shell's color palette (`C`) and `Message`. Screen-specific widgets live
 //! in that screen's own view module.
 
-use iced::widget::{column, container, pick_list, row, rule, text, text_input};
+use iced::widget::{column, container, pick_list, radio, row, rule, text, text_input};
 use iced::{Background, Border, Color, Element, Font, Length};
 
-use crate::app::{App, Message, C};
+use crate::app::{App, Message, VisualMode, C};
 use crate::presenter::{Emphasis, GoverningRate, ResultRow};
 
 // --------------------------------------------------------------------------
@@ -367,6 +367,19 @@ pub(crate) fn render_governing_rate(gr: &GoverningRate) -> Element<'static, Mess
     let rate_label = text("Spring rate").size(SZ_LABEL).color(C::MUTED);
     let rate_value = mono_value(format!("{} {}", gr.value, gr.unit), C::ACCENT, SZ_HERO);
     column![rate_label, rate_value].spacing(6).into()
+}
+
+/// The results panel's shared chart/3D toggle: identical in every family
+/// (compression, conical, extension, torsion, assembly) — only the visual it
+/// switches between differs, so it collapses to one call rather than five
+/// byte-identical copies. `selected` is `app.results_visual`.
+pub(crate) fn visual_toggle(selected: VisualMode) -> Element<'static, Message> {
+    row![
+        radio("Chart", VisualMode::Chart, Some(selected), Message::Visual).text_size(SZ_LABEL),
+        radio("3D", VisualMode::Spring3d, Some(selected), Message::Visual).text_size(SZ_LABEL),
+    ]
+    .spacing(12)
+    .into()
 }
 
 // ── Labeled input ────────────────────────────────────────────────────────────

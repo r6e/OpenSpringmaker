@@ -51,6 +51,18 @@ pub(crate) fn ensure_font() {
     });
 }
 
+/// Convert a tightly-packed RGB buffer (as `plotters`' `BitMapBackend` fills
+/// it — it has no RGBA mode) to RGBA with a fully-opaque alpha channel, as
+/// iced's image widget expects. Shared by the 2D chart and 3D scene
+/// renderers so the conversion cannot drift between them.
+pub(crate) fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
+    for px in rgb.chunks_exact(3) {
+        rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    }
+    rgba
+}
+
 /// Convert an iced palette colour to a plotters `RGBColor`.
 ///
 /// Each channel is multiplied by 255 and rounded; the result is clamped to
