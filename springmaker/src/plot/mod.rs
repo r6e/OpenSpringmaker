@@ -287,14 +287,14 @@ pub(crate) fn shear_stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
         ),
         UnitSystem::Us => (
             AxisMeta {
-                label: "mean shear stress (psi)",
+                label: "mean shear stress (ksi)",
                 symbol: "τm",
-                unit: "psi",
+                unit: "ksi",
             },
             AxisMeta {
-                label: "alternating shear stress (psi)",
+                label: "alternating shear stress (ksi)",
                 symbol: "τa",
-                unit: "psi",
+                unit: "ksi",
             },
         ),
     }
@@ -318,23 +318,25 @@ pub(crate) fn normal_stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
         ),
         UnitSystem::Us => (
             AxisMeta {
-                label: "mean stress (psi)",
+                label: "mean stress (ksi)",
                 symbol: "σm",
-                unit: "psi",
+                unit: "ksi",
             },
             AxisMeta {
-                label: "alternating stress (psi)",
+                label: "alternating stress (ksi)",
                 symbol: "σa",
-                unit: "psi",
+                unit: "ksi",
             },
         ),
     }
 }
 
+/// Stress in the active unit system: MPa (metric) or ksi (US) — matches the
+/// app-wide display convention (`presenter::display_stress`).
 pub(crate) fn stress_display(s: springcore::units::Stress, units: UnitSystem) -> f64 {
     match units {
         UnitSystem::Metric => s.megapascals(),
-        UnitSystem::Us => s.psi(),
+        UnitSystem::Us => s.psi() / 1000.0,
     }
 }
 

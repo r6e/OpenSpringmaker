@@ -162,6 +162,25 @@ mod tests {
     }
 
     #[test]
+    fn goodman_us_axes_and_envelope_are_ksi_not_psi() {
+        // App-wide US stress convention is ksi (presenter::display_stress),
+        // not psi — pin both the axis units/labels and a converted value
+        // against the engine accessor, not a hand constant.
+        let d = goodman_chart(&fatigue_result(), UnitSystem::Us);
+        assert_eq!(d.x_axis.unit, "ksi");
+        assert_eq!(d.x_axis.label, "mean shear stress (ksi)");
+        assert_eq!(d.y_axis.unit, "ksi");
+        assert_eq!(d.y_axis.label, "alternating shear stress (ksi)");
+        let env = d
+            .lines
+            .iter()
+            .find(|l| l.role == LineRole::Envelope)
+            .unwrap();
+        let se_ksi = Stress::from_megapascals(310.0).psi() / 1000.0;
+        assert_relative_eq!(env.points[0].1, se_ksi, max_relative = 1e-9); // (0, Se) in ksi
+    }
+
+    #[test]
     fn goodman_envelope_runs_se_to_ssu() {
         let d = goodman_chart(&fatigue_result(), UnitSystem::Metric);
         let env = d
