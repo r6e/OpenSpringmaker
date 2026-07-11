@@ -1,8 +1,8 @@
 //! Pure chart presenter for the compression family (ADR 0008).
 
 use crate::plot::{
-    round_wire_force_deflection, stress_axes, stress_display, ChartData, Line, LineRole, Marker,
-    MarkerKind,
+    round_wire_force_deflection, shear_stress_axes, stress_display, ChartData, Line, LineRole,
+    Marker, MarkerKind,
 };
 use springcore::{SpringDesign, UnitSystem};
 
@@ -15,7 +15,7 @@ pub fn compression_chart(design: &SpringDesign, units: UnitSystem) -> ChartData 
 /// All values come from `FatigueResult`; no engineering formula is re-derived
 /// here — the intersection is line/line geometry on the engine's numbers.
 pub fn goodman_chart(f: &springcore::FatigueResult, units: UnitSystem) -> ChartData {
-    let (x_axis, y_axis) = stress_axes(units);
+    let (x_axis, y_axis) = shear_stress_axes(units);
     let se = stress_display(f.fully_reversed_endurance, units);
     let ssu = stress_display(f.ultimate_shear, units);
     let ta = stress_display(f.alternating_stress, units);
@@ -148,6 +148,17 @@ mod tests {
             ultimate_shear: Stress::from_megapascals(1130.0),
             goodman_factor_of_safety: 2.0,
         }
+    }
+
+    #[test]
+    fn goodman_axes_are_labeled_as_shear_stress() {
+        // Compression's FatigueResult quantities are torsional shear, not
+        // normal stress — the axes must read τ, not σ.
+        let d = goodman_chart(&fatigue_result(), UnitSystem::Metric);
+        assert_eq!(d.x_axis.symbol, "τm");
+        assert_eq!(d.x_axis.label, "mean shear stress (MPa)");
+        assert_eq!(d.y_axis.symbol, "τa");
+        assert_eq!(d.y_axis.label, "alternating shear stress (MPa)");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! pins that the field is read, not derived.
 
 use crate::plot::{
-    stress_axes, stress_display, AxisMeta, ChartData, Line, LineRole, Marker, MarkerKind,
+    normal_stress_axes, stress_display, AxisMeta, ChartData, Line, LineRole, Marker, MarkerKind,
 };
 use springcore::torsion::TorsionDesign;
 use springcore::UnitSystem;
@@ -86,7 +86,7 @@ pub fn torsion_chart(design: &TorsionDesign, units: UnitSystem) -> ChartData {
 /// Eq. 10-59). The GUI samples the cited criterion for display only; the
 /// engine remains the factor-of-safety authority.
 pub fn gerber_chart(f: &springcore::torsion::TorFatigueResult, units: UnitSystem) -> ChartData {
-    let (x_axis, y_axis) = stress_axes(units);
+    let (x_axis, y_axis) = normal_stress_axes(units);
     let se = stress_display(f.fully_reversed_endurance, units);
     let sut = stress_display(f.ultimate_tensile, units);
     let sa_op = stress_display(f.alternating_stress, units);
@@ -262,6 +262,17 @@ mod tests {
             strength_amplitude: Stress::from_megapascals(480.0),
             gerber_factor_of_safety: 1.6,
         }
+    }
+
+    #[test]
+    fn gerber_axes_are_labeled_as_normal_stress() {
+        // Torsion's Gerber diagram is the bending fatigue check — normal
+        // stress, not shear — so the axes must read σ, not τ.
+        let d = gerber_chart(&tor_fatigue_result(), UnitSystem::Metric);
+        assert_eq!(d.x_axis.symbol, "σm");
+        assert_eq!(d.x_axis.label, "mean stress (MPa)");
+        assert_eq!(d.y_axis.symbol, "σa");
+        assert_eq!(d.y_axis.label, "alternating stress (MPa)");
     }
 
     #[test]

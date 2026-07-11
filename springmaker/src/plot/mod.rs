@@ -254,7 +254,41 @@ pub(crate) fn convert_fd(defl_m: f64, force_n: f64, units: UnitSystem) -> (f64, 
     }
 }
 
-pub(crate) fn stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
+/// Axes for the Goodman diagram (compression + torsion families): the
+/// plotted quantities (`FatigueResult::mean_stress`/`alternating_stress`,
+/// derived from torsional shear) are SHEAR stresses, not normal — τ, not σ.
+pub(crate) fn shear_stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
+    match units {
+        UnitSystem::Metric => (
+            AxisMeta {
+                label: "mean shear stress (MPa)",
+                symbol: "τm",
+                unit: "MPa",
+            },
+            AxisMeta {
+                label: "alternating shear stress (MPa)",
+                symbol: "τa",
+                unit: "MPa",
+            },
+        ),
+        UnitSystem::Us => (
+            AxisMeta {
+                label: "mean shear stress (psi)",
+                symbol: "τm",
+                unit: "psi",
+            },
+            AxisMeta {
+                label: "alternating shear stress (psi)",
+                symbol: "τa",
+                unit: "psi",
+            },
+        ),
+    }
+}
+
+/// Axes for the Gerber diagram (torsion family's bending fatigue check):
+/// normal stress — σ.
+pub(crate) fn normal_stress_axes(units: UnitSystem) -> (AxisMeta, AxisMeta) {
     match units {
         UnitSystem::Metric => (
             AxisMeta {

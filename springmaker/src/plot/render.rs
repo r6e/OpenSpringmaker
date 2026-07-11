@@ -39,9 +39,11 @@ fn marker_style(kind: MarkerKind) -> ShapeStyle {
 /// positive extent (plotters must never see a non-finite range).
 pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
     let (x_raw, y_raw) = chart_extent(data)?;
-    // Headroom, with the legacy floor so tiny ranges don't degenerate.
-    let x_max = (x_raw * 1.1).max(1e-9);
-    let y_max = (y_raw * 1.1).max(1e-9);
+    // Headroom, with the legacy floor so tiny ranges don't degenerate, and a
+    // ceiling so a near-f64::MAX finite extent doesn't overflow to +Inf under
+    // the 1.1x multiply (plotters' cartesian range must stay finite).
+    let x_max = (x_raw * 1.1).clamp(1e-9, f64::MAX);
+    let y_max = (y_raw * 1.1).clamp(1e-9, f64::MAX);
 
     ensure_font();
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
@@ -183,6 +185,34 @@ mod tests {
         assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
         assert_relative_eq!(mapping.x_max, 15.0 * 1.1, max_relative = 1e-12);
         assert_relative_eq!(mapping.y_max, 30.0 * 1.1, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn render_chart_clamps_headroom_for_near_max_extent() {
+        // x_raw * 1.1 overflows to +Inf when x_raw sits near f64::MAX; the
+        // headroom multiply must clamp back to a finite value so plotters'
+        // cartesian range construction never sees an infinite bound.
+        let d = ChartData {
+            x_axis: AxisMeta {
+                label: "x",
+                symbol: "x",
+                unit: "",
+            },
+            y_axis: AxisMeta {
+                label: "y",
+                symbol: "y",
+                unit: "",
+            },
+            lines: vec![Line {
+                points: vec![(0.0, 0.0), (f64::MAX, f64::MAX)],
+                role: LineRole::Primary,
+                name: None,
+            }],
+            markers: vec![],
+        };
+        let (_, mapping) = render_chart(&d).expect("a huge finite extent must still render");
+        assert!(mapping.x_max.is_finite());
+        assert!(mapping.y_max.is_finite());
     }
 
     #[test]
