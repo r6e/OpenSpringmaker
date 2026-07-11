@@ -2240,6 +2240,17 @@ fn probe_fatigue_region_renders_in_both_visual_modes() {
     }
 }
 
+/// Torsion's hero readout must render under its canonical "Angular rate"
+/// label (compression's hero is "Spring rate" — each family's hero label is
+/// distinct and threaded through `render_governing_rate`).
+#[test]
+fn torsion_shows_the_angular_rate_hero() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion(&mut app);
+    assert!(shows(&app, "Angular rate"));
+}
+
 /// API-contract: `Message::Visual` must be a pure mode flip — it must not
 /// clear `action_error` (no recompute) and must not clear a solve error.
 #[test]

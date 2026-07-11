@@ -252,26 +252,6 @@ fn render_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, 
     load_col.into()
 }
 
-fn render_fatigue(pal: &'static Palette, fv: &FatigueView) -> Element<'static, Message> {
-    match fv {
-        FatigueView::Hidden => column![].into(),
-        FatigueView::Computed(rows) => divided_result_section(pal, "Fatigue analysis", rows),
-        FatigueView::Note(msg) => column![
-            section_divider(pal),
-            text(*msg).size(SZ_LABEL).color(pal.muted),
-        ]
-        .spacing(SP_SM)
-        .into(),
-    }
-}
-
-fn render_min_weight(pal: &'static Palette, mv: &MinWeightView) -> Element<'static, Message> {
-    match mv {
-        MinWeightView::Hidden => column![].into(),
-        MinWeightView::Shown(rows) => divided_result_section(pal, "Min-weight optimisation", rows),
-    }
-}
-
 // --------------------------------------------------------------------------
 // Results (right) panel
 // --------------------------------------------------------------------------
@@ -344,15 +324,30 @@ fn render_populated<'a>(
         section_divider(pal),
         toggle,
         visual,
-        render_fatigue(pal, &p.fatigue),
     ]
     .spacing(SP_ROW);
 
+    match &p.fatigue {
+        FatigueView::Hidden => {}
+        FatigueView::Computed(rows) => {
+            col = col.push(divided_result_section(pal, "Fatigue analysis", rows));
+        }
+        FatigueView::Note(msg) => {
+            col = col.push(
+                column![
+                    section_divider(pal),
+                    text(*msg).size(SZ_LABEL).color(pal.muted)
+                ]
+                .spacing(SP_SM),
+            );
+        }
+    }
     if let Some(fc) = fatigue_chart {
         col = col.push(fc);
     }
-
-    col = col.push(render_min_weight(pal, &p.min_weight));
+    if let MinWeightView::Shown(rows) = &p.min_weight {
+        col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
+    }
 
     col.into()
 }

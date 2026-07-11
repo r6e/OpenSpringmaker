@@ -17,7 +17,7 @@ use crate::torsion::view_model::{
 };
 use crate::widgets::{
     divided_result_section, field_label, labeled_input, material_picker, panel_container,
-    render_result_row, results_empty, results_error, rows_section, section_divider,
+    render_governing_rate, results_empty, results_error, rows_section, section_divider,
     section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS,
     SZ_CAPTION, SZ_LABEL,
 };
@@ -331,15 +331,10 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let fatigue_chart =
                 tor_fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
-            // Angular rate section — two ResultRows (per-degree and per-revolution).
-            let mut rate_col = column![section_heading(pal, "Angular rate")].spacing(SP_ROW);
-            rate_col = rate_col.push(render_result_row(pal, &p.rate_per_deg));
-            rate_col = rate_col.push(render_result_row(pal, &p.rate_per_turn));
-
             let mut col = column![
                 section_heading(pal, "Results"),
                 section_divider(pal),
-                rate_col,
+                render_governing_rate(pal, "Angular rate", &p.governing_rate),
                 section_divider(pal),
                 rows_section(pal, "Geometry", &p.geometry),
                 section_divider(pal),
@@ -350,10 +345,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             ]
             .spacing(SP_ROW);
 
-            if let Some(rows) = &p.min_weight {
-                col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
-            }
-
+            // Canon order: Fatigue precedes Min-weight (mirrors compression).
             match &p.fatigue {
                 TorFatigueView::Hidden => {}
                 TorFatigueView::Computed(rows) => {
@@ -373,6 +365,9 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             // Computed (the presenter gates both together).
             if let Some(fc) = fatigue_chart {
                 col = col.push(fc);
+            }
+            if let Some(rows) = &p.min_weight {
+                col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
             }
 
             col.into()
