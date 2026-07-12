@@ -36,7 +36,7 @@ through the shared system, and a Light/Dark/System theme.
 
 Replace the 180 px `styled_pick_list` family dropdown (`calculator.rs`) with
 a horizontal segmented row of five styled buttons — Compression · Extension ·
-Torsion · Conical · Assembly — under the header. Styling follows the
+Torsion · Conical · Assembly — in the header row. Styling follows the
 `settings_view` correction-option precedent (selected = accent-tinted
 background, hover = raised, radius 4). Buttons wrap `text()` children, so
 family switching becomes Simulator-queryable; a future Rectangular tab slots
@@ -95,11 +95,12 @@ tokenization.
   points.
 - Assembly member blocks become sub-cards (`RAISED` background, `LINE`
   border, radius 4) instead of padded text.
-- `screen_shell(header, content)` helper unifies the triplicated root chrome
-  (INK background, padding 24, `max_width(1200)`) across Calculator /
-  Materials / Settings. Calculator keeps whole-page scroll; Materials keeps
-  its per-panel scrolling (justified: independent list + form); Settings
-  adopts whole-page scroll and the 1200 cap.
+- `screen_shell(pal, content, scroll)` helper unifies the triplicated root
+  chrome (INK background, padding 24 outside a `max_width(1200)` cap applied
+  to the content, not the padded box) across Calculator / Materials /
+  Settings. Calculator keeps whole-page scroll; Materials keeps its
+  per-panel scrolling (justified: independent list + form); Settings adopts
+  whole-page scroll and the 1200 cap.
 
 ### Carried panel items (fold in)
 
@@ -133,9 +134,9 @@ the hero readout.
 Style fns are palette-parameterized closure factories (the
 `correction_option_style` precedent); views resolve `app.pal()` once per
 build — theme switches re-run `view()`, so no `&Theme` lookup is needed.
-Views and both bitmap renderers read `app.pal()`; `render_chart` /
-`render_scene` already take `&Palette` (pre-staged in PR 1) — presenters
-stay pure data.
+Both bitmap renderers take `&Palette` parameters; the views pass
+`app.pal()` — `render_chart` / `render_scene` already take `&Palette`
+(pre-staged in PR 1) — presenters stay pure data.
 
 ### Settings toggle + system tracking
 

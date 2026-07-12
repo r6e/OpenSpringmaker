@@ -42,6 +42,10 @@ pub(crate) const PANEL_PAD: f32 = 20.0;
 /// Extra-large spacing unit (24px).
 pub(crate) const SP_XL: f32 = 24.0;
 
+/// Max content width for the screen shell (1200px) — the cap applies to the
+/// CONTENT, not the padded box around it (see `screen_shell`).
+pub(crate) const CONTENT_MAX_W: f32 = 1200.0;
+
 // --------------------------------------------------------------------------
 // Fixed-width columns
 // --------------------------------------------------------------------------
@@ -96,21 +100,33 @@ pub(crate) fn member_sub_card<'a>(
 }
 
 /// Shared root chrome for every screen (calculator, materials, settings):
-/// padding `SP_XL`, a 1200px max content width, and the app's `ink`
+/// padding `SP_XL`, a `CONTENT_MAX_W` max content width, and the app's `ink`
 /// background — collapses the three near-identical root-container copies
 /// that used to duplicate this (and let Settings drift to its own 800px
 /// cap) into one definition. `scroll` wraps the padded content in an outer
 /// `scrollable`; materials passes `false` since its list/edit panels already
 /// scroll internally and an outer scrollable would fight them over height.
+///
+/// The width cap is nested INSIDE the padding (an inner container caps
+/// `content` at `CONTENT_MAX_W`; the outer container only pads, uncapped) —
+/// not one container doing both. A single `container(content).padding(SP_XL)
+/// .max_width(CONTENT_MAX_W)` would apply the 1200px cap to the padded box
+/// as a whole (iced's `Limits::max_width` binds before padding is
+/// subtracted), so content itself would max out at `CONTENT_MAX_W - 2 *
+/// SP_XL` (1152px) instead of the pre-refresh 1200px. Nesting restores the
+/// original two-container split (content had its own `.max_width(1200)`;
+/// the wrapping container only padded, uncapped) that predates this shell's
+/// collapse of the three screens' near-identical root chrome.
 pub(crate) fn screen_shell<'a>(
     pal: &'static Palette,
     content: impl Into<Element<'a, Message>>,
     scroll: bool,
 ) -> Element<'a, Message> {
-    let padded = container(content)
-        .padding(SP_XL)
-        .max_width(1200)
+    let capped = container(content)
+        .max_width(CONTENT_MAX_W)
         .width(Length::Fill);
+
+    let padded = container(capped).padding(SP_XL).width(Length::Fill);
 
     let inner: Element<'a, Message> = if scroll {
         scrollable(padded).into()
