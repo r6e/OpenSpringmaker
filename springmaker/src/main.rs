@@ -39,6 +39,7 @@ fn initial_app() -> App {
     // Wire up the real settings path so preference changes are persisted.
     // None if the platform config dir is unavailable (settings_path() returns None).
     app.settings_path = settings::settings_path();
+    app.theme_pref = settings.theme_pref;
     app
 }
 

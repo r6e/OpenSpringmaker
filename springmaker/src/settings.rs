@@ -6,12 +6,25 @@ use serde::{Deserialize, Serialize};
 use springcore::CurvatureCorrection;
 use std::path::{Path, PathBuf};
 
+/// Theme preference: follow the OS, or force a palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemePref {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Persisted application preferences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     /// Body-shear curvature-correction factor applied to all designs.
     pub curvature_correction: CurvatureCorrection,
+    /// Theme preference (system/light/dark). Absent in pre-Task-3 files;
+    /// `#[serde(default)]` on the struct resolves it to `ThemePref::System`.
+    pub theme_pref: ThemePref,
 }
 
 /// Path to the settings file, or `None` if the platform config dir is unavailable.
@@ -104,12 +117,43 @@ mod tests {
         let p = temp("round");
         AppSettings {
             curvature_correction: CurvatureCorrection::Wahl,
+            theme_pref: ThemePref::default(),
         }
         .save_to(&p)
         .unwrap();
         let (settings, warning) = load_from(&p);
         assert_eq!(settings.curvature_correction, CurvatureCorrection::Wahl);
         assert!(warning.is_none(), "a valid file yields no warning");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn round_trips_a_light_theme_pref() {
+        let p = temp("round_theme");
+        AppSettings {
+            curvature_correction: CurvatureCorrection::Bergstrasser,
+            theme_pref: ThemePref::Light,
+        }
+        .save_to(&p)
+        .unwrap();
+        let (settings, warning) = load_from(&p);
+        assert_eq!(settings.theme_pref, ThemePref::Light);
+        assert!(warning.is_none(), "a valid file yields no warning");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn old_file_without_theme_pref_defaults_to_system_without_warning() {
+        let p = temp("old_file_no_theme");
+        // A pre-Task-3 settings file: only the curvature-correction key present.
+        std::fs::write(&p, "curvature_correction = \"wahl\"\n").unwrap();
+        let (settings, warning) = load_from(&p);
+        assert_eq!(settings.curvature_correction, CurvatureCorrection::Wahl);
+        assert_eq!(settings.theme_pref, ThemePref::System);
+        assert!(
+            warning.is_none(),
+            "a missing (pre-existing) field must not surface a warning"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
