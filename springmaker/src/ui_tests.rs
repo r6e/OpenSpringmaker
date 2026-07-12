@@ -2455,9 +2455,11 @@ fn hook_mode_reclick_already_selected_preserves_action_error() {
 }
 
 /// Re-clicking the already-selected settings correction option must not clear
-/// a stale `action_error`, nor touch `settings_error` — the settings screen's
-/// own prose-button loop (not the shared `segmented` widget) needs the same
-/// guard.
+/// a stale `action_error` — the settings screen's own prose-button loop (not
+/// the shared `segmented` widget) needs the same guard. Only exercised while
+/// no save is failing (`settings_error` is `None`): panel R2 item 2 adds a
+/// deliberate exception to this no-op contract when a save IS failing — see
+/// `settings_correction_reclick_retries_after_a_failed_save` below.
 #[test]
 fn settings_correction_reclick_already_selected_preserves_action_error() {
     let mut app = test_app();
@@ -2468,7 +2470,10 @@ fn settings_correction_reclick_already_selected_preserves_action_error() {
         "test_app's fixed default correction is Bergstrasser"
     );
     app.action_error = Some("sentinel".into());
-    app.settings_error = Some("stale settings error".into());
+    assert!(
+        app.settings_error.is_none(),
+        "pre-condition: no save is currently failing"
+    );
     click(&mut app, "Bergsträsser (EN 13906-1 / Shigley default)");
     assert_eq!(
         app.correction,
@@ -2477,11 +2482,77 @@ fn settings_correction_reclick_already_selected_preserves_action_error() {
     assert_eq!(
         app.action_error.as_deref(),
         Some("sentinel"),
-        "re-clicking the already-selected correction option must not recompute"
+        "re-clicking the already-selected correction option must not recompute \
+         while no save is failing"
+    );
+}
+
+/// Panel R2 item 2: `SetCorrection` performs a real file write
+/// (`AppSettings::save_to`), and a FAILED write must remain retryable from
+/// this screen even though the value shown is already "selected" — the
+/// no-op guard above is deliberately relaxed while `settings_error` is Some
+/// (settings_view.rs's button loop attaches `.on_press` to the selected
+/// option in that case). This is the discriminating half: only the RETRY
+/// click goes through the Simulator (view-driven), so a guard that never
+/// attaches `.on_press` on failure makes the click a no-op and this test
+/// fails to observe recovery.
+/// Revert-probe: drop the `|| app.settings_error.is_some()` clause from
+/// settings_view.rs's guard → the selected button gets no `.on_press` even
+/// on failure → the retry click below emits zero messages → `settings_error`
+/// stays `Some` → this test FAILS → restore → green.
+#[test]
+fn settings_correction_reclick_retries_after_a_failed_save() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "test_app's fixed default correction is Bergstrasser"
+    );
+
+    // Point settings_path at a location whose PARENT is a FILE (not a
+    // directory), so `save_to`'s `create_dir_all` fails deterministically —
+    // no reliance on filesystem permissions.
+    let bogus_parent = env::temp_dir().join(format!(
+        "osm-settings-retry-parent-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
+    app.settings_path = Some(bogus_parent.join("settings.toml"));
+
+    // Setup half: dispatch directly to seed the failure (only the RETRY
+    // below needs to be view-driven).
+    app.update(Message::SetCorrection(
+        springcore::CurvatureCorrection::Bergstrasser,
+    ));
+    assert!(
+        app.settings_error.is_some(),
+        "pre-condition: saving to an unwritable path must fail"
     );
     assert_eq!(
-        app.settings_error.as_deref(),
-        Some("stale settings error"),
-        "re-clicking the already-selected correction option must not re-run the save path"
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "the in-memory preference still applies even though the save failed"
     );
+
+    // Repoint at a writable temp directory, then click the SELECTED option
+    // through the Simulator.
+    let good_dir = env::temp_dir().join(format!(
+        "osm-settings-retry-good-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&good_dir).expect("create a writable temp dir");
+    app.settings_path = Some(good_dir.join("settings.toml"));
+
+    click(&mut app, "Bergsträsser (EN 13906-1 / Shigley default)");
+
+    assert!(
+        app.settings_error.is_none(),
+        "re-clicking the selected option after a failed save must retry and succeed"
+    );
+
+    fs::remove_file(&bogus_parent).ok();
+    fs::remove_dir_all(&good_dir).ok();
 }

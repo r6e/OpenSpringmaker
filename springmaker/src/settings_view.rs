@@ -57,12 +57,16 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
             .style(segmented_style(pal, selected))
             .width(Length::Fill)
             .padding([SP_SM, SP_MD]);
-        // The already-selected option gets no `.on_press`: re-clicking it would
-        // still dispatch `SetCorrection` with the same value, and its handler
-        // unconditionally returns `true`, triggering a `recompute()` that would
-        // clear a pending `action_error` though nothing changed (same no-op
-        // guard as `widgets::segmented`).
-        if !selected {
+        // The already-selected option normally gets no `.on_press` (same no-op
+        // guard as `widgets::segmented`): re-clicking it would dispatch
+        // `SetCorrection` with the same value for no visible reason. BUT
+        // `SetCorrection` also performs a real file write (`AppSettings::save_to`),
+        // and a FAILED write leaves the selected option as the one the user needs
+        // to retry — with no `.on_press`, a failed save could never be retried
+        // from this screen. So the no-op guard is relaxed specifically when a
+        // save is currently failing (`app.settings_error.is_some()`), keeping the
+        // selected button live for a one-click retry.
+        if !selected || app.settings_error.is_some() {
             btn = btn.on_press(Message::SetCorrection(value));
         }
         options_col = options_col.push(btn);
