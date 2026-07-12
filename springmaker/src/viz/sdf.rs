@@ -178,6 +178,125 @@ pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f6
     }
 }
 
+/// Parameters for a (possibly tapered) circular helix: the coil geometry
+/// every compression/extension/torsion family reduces to for the shaded
+/// view. `radius_mm` is the mean coil radius at wire-parameter `phi = 0`
+/// (the large end when tapered); `taper_small_r` linearly interpolates the
+/// local coil radius down to `Some(small_r)` across the full `[0, turns]`
+/// sweep. `axial_offset_mm` stacks members in a series assembly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)] // consumed by Task 3 (SdfScene part construction) and Task 5 (WGSL mirror)
+pub(crate) struct HelixParams {
+    pub radius_mm: f64,
+    pub taper_small_r: Option<f64>,
+    pub pitch_mm: f64,
+    pub turns: f64,
+    pub profile: Profile,
+    pub axial_offset_mm: f64,
+}
+
+/// Distance to a (possibly tapered) circular helix via PERIODIC REDUCTION:
+/// the exact nearest-point-on-helix problem is transcendental (no
+/// closed form), so this locates the wire's cross-section plane at each
+/// candidate turn index and takes the 2D profile distance there instead of
+/// solving for the true 3D nearest point on the curved centerline.
+///
+/// **Candidate turns.** `theta = atan2(p.z, p.x)` only determines the wire
+/// parameter `phi` modulo `TAU` (`phi = theta + TAU*k` for any integer
+/// `k`); the continuous estimate `k_est` (solving `y = pitch*phi/TAU` for
+/// `p`'s actual axial position) picks out which winding is nearest, but a
+/// SINGLE candidate is not enough: close-wound coils (`pitch` near the wire
+/// diameter) place adjacent turns' cross-sections close enough in the
+/// radial/axial plane that a point sitting between turn `k` and turn `k+1`
+/// can be nearer turn `k+1` (or even `k-1`/`k+2` near the rounding boundary
+/// of `k_est`) than the single turn `floor(k_est)` naively picked. Checking
+/// FOUR neighbors (`floor(k_est)-1 ..= floor(k_est)+2`) brackets every case
+/// the continuous estimate can be off by after flooring, in both
+/// directions — this is the "close-wound neighbor guard" the property test
+/// `close_wound_gap_never_reports_negative_between_coils` exercises
+/// directly (a point exactly midway between two touching coils must not be
+/// mistaken for being inside a WRONG turn's wire).
+///
+/// **Conservativeness.** Reducing the true 3D distance to a 2D
+/// cross-section-plane distance treats the coil locally as a flat ring in
+/// that plane, ignoring the helix's local curvature and pitch angle — the
+/// true centerline curves away from the plane as it sweeps in `theta`, so
+/// the plane distance UNDER-estimates the true 3D distance (never over-
+/// estimates: the flat-ring approximation is always at least as close as
+/// the true curved wire). This under-estimate grows with pitch angle,
+/// which is exactly why the surface-point property test
+/// (`helix_surface_points_are_near_zero`) allows an 8% tolerance rather
+/// than requiring exactness — see the measured error in the task report.
+/// An under-estimate is the SAFE direction for sphere tracing (never lets
+/// the marcher step past the surface), so no additional safety margin is
+/// applied here; the march loop is responsible for step-size discipline.
+///
+/// **End clamping — clamp the TURN INDEX, not the raw angle.** A literal
+/// reading of "clamp `phi = theta + TAU*k` to `[0, TAU*turns]`" breaks
+/// down for an out-of-range candidate `k`: clamping the raw angle directly
+/// snaps `phi` to the boundary value (`0` or `TAU*turns`) UNCONDITIONALLY,
+/// which discards `theta` and silently changes the candidate's azimuth to
+/// whatever the boundary's azimuth happens to be (`0` at the start, `phi
+/// mod TAU` at the end) — a full turn-index step away from `p`'s own
+/// azimuth. Since [`sd_profile_2d`]'s ring-plane reduction is only valid
+/// when the candidate's azimuth matches `p`'s (that equality is exactly
+/// what makes an in-range candidate's `d_radial`/`d_axial` pair meaningful
+/// — see the module doc's conservativeness argument), an azimuth-mismatched
+/// candidate can report an artificially small distance: concretely, a
+/// point sitting exactly on the wire surface just past the start (small
+/// `theta`) produces `k_est` slightly negative (an off-turn wire-profile
+/// offset can nudge the continuous estimate below the true integer turn),
+/// so `floor(k_est)-1` and `floor(k_est)-2`-style candidates go deeply
+/// negative; naively clamping their raw `phi` to `0` creates a spurious
+/// "phantom start cap" at azimuth `0` that is numerically CLOSER to the
+/// query point than the true, correct candidate at azimuth `theta` — a
+/// false-negative surface hit (verified empirically: `radius_mm=10`,
+/// `pitch_mm=6`, `turns=8`, `wire_r=1`, `phi≈0.2526`, `ring_ang=4.0` gives
+/// `d≈-0.167` under naive phi-clamping vs. the true `d≈0.0` — see the task
+/// report for the full derivation). This is NOT the documented conservative
+/// under-estimate (which only ever brings the reported distance closer to
+/// zero from the correct side) — it is a wrong-direction sign flip past a
+/// genuine surface point, so it must be fixed rather than tolerated.
+///
+/// The fix: clamp the candidate's TURN INDEX `k` to the range of integers
+/// for which `theta + TAU*k` can possibly land in `[0, TAU*turns]`
+/// (`k_min = 0`, `k_max = floor((TAU*turns - theta) / TAU)`) BEFORE forming
+/// `phi`. This keeps `phi mod TAU == theta` for every candidate whose turn
+/// index is clamped to an interior value (i.e. every case except the
+/// genuine boundary itself), preserving azimuthal alignment with `p` and
+/// eliminating the phantom-cap duplicate. The outer `.clamp(0.0, max_phi)`
+/// on `phi` remains as a final safety net for the true edge case (`turns`
+/// itself fractional, or `theta` alone already outside a very short
+/// partial-turn range) — there, azimuth genuinely cannot be preserved and
+/// the terminal cross-section is the correct (if only approximately exact)
+/// stand-in for the end disc, per the module's ring-plane conservativeness
+/// argument: never an overestimate of the true distance to the physical
+/// end. `ends_are_clamped_not_infinite` exercises that residual case.
+#[allow(dead_code)] // consumed by Task 3 (SdfScene part construction) and Task 5 (WGSL mirror)
+pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
+    let axial = p[1] - h.axial_offset_mm;
+    let radial = p[0].hypot(p[2]);
+    let theta = p[2].atan2(p[0]).rem_euclid(TAU);
+    let k_est = (axial - h.pitch_mm * theta / TAU) / h.pitch_mm;
+    let k_floor = k_est.floor();
+    let max_phi = TAU * h.turns;
+    let k_min = 0.0;
+    let k_max = ((max_phi - theta) / TAU).floor().max(k_min);
+
+    (-1..=2)
+        .map(|delta| {
+            let k = (k_floor + delta as f64).clamp(k_min, k_max);
+            let phi = (theta + TAU * k).clamp(0.0, max_phi);
+            let y_k = h.pitch_mm * phi / TAU;
+            let coil_r = match h.taper_small_r {
+                Some(small_r) => h.radius_mm + (small_r - h.radius_mm) * (phi / max_phi),
+                None => h.radius_mm,
+            };
+            sd_profile_2d(radial - coil_r, axial - y_k, h.profile)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// Half-space intersection: `max(d, dot(p - plane_point, plane_normal))`.
 /// `d` is the base shape's signed distance at `p`; the plane's own signed
 /// distance is positive on the side `plane_normal` points to (the side cut
@@ -196,6 +315,148 @@ mod tests {
     use super::*;
 
     const EPS: f64 = 1e-6;
+
+    /// Exact analytic surface point: the wire centerline at wire-parameter
+    /// `phi`, offset by the circular profile's radius in the cross-section
+    /// plane direction (`ring_ang`'s cosine is the radial component, its
+    /// sine the axial component). Used only to construct test points that
+    /// must land within tolerance of the SDF's zero level set.
+    fn on_surface(h: &HelixParams, phi: f64, ring_ang: f64) -> Vec3 {
+        let t = phi / (TAU * h.turns);
+        let big_r = match h.taper_small_r {
+            Some(s) => h.radius_mm + (s - h.radius_mm) * t,
+            None => h.radius_mm,
+        };
+        let wire_r = match h.profile {
+            Profile::Circle { radius_mm } => radius_mm,
+            _ => unreachable!(),
+        };
+        let cy = h.pitch_mm * phi / TAU + h.axial_offset_mm;
+        let rr = big_r + wire_r * ring_ang.cos();
+        [rr * phi.cos(), cy + wire_r * ring_ang.sin(), rr * phi.sin()]
+    }
+
+    #[test]
+    fn helix_surface_points_are_near_zero() {
+        let h = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 6.0,
+            turns: 8.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+        };
+        for i in 0..200 {
+            let phi = (i as f64 / 199.0) * TAU * h.turns;
+            for ring in [0.0, 1.0, 2.5, 4.0, 5.5] {
+                let d = sd_helix(on_surface(&h, phi, ring), &h);
+                assert!(d.abs() < 0.08, "phi={phi} ring={ring} d={d}"); // 8% of wire_r tolerance:
+                                                                        // the ring-plane reduction is approximate at nonzero pitch angle
+            }
+        }
+    }
+
+    #[test]
+    fn close_wound_gap_never_reports_negative_between_coils() {
+        // pitch == wire diameter (extension body): the midpoint BETWEEN adjacent coil
+        // centers on the coil cylinder is a surface-contact point; just outside the
+        // cylinder it must be OUTSIDE (>= -eps) — the wrong-turn failure mode reports
+        // deep negative here.
+        //
+        // The sweep also pins the neighbor guard from the OTHER side: dropping
+        // candidates from a min() can only INCREASE the reported distance (min
+        // over a subset >= min over the full set), so a negative-guard alone is
+        // provably blind to a shrunk candidate set. The load-bearing failure a
+        // single-candidate reduction produces is an OVER-estimate — at gap
+        // fraction 0.9 the continuous estimate floors to turn 3, but turn 4 is
+        // nearer, and over-estimating lets a sphere-tracer step clean through
+        // the gap's wall. Hence the conservativeness upper bound below, checked
+        // against the analytic two-neighbor distance at every point.
+        let h = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 2.0,
+            turns: 10.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+        };
+        let wire_r = 1.0;
+        let radial_gap = 1.2;
+        for i in 0..100 {
+            let theta = (i as f64 / 99.0) * TAU;
+            for gap_frac in [0.1, 0.5, 0.9] {
+                // between turns 3 and 4, `gap_frac` of the way up the gap
+                let y_between = h.pitch_mm * (theta / TAU) + h.pitch_mm * (3.0 + gap_frac);
+                let p = [
+                    (h.radius_mm + radial_gap) * theta.cos(),
+                    y_between,
+                    (h.radius_mm + radial_gap) * theta.sin(),
+                ];
+                let d = sd_helix(p, &h);
+                assert!(
+                    d > -1e-9,
+                    "between-coil point reported inside at theta={theta} gap_frac={gap_frac}"
+                );
+                // Analytic distance to the nearer of the two adjacent turns'
+                // cross-sections — the SDF must never exceed it (conservative).
+                let axial_to_nearer = h.pitch_mm * gap_frac.min(1.0 - gap_frac);
+                let true_d = radial_gap.hypot(axial_to_nearer) - wire_r;
+                assert!(
+                    d <= true_d + 1e-9,
+                    "over-estimate at theta={theta} gap_frac={gap_frac}: d={d} > true={true_d}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn helix_inside_wire_is_negative_and_far_outside_positive() {
+        let h = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 6.0,
+            turns: 8.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+        };
+        // wire centerline point:
+        let phi = TAU * 3.25;
+        let c = [10.0 * phi.cos(), 6.0 * phi / TAU, 10.0 * phi.sin()];
+        assert!(sd_helix(c, &h) < -0.9); // ~ -wire_r
+        assert!(sd_helix([40.0, 10.0, 0.0], &h) > 25.0); // conservative but must be well positive
+    }
+
+    #[test]
+    fn taper_tracks_local_radius() {
+        let h = HelixParams {
+            radius_mm: 15.0,
+            taper_small_r: Some(7.0),
+            pitch_mm: 5.0,
+            turns: 6.0,
+            profile: Profile::Circle { radius_mm: 0.8 },
+            axial_offset_mm: 0.0,
+        };
+        for frac in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let phi = frac * TAU * h.turns;
+            let d = sd_helix(on_surface(&h, phi, 0.0), &h);
+            assert!(d.abs() < 0.1, "taper frac={frac} d={d}");
+        }
+    }
+
+    #[test]
+    fn ends_are_clamped_not_infinite() {
+        let h = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 6.0,
+            turns: 4.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+        };
+        // Below the start: distance grows with axial gap, never negative.
+        let d = sd_helix([10.0, -5.0, 0.0], &h);
+        assert!(d > 4.0 - 1.0 - 0.1 && d.is_finite());
+    }
 
     #[test]
     fn capsule_surface_points_are_zero() {
