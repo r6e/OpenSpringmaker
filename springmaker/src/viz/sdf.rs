@@ -12,7 +12,7 @@
 //! combinator [`cut_plane`] is conservative-but-not-exact near the cut seam
 //! (see its doc). Each function's doc comment carries its own argument.
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// A point or vector in millimetres, in whatever local frame the caller
 /// established (world frame for scene composition; a part's own local
@@ -42,10 +42,16 @@ fn vlen(u: Vec3) -> f64 {
 /// Cross-section shape swept along a wire's centerline, evaluated in the
 /// wire's local (radial, axial) plane by [`sd_profile_2d`].
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // consumed by Task 2 (rectangular-family scenes) and Task 5 (WGSL mirror)
 pub(crate) enum Profile {
-    Circle { radius_mm: f64 },
-    Rectangle { half_w_mm: f64, half_h_mm: f64 },
+    Circle {
+        radius_mm: f64,
+    },
+    #[allow(dead_code)]
+    // consumed by the rectangular family's shaded view (not yet built) and Task 5 (WGSL mirror)
+    Rectangle {
+        half_w_mm: f64,
+        half_h_mm: f64,
+    },
 }
 
 /// Forward-ready per-part material description (design doc §Decisions 2):
@@ -58,7 +64,6 @@ pub(crate) struct Appearance {
 }
 
 /// Default spring-steel look shared by every family's primary wire.
-#[allow(dead_code)] // consumed by Task 2 (SdfScene part construction)
 pub(crate) fn steel() -> Appearance {
     Appearance {
         base_color: [0.62, 0.64, 0.67],
@@ -71,8 +76,7 @@ pub(crate) fn steel() -> Appearance {
 /// assembly member's tint while holding metallic/roughness fixed, wrapping
 /// every [`MEMBER_HUE_TABLE_LEN`] members (mirrors `SceneRole::Member`'s
 /// two-way wireframe alternation upstream, extended to N tints for the
-/// shaded view). Dead until Task 2 wires assembly member coloring.
-#[allow(dead_code)] // consumed by Task 2 via member_appearance
+/// shaded view).
 const MEMBER_HUE_SHIFTS: [[f32; 3]; 4] = [
     [0.0, 0.0, 0.0],
     [0.05, -0.03, -0.05],
@@ -83,12 +87,10 @@ const MEMBER_HUE_SHIFTS: [[f32; 3]; 4] = [
 /// Documented length of [`MEMBER_HUE_SHIFTS`] — exported so callers (and
 /// this module's own property test) read the real table length rather
 /// than a copied literal.
-#[allow(dead_code)] // consumed by Task 2 via member_appearance
 pub(crate) const MEMBER_HUE_TABLE_LEN: usize = MEMBER_HUE_SHIFTS.len();
 
 /// Steel tinted by `index`'s hue shift, wrapping every
 /// [`MEMBER_HUE_TABLE_LEN`] members.
-#[allow(dead_code)] // consumed by Task 2 (assembly member coloring)
 pub(crate) fn member_appearance(index: usize) -> Appearance {
     let base = steel();
     let shift = MEMBER_HUE_SHIFTS[index % MEMBER_HUE_TABLE_LEN];
@@ -108,7 +110,6 @@ pub(crate) fn member_appearance(index: usize) -> Appearance {
 /// hemispherical end caps for free. Exact everywhere, hence trivially
 /// conservative (never overestimates) — sphere-tracing may rely on it
 /// without slack.
-#[allow(dead_code)] // consumed by Task 2 (torsion legs) and Task 5 (WGSL mirror)
 pub(crate) fn sd_capsule(p: Vec3, a: Vec3, b: Vec3, radius_mm: f64) -> f64 {
     let seg = vsub(b, a);
     let from_a = vsub(p, a);
@@ -143,7 +144,6 @@ pub(crate) fn sd_capsule(p: Vec3, a: Vec3, b: Vec3, radius_mm: f64) -> f64 {
 /// endpoint centerline points) is the EXACT distance to the capped arc's
 /// centerline — clamped exactly like [`sd_capsule`]'s segment clamp, not
 /// an approximation.
-#[allow(dead_code)] // consumed by Task 2 (extension hooks) and Task 5 (WGSL mirror)
 pub(crate) fn sd_torus_arc(p_local: Vec3, major_r: f64, minor_r: f64, sweep: f64) -> f64 {
     let azimuth = p_local[2].atan2(p_local[0]).rem_euclid(TAU);
     if (0.0..=sweep).contains(&azimuth) {
@@ -161,7 +161,6 @@ pub(crate) fn sd_torus_arc(p_local: Vec3, major_r: f64, minor_r: f64, sweep: f64
 /// is the classic 2D box SDF (`length(max(q, 0)) + min(max(q.x, q.y), 0)`,
 /// `q = (|d_radial| - half_w, |d_axial| - half_h)`) — also exact, the
 /// standard construction used throughout SDF literature.
-#[allow(dead_code)] // consumed by Task 2 (rectangular-family scenes) and Task 5 (WGSL mirror)
 pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f64 {
     match profile {
         Profile::Circle { radius_mm } => d_radial.hypot(d_axial) - radius_mm,
@@ -185,7 +184,6 @@ pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f6
 /// local coil radius down to `Some(small_r)` across the full `[0, turns]`
 /// sweep. `axial_offset_mm` stacks members in a series assembly.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // consumed by Task 3 (SdfScene part construction) and Task 5 (WGSL mirror)
 pub(crate) struct HelixParams {
     pub radius_mm: f64,
     pub taper_small_r: Option<f64>,
@@ -337,7 +335,6 @@ pub(crate) struct HelixParams {
 /// box is not rotation-invariant about the helix tangent); they are not
 /// rendered by any current scene — revisit alongside the rectangular
 /// family's shaded view.
-#[allow(dead_code)] // consumed by Task 3 (SdfScene part construction) and Task 5 (WGSL mirror)
 pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
     let axial = p[1] - h.axial_offset_mm;
     let radial = p[0].hypot(p[2]);
@@ -469,14 +466,595 @@ fn profile_cap_radius(profile: Profile) -> f64 {
 /// (where the base surface meets the plane, e.g. a ground end's rim) it
 /// UNDER-estimates the true distance to the composed boundary, which is the
 /// safe direction for sphere tracing. Away from the seam it is exact.
-#[allow(dead_code)] // consumed by Task 2 (ground-end cuts) and Task 5 (WGSL mirror)
 pub(crate) fn cut_plane(d: f64, p: Vec3, plane_point: Vec3, plane_normal: Vec3) -> f64 {
     d.max(vdot(vsub(p, plane_point), plane_normal))
+}
+
+/// One renderable primitive in a composed scene. `Helix` covers every
+/// family's coil body (possibly tapered); `TorusArc` covers extension hooks
+/// (a hook loop lies in a fixed vertical azimuthal plane, oriented into that
+/// plane by `(y_rotation, tilt)` — see [`part_distance`]'s doc for the exact
+/// frame convention); `Capsule` covers torsion legs (straight tangential
+/// segments).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum SdfPart {
+    Helix(HelixParams),
+    TorusArc {
+        center: Vec3,
+        y_rotation: f64,
+        tilt: f64,
+        major_r: f64,
+        minor_r: f64,
+        sweep: f64,
+    },
+    Capsule {
+        a: Vec3,
+        b: Vec3,
+        radius_mm: f64,
+    },
+}
+
+/// A half-space cut applied to the WHOLE scene (every part, not just one) —
+/// see [`sdf_eval`]. `point`/`normal` feed [`cut_plane`] directly.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GroundPlane {
+    pub point: Vec3,
+    pub normal: Vec3,
+}
+
+/// One scene part paired with its shading appearance (per-part, so an
+/// assembly's members can each carry a distinct [`member_appearance`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ScenePart {
+    pub shape: SdfPart,
+    pub appearance: Appearance,
+}
+
+/// A composed scene: the union of every part, intersected with every ground
+/// cut. `Default` (empty parts, empty cuts) is the degenerate/placeholder
+/// sentinel every family builder returns for a hostile or empty design —
+/// [`scene_extent_mm`] reports `None` for it, driving the existing
+/// wireframe-style placeholder.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct SdfScene {
+    pub parts: Vec<ScenePart>,
+    pub cuts: Vec<GroundPlane>,
+}
+
+/// Rotate a vector about the world Y axis by `angle` (`x' = x·cosθ +
+/// z·sinθ`, `z' = -x·sinθ + z·cosθ`, `y` fixed).
+fn rotate_y(v: Vec3, angle: f64) -> Vec3 {
+    let (s, c) = angle.sin_cos();
+    [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c]
+}
+
+/// Rotate a vector about the world X axis by `angle` (`y' = y·cosθ -
+/// z·sinθ`, `z' = y·sinθ + z·cosθ`, `x` fixed).
+fn rotate_x(v: Vec3, angle: f64) -> Vec3 {
+    let (s, c) = angle.sin_cos();
+    [v[0], v[1] * c - v[2] * s, v[1] * s + v[2] * c]
+}
+
+/// Distance from world-frame `p` to one scene part.
+///
+/// **`TorusArc`'s world→local transform.** The part's local frame starts
+/// from the canonical torus frame (axis = world Y, ring in the world XZ
+/// plane, sweep from local +X) and applies, IN ORDER, a `tilt` rotation
+/// about world X then a `y_rotation` about world Y — so world→local undoes
+/// them in reverse: undo `y_rotation` first, then undo `tilt`. This
+/// two-angle (yaw, tilt) parametrization is enough to place extension
+/// hooks: a hook's loop lies in the VERTICAL half-plane at its attach
+/// azimuth `a` (world Y and the radial direction `(cos a, 0, sin a)` span
+/// it), so `y_rotation = -a` swings the canonical horizontal ring's local
+/// +X direction onto that radial direction, and `tilt = ∓π/2` (sign per
+/// loop direction) tips the ring's axis from vertical (world Y) into the
+/// tangential direction, landing the ring itself in the vertical
+/// half-plane. See `extension_sdf`'s `hook_torus_part` for the concrete
+/// angles; test (b)'s centerline-agreement check is the empirical proof
+/// (the revert-probe drops the hooks entirely and watches it fail).
+fn part_distance(shape: &SdfPart, p: Vec3) -> f64 {
+    match shape {
+        SdfPart::Helix(h) => sd_helix(p, h),
+        SdfPart::TorusArc {
+            center,
+            y_rotation,
+            tilt,
+            major_r,
+            minor_r,
+            sweep,
+        } => {
+            let local = rotate_x(rotate_y(vsub(p, *center), -y_rotation), -tilt);
+            sd_torus_arc(local, *major_r, *minor_r, *sweep)
+        }
+        SdfPart::Capsule { a, b, radius_mm } => sd_capsule(p, *a, *b, *radius_mm),
+    }
+}
+
+/// Union over every part (the nearest surface wins) plus which part index
+/// won — the appearance lookup key for shading. An empty scene reports
+/// `f64::INFINITY` at index 0 (never reached in practice: callers check
+/// [`scene_extent_mm`] first, the same discipline as the wireframe's
+/// `scene_extent`/placeholder gate).
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
+    let mut best = f64::INFINITY;
+    let mut best_index = 0usize;
+    for (index, part) in scene.parts.iter().enumerate() {
+        let d = part_distance(&part.shape, p);
+        if d < best {
+            best = d;
+            best_index = index;
+        }
+    }
+    (best, best_index)
+}
+
+/// Full scene distance: the part union, then every ground cut folded in via
+/// [`cut_plane`] (sequential `max` — associative/commutative, so cut order
+/// never matters).
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
+    let (mut d, _) = sdf_eval_part(scene, p);
+    for cut in &scene.cuts {
+        d = cut_plane(d, p, cut.point, cut.normal);
+    }
+    d
+}
+
+/// Coarse spatial reach of a scene — `None` for an empty (degenerate) scene,
+/// driving the existing placeholder exactly like `viz::scene_extent`'s
+/// `None` does for the wireframe path. Otherwise the larger of "twice the
+/// farthest radial reach from the Y axis" and "the full axial (Y) span",
+/// mirroring `scene_from_radius`'s own extent formula. Per-part bounding
+/// reach is CONSERVATIVE (an over-estimate of the part's true footprint,
+/// e.g. a torus arc's full major+minor radius even though the arc doesn't
+/// sweep the full circle) — camera fitting (Task 4) tolerates slack; only
+/// the distance FUNCTIONS themselves (not this bound) carry the
+/// sphere-tracing conservativeness contract.
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<f64> {
+    if scene.parts.is_empty() {
+        return None;
+    }
+    let mut radial: f64 = 0.0;
+    let mut y_min = f64::INFINITY;
+    let mut y_max = f64::NEG_INFINITY;
+    let mut expand = |center_radial: f64, reach: f64, y_lo: f64, y_hi: f64| {
+        radial = radial.max(center_radial + reach);
+        y_min = y_min.min(y_lo);
+        y_max = y_max.max(y_hi);
+    };
+    for part in &scene.parts {
+        match &part.shape {
+            SdfPart::Helix(h) => {
+                let wire_r = profile_cap_radius(h.profile);
+                let big_r = h.radius_mm.max(h.taper_small_r.unwrap_or(h.radius_mm));
+                let y0 = h.axial_offset_mm;
+                let y1 = h.axial_offset_mm + h.pitch_mm * h.turns;
+                expand(0.0, big_r + wire_r, y0.min(y1), y0.max(y1));
+            }
+            SdfPart::TorusArc {
+                center,
+                major_r,
+                minor_r,
+                ..
+            } => {
+                let center_radial = center[0].hypot(center[2]);
+                let reach = major_r + minor_r;
+                expand(center_radial, reach, center[1] - reach, center[1] + reach);
+            }
+            SdfPart::Capsule { a, b, radius_mm } => {
+                let reach_radial = a[0].hypot(a[2]).max(b[0].hypot(b[2]));
+                expand(
+                    reach_radial,
+                    *radius_mm,
+                    a[1].min(b[1]) - radius_mm,
+                    a[1].max(b[1]) + radius_mm,
+                );
+            }
+        }
+    }
+    let extent = (2.0 * radial).max(y_max - y_min);
+    (radial.is_finite() && radial > 0.0 && extent.is_finite() && extent > 0.0).then_some(extent)
+}
+
+/// Whether a coil count is too hostile to render — mirrors
+/// `scene_from_radius`'s guard (non-finite/negative `active`, or `total`
+/// outside `[0, MAX_RENDER_TURNS]`), plus `total <= 0.0`: unlike the
+/// wireframe (whose radius closures are constant per family), a tapered
+/// [`helical_body_parts`] reconstruction divides by `total` to place each
+/// segment's start/end fraction, so a zero total must bail here rather than
+/// produce a NaN taper endpoint.
+fn coils_hostile(active: f64, total: f64) -> bool {
+    !active.is_finite()
+        || active < 0.0
+        || !(0.0..=super::MAX_RENDER_TURNS).contains(&total)
+        || total <= 0.0
+}
+
+/// Whether any of a design's own solved geometry fields (radius/wire/pitch —
+/// independent of coil counts) are unusable. A non-finite value here would
+/// otherwise poison every `HelixParams` field silently (NaN propagating
+/// through the taper/pitch arithmetic) rather than failing loud; checked
+/// ALONGSIDE `coils_hostile` so a builder bails to `SdfScene::default()`
+/// before constructing a single part, matching the wireframe's degenerate
+/// fixtures (a NaN `mean_dia`/`wire_dia`) one-for-one rather than relying on
+/// `scene_extent_mm`'s downstream filtering.
+fn geometry_hostile(values: &[f64]) -> bool {
+    values.iter().any(|v| !v.is_finite())
+}
+
+/// Reconstructs the dead_lo/active/dead_hi `Helix` parts that reproduce
+/// `viz::coil_height_fn`'s piecewise dead-coil flattening for one coil body
+/// — shared by `compression_sdf`, `conical_sdf`, and (per member)
+/// `assembly_sdf`. `radius_at(t)` gives the body's mean coil radius at
+/// coil-count fraction `t ∈ [0, 1]` of the FULL `total` sweep (constant for
+/// compression/assembly members, linear taper for conical) — the same
+/// closure shape `scene_from_radius`'s callers pass. `axial_shift` positions
+/// the body's base at a nonzero height (assembly's series stacking); every
+/// part gets `appearance`.
+///
+/// **Why 3 parts, not 1.** `coil_height_fn` flattens dead end coils to wire
+/// pitch while active coils run at the solved pitch — a piecewise height no
+/// single `HelixParams` (one `pitch_mm`) can express. Each segment below is
+/// an independent `HelixParams`, sized from `dead_per_end =
+/// ((total - active) / 2).max(0)`; a zero-turn segment is skipped (`Plain`
+/// ends: `dead_per_end == 0`, collapsing to the single active segment).
+///
+/// **Accepted approximation.** Each segment's own `phi = 0` is pinned to
+/// world azimuth 0 ([`sd_helix`] has no phase parameter), so the
+/// reconstruction is phase-exact only when `dead_per_end` and `active` are
+/// both integers (true for Squared/SquaredGround, and trivially for Plain).
+/// A `PlainGround` end (`dead_per_end == 0.5`) would show a real azimuthal
+/// seam where the active segment resumes at world azimuth 0 instead of the
+/// true half-turn-away angle. No shipped family/fixture exercises that
+/// case; same register of accepted simplification as the wireframe's
+/// representative hook arcs.
+fn helical_body_parts(
+    radius_at: impl Fn(f64) -> f64,
+    active: f64,
+    total: f64,
+    pitch_mm: f64,
+    wire_mm: f64,
+    axial_shift: f64,
+    appearance: Appearance,
+) -> Vec<ScenePart> {
+    let wire_r = wire_mm / 2.0;
+    let dead_per_end = ((total - active) / 2.0).max(0.0);
+    let t1 = dead_per_end / total;
+    let t2 = (dead_per_end + active) / total;
+    let mut parts = Vec::with_capacity(3);
+    let mut push_segment = |turns: f64, pitch: f64, r0: f64, r1: f64, offset: f64| {
+        if turns <= 0.0 {
+            return;
+        }
+        parts.push(ScenePart {
+            shape: SdfPart::Helix(HelixParams {
+                radius_mm: r0,
+                taper_small_r: Some(r1),
+                pitch_mm: pitch,
+                turns,
+                profile: Profile::Circle { radius_mm: wire_r },
+                axial_offset_mm: offset,
+            }),
+            appearance,
+        });
+    };
+    push_segment(
+        dead_per_end,
+        wire_mm,
+        radius_at(0.0),
+        radius_at(t1),
+        axial_shift,
+    );
+    push_segment(
+        active,
+        pitch_mm,
+        radius_at(t1),
+        radius_at(t2),
+        axial_shift + dead_per_end * wire_mm,
+    );
+    push_segment(
+        dead_per_end,
+        wire_mm,
+        radius_at(t2),
+        radius_at(1.0),
+        axial_shift + dead_per_end * wire_mm + active * pitch_mm,
+    );
+    parts
+}
+
+/// Whether `end_type` machines a flat, perpendicular ground face — the
+/// `*Ground` `EndType` variants (`PlainGround`, `SquaredGround`);
+/// `Plain`/`Squared` end coils are NOT ground flat (the wire tip still
+/// follows the helix pitch), so no cut plane applies to them.
+fn is_ground_end(end_type: springcore::EndType) -> bool {
+    matches!(
+        end_type,
+        springcore::EndType::PlainGround | springcore::EndType::SquaredGround
+    )
+}
+
+/// One [`GroundPlane`] per ground end (bottom + top), positioned at the
+/// flattened end coil's OUTER face — `y = wire_r` at the bottom, `y =
+/// total_height - wire_r` at the top — `total_height` from the SAME
+/// `viz::coil_height_fn` the wireframe uses (dead coils flattened, active
+/// coils at the solved pitch), so the cut sits exactly where the
+/// wireframe's flattened dead coil ends. Empty for non-ground `end_type`s.
+fn ground_cuts(
+    end_type: springcore::EndType,
+    active: f64,
+    total: f64,
+    pitch_mm: f64,
+    wire_mm: f64,
+) -> Vec<GroundPlane> {
+    if !is_ground_end(end_type) {
+        return Vec::new();
+    }
+    let wire_r = wire_mm / 2.0;
+    let total_height = crate::viz::coil_height_fn(active, total, pitch_mm, wire_mm)(1.0);
+    vec![
+        GroundPlane {
+            point: [0.0, wire_r, 0.0],
+            normal: [0.0, -1.0, 0.0],
+        },
+        GroundPlane {
+            point: [0.0, total_height - wire_r, 0.0],
+            normal: [0.0, 1.0, 0.0],
+        },
+    ]
+}
+
+/// Compression family SDF scene: reuses `SpringDesign`'s SOLVED fields
+/// (`mean_dia`, `wire_dia`, `pitch`, `active_coils`, `total_coils`,
+/// `end_type`) — the same fields `compression::scene_model::compression_scene`
+/// reads — so both geometry paths render the SAME spring. See
+/// [`helical_body_parts`] for why a ground-ended design needs 3 `Helix`
+/// parts, not the single helix a first glance suggests.
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
+    let active = d.active_coils;
+    let total = d.total_coils;
+    let r = d.mean_dia.millimeters() / 2.0;
+    let wire = d.wire_dia.millimeters();
+    let pitch = d.pitch.millimeters();
+    if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) {
+        return SdfScene::default();
+    }
+    SdfScene {
+        parts: helical_body_parts(|_| r, active, total, pitch, wire, 0.0, steel()),
+        cuts: ground_cuts(d.end_type, active, total, pitch, wire),
+    }
+}
+
+/// Conical family SDF scene: linear taper from `large_mean_dia` to
+/// `small_mean_dia` across the FULL total-coil sweep (matching
+/// `conical::scene_model::conical_scene`'s `radius_at`), same dead-coil
+/// reconstruction and ground cuts as `compression_sdf`.
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
+    let active = d.inputs.active_coils;
+    let total = d.total_coils;
+    let r_large = d.inputs.large_mean_dia.millimeters() / 2.0;
+    let r_small = d.inputs.small_mean_dia.millimeters() / 2.0;
+    let wire = d.inputs.wire_dia.millimeters();
+    let pitch = d.pitch.millimeters();
+    if coils_hostile(active, total) || geometry_hostile(&[r_large, r_small, wire, pitch]) {
+        return SdfScene::default();
+    }
+    let radius_at = |t: f64| r_large + (r_small - r_large) * t;
+    SdfScene {
+        parts: helical_body_parts(radius_at, active, total, pitch, wire, 0.0, steel()),
+        cuts: ground_cuts(d.inputs.end_type, active, total, pitch, wire),
+    }
+}
+
+/// One extension hook as a `TorusArc` part — see [`part_distance`]'s doc for
+/// the `(y_rotation, tilt)` frame convention. `attach_angle`/`attach_h` pin
+/// the loop's start to the coil body's endpoint (matching
+/// `extension::scene_model::hook_arc`'s `arc(0)` continuity guarantee);
+/// `sign` picks the loop direction (that same function's `sign` parameter:
+/// -1 for the bottom hook toward -y, +1 for the top hook toward +y); `sweep
+/// = 1.5π` matches `hook_arc`'s `SAMPLES` range.
+fn hook_torus_part(
+    attach_angle: f64,
+    attach_h: f64,
+    coil_r: f64,
+    hook_r: f64,
+    sign: f64,
+    wire_r: f64,
+    appearance: Appearance,
+) -> ScenePart {
+    let center_r = coil_r - hook_r;
+    ScenePart {
+        shape: SdfPart::TorusArc {
+            center: [
+                center_r * attach_angle.cos(),
+                attach_h,
+                center_r * attach_angle.sin(),
+            ],
+            y_rotation: -attach_angle,
+            tilt: -sign * FRAC_PI_2,
+            major_r: hook_r,
+            minor_r: wire_r,
+            sweep: 1.5 * PI,
+        },
+        appearance,
+    }
+}
+
+/// Extension family SDF scene: a close-wound `Helix` body (no dead coils —
+/// `active_coils` IS the full turn count, matching
+/// `extension::scene_model::extension_scene`'s `close_wound_coil` call)
+/// plus the two hook `TorusArc`s, each attached exactly at its body
+/// endpoint.
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfScene {
+    let turns = d.active_coils;
+    let r = d.mean_dia.millimeters() / 2.0;
+    let wire = d.wire_dia.millimeters();
+    if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
+        return SdfScene::default();
+    }
+    let wire_r = wire / 2.0;
+    let body_h = turns * wire;
+    let end_angle = turns * TAU;
+    let appearance = steel();
+    SdfScene {
+        parts: vec![
+            ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: r,
+                    taper_small_r: None,
+                    pitch_mm: wire,
+                    turns,
+                    profile: Profile::Circle { radius_mm: wire_r },
+                    axial_offset_mm: 0.0,
+                }),
+                appearance,
+            },
+            hook_torus_part(
+                0.0,
+                0.0,
+                r,
+                d.hooks.r1.millimeters(),
+                -1.0,
+                wire_r,
+                appearance,
+            ),
+            hook_torus_part(
+                end_angle,
+                body_h,
+                r,
+                d.hooks.r2.millimeters(),
+                1.0,
+                wire_r,
+                appearance,
+            ),
+        ],
+        cuts: Vec::new(),
+    }
+}
+
+/// Torsion family SDF scene: a close-wound `Helix` body plus two straight
+/// `Capsule` legs, tangential at each body endpoint (mirrors
+/// `torsion::scene_model::torsion_scene`'s `leg` closure: tangent at wire
+/// parameter `phi` is `(-sin phi, cos phi)`, legs stay at the endpoint's
+/// height).
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
+    let turns = d.inputs.body_coils;
+    let r = d.inputs.mean_dia.millimeters() / 2.0;
+    let wire = d.inputs.wire_dia.millimeters();
+    if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
+        return SdfScene::default();
+    }
+    let wire_r = wire / 2.0;
+    let end_angle = turns * TAU;
+    let start = [r, 0.0, 0.0];
+    let end = [r * end_angle.cos(), turns * wire, r * end_angle.sin()];
+    let l1 = d.inputs.leg1.millimeters();
+    let l2 = d.inputs.leg2.millimeters();
+    // Tangent at phi=0 is (-sin 0, cos 0) = (0, 1); leg1's sign is -1 (mirrors
+    // torsion_scene's leg closure exactly).
+    let leg1_end = [start[0], start[1], start[2] - l1];
+    let (s2, c2) = end_angle.sin_cos();
+    let leg2_end = [end[0] + l2 * -s2, end[1], end[2] + l2 * c2];
+    let appearance = steel();
+    SdfScene {
+        parts: vec![
+            ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: r,
+                    taper_small_r: None,
+                    pitch_mm: wire,
+                    turns,
+                    profile: Profile::Circle { radius_mm: wire_r },
+                    axial_offset_mm: 0.0,
+                }),
+                appearance,
+            },
+            ScenePart {
+                shape: SdfPart::Capsule {
+                    a: start,
+                    b: leg1_end,
+                    radius_mm: wire_r,
+                },
+                appearance,
+            },
+            ScenePart {
+                shape: SdfPart::Capsule {
+                    a: end,
+                    b: leg2_end,
+                    radius_mm: wire_r,
+                },
+                appearance,
+            },
+        ],
+        cuts: Vec::new(),
+    }
+}
+
+/// Assembly family SDF scene: each member's own coil body (via
+/// [`helical_body_parts`] — every member IS a `SpringDesign`, so this reuses
+/// `compression_sdf`'s reconstruction) tinted by [`member_appearance`],
+/// Nested concentric (every member at axial offset 0) or Series stacked
+/// with the SAME running-offset/gap the wireframe uses
+/// (`assembly::scene_model::assembly_scene`'s `2 × max member wire dia`).
+///
+/// No ground cuts: [`cut_plane`]'s half-space is GLOBAL to the whole scene
+/// (`sdf_eval` applies every cut to the combined union), so a per-member
+/// ground plane would also clip every OTHER member sharing the scene —
+/// wrong for Series' stacked members sitting above it. Any hostile/capped
+/// member degrades the WHOLE scene (simpler than the wireframe's nuanced
+/// per-topology partial-cascade semantics, but the same "an empty/hostile
+/// member misrepresents the design" spirit `assembly_scene` documents).
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn assembly_sdf(d: &springcore::assembly::AssemblyDesign) -> SdfScene {
+    if d.members.is_empty() {
+        return SdfScene::default();
+    }
+    let gap = 2.0
+        * d.members
+            .iter()
+            .map(|m| m.design.wire_dia.millimeters())
+            .fold(0.0_f64, f64::max);
+    let mut parts = Vec::new();
+    let mut y_base = 0.0_f64;
+    for (index, member) in d.members.iter().enumerate() {
+        let design = &member.design;
+        let active = design.active_coils;
+        let total = design.total_coils;
+        let r = design.mean_dia.millimeters() / 2.0;
+        let wire = design.wire_dia.millimeters();
+        let pitch = design.pitch.millimeters();
+        if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) {
+            return SdfScene::default();
+        }
+        parts.extend(helical_body_parts(
+            |_| r,
+            active,
+            total,
+            pitch,
+            wire,
+            y_base,
+            member_appearance(index),
+        ));
+        if d.topology == springcore::assembly::Topology::Series {
+            let height = crate::viz::coil_height_fn(active, total, pitch, wire)(1.0);
+            y_base += height + gap;
+        }
+    }
+    SdfScene {
+        parts,
+        cuts: Vec::new(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
 
     const EPS: f64 = 1e-6;
 
@@ -1106,5 +1684,514 @@ mod tests {
             member_appearance(0).base_color,
             member_appearance(MEMBER_HUE_TABLE_LEN).base_color
         );
+    }
+
+    // --- Task 3: SdfScene composition, family builders, degenerate discipline ---
+
+    /// Whether a wireframe centerline point is within reach of ANY of a
+    /// scene's ground cuts — used to exclude that sliver of points from the
+    /// strict centerline-agreement checks below. Grinding is a REAL
+    /// geometric correction the wireframe does NOT model (its
+    /// `coil_height_fn` draws the identical squared-but-un-ground
+    /// centerline for every end type, starting the very first dead coil's
+    /// centerline at `y = 0`; Shigley's own free-length/solid-length
+    /// formulas put exactly one wire diameter LESS material in a
+    /// SquaredGround end than a Squared one — half a wire diameter shaved
+    /// from each end's outer face). "Within reach" is `wire_r`, not `0` —
+    /// a centerline point up to a full wire radius on the KEPT side still
+    /// has its own local material partially eaten by the cut (the cut
+    /// plane is tangent to the wire's OWN cross-section there), so its
+    /// SDF value degrades from the full `-wire_r` towards `0` even though
+    /// it isn't literally past the plane. Concretely this excludes the
+    /// WHOLE dead-coil turn adjoining each ground end (that turn's centerline
+    /// spans exactly one wire diameter — `[0, 2·wire_r]` at the bottom —
+    /// so it's ENTIRELY within one wire radius of the cut). So near a
+    /// ground end, the SDF (which DOES cut it) is MORE accurate than the
+    /// wireframe, not less — those points are SUPPOSED to read closer to
+    /// `0` than `-wire_r`. `ground_cut_flattens_material_below_the_
+    /// squared_ground_end` pins that behavior directly; this helper just
+    /// keeps the broader agreement checks honest about the region where
+    /// the two paths deliberately diverge.
+    fn within_ground_cut_reach(scene: &SdfScene, p: (f64, f64, f64), wire_r: f64) -> bool {
+        scene.cuts.iter().any(|cut| {
+            let v = [p.0 - cut.point[0], p.1 - cut.point[1], p.2 - cut.point[2]];
+            let dist = v[0] * cut.normal[0] + v[1] * cut.normal[1] + v[2] * cut.normal[2];
+            dist > -wire_r
+        })
+    }
+
+    #[test]
+    fn sdf_eval_part_unions_via_min_and_reports_the_winning_index() {
+        let scene = SdfScene {
+            parts: vec![
+                ScenePart {
+                    shape: SdfPart::Capsule {
+                        a: [0.0, 0.0, 0.0],
+                        b: [0.0, 0.0, 0.0],
+                        radius_mm: 1.0,
+                    },
+                    appearance: steel(),
+                },
+                ScenePart {
+                    shape: SdfPart::Capsule {
+                        a: [3.0, 0.0, 0.0],
+                        b: [3.0, 0.0, 0.0],
+                        radius_mm: 1.0,
+                    },
+                    appearance: steel(),
+                },
+            ],
+            cuts: Vec::new(),
+        };
+        let p = [2.0, 0.0, 0.0];
+        // Distance to part 0 (point at the origin, r=1): |p-0|-1 = 2-1 = 1.0
+        // Distance to part 1 (point at (3,0,0), r=1): |p-(3,0,0)|-1 = 1-1 = 0.0
+        let (d, winning_index) = sdf_eval_part(&scene, p);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-9);
+        assert_eq!(winning_index, 1); // the NEARER part wins, proving a true min
+        assert_relative_eq!(sdf_eval(&scene, p), 0.0, epsilon = 1e-9); // no cuts: same as the union
+    }
+
+    #[test]
+    fn sdf_eval_folds_in_every_cut_via_max() {
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Capsule {
+                    a: [0.0, 0.0, 0.0],
+                    b: [0.0, 0.0, 0.0],
+                    radius_mm: 1.0,
+                },
+                appearance: steel(),
+            }],
+            cuts: vec![GroundPlane {
+                point: [0.0, 0.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+            }],
+        };
+        let p = [2.0, 0.0, 0.0];
+        // Union alone: |p-0|-1 = 1.0. The cut's own distance:
+        // dot(p-0, (1,0,0)) = 2.0 — larger, so it governs (max).
+        assert_relative_eq!(sdf_eval(&scene, p), 2.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn scene_extent_mm_is_none_for_the_default_empty_scene() {
+        assert_eq!(scene_extent_mm(&SdfScene::default()), None);
+    }
+
+    #[test]
+    fn scene_extent_mm_is_some_positive_finite_for_a_populated_scene() {
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Capsule {
+                    a: [0.0, 0.0, 0.0],
+                    b: [0.0, 50.0, 0.0],
+                    radius_mm: 2.0,
+                },
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let extent = scene_extent_mm(&scene).expect("a populated scene has finite extent");
+        assert!(extent > 0.0 && extent.is_finite());
+    }
+
+    /// Golden fixture mirrored from `compression::scene_model`'s own test
+    /// (wire 2mm, mean 20mm, active 10 coils, free 60mm, SquaredGround).
+    fn compression_fixture() -> springcore::SpringDesign {
+        use springcore::units::{Force, Length};
+        use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario};
+        let m = MaterialSet::load_default()
+            .get("Music Wire")
+            .unwrap()
+            .clone();
+        PowerUser {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            active: 10.0,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0), Force::from_newtons(30.0)],
+        }
+        .solve(&m, springcore::CurvatureCorrection::Bergstrasser)
+        .unwrap()
+    }
+
+    #[test]
+    fn compression_sdf_part_and_cut_counts_reflect_dead_coil_flattening() {
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        // dead_per_end = (total-active)/2 = (12-10)/2 = 1 (a nonzero, INTEGER
+        // dead coil per end for SquaredGround) — coil_height_fn's piecewise
+        // dead/active/dead height cannot be expressed by ONE HelixParams
+        // (single pitch_mm), so this is 3 Helix segments, not the naive "1"
+        // a first glance at the design suggests (see helical_body_parts's
+        // doc; flagged against task-3-brief's "compression: 1 helix + cuts"
+        // wording in the task report).
+        assert_eq!(scene.parts.len(), 3);
+        assert_eq!(scene.cuts.len(), 2); // one ground plane per end (SquaredGround)
+    }
+
+    #[test]
+    fn compression_sdf_centerline_agrees_with_the_wireframe_scene() {
+        use crate::compression::scene_model::compression_scene;
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let wireframe = compression_scene(&d);
+        for p in &wireframe.polylines[0].points {
+            if within_ground_cut_reach(&scene, *p, wire_r) {
+                continue; // see within_ground_cut_reach's doc: the ground cut sliver
+            }
+            let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
+            assert!(
+                (dist + wire_r).abs() < 0.1 * wire_r,
+                "point {p:?}: sdf={dist}, expected ~{}",
+                -wire_r
+            );
+        }
+    }
+
+    #[test]
+    fn compression_sdf_degenerate_design_yields_default() {
+        let mut d = compression_fixture();
+        d.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(compression_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn compression_sdf_capped_coils_yield_default() {
+        let mut d = compression_fixture();
+        d.active_coils = 2001.0;
+        d.total_coils = 2003.0;
+        assert_eq!(compression_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn ground_cut_flattens_material_below_the_squared_ground_end() {
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let r = d.mean_dia.millimeters() / 2.0;
+        let p = [r, -2.0, 0.0]; // near the terminal cap, but below the ground face
+        let (base_d, _) = sdf_eval_part(&scene, p);
+        let plane_distance = wire_r - p[1]; // dot(p - plane_point, normal), bottom plane
+        let full = sdf_eval(&scene, p);
+        assert!(full >= plane_distance - 1e-9);
+        assert_relative_eq!(full, plane_distance, max_relative = 1e-9);
+        assert!(
+            full > base_d + 1e-6,
+            "the ground cut must push the reported distance OUTWARD beyond the \
+             raw wire surface (base={base_d}, cut-adjusted={full}) — otherwise \
+             the flattening has no effect"
+        );
+    }
+
+    /// Golden fixture mirrored from `conical::scene_model`'s own test (wire
+    /// 2mm, large 20mm, small 12mm, active 10 coils, free 60mm,
+    /// squared_ground).
+    fn conical_fixture() -> springcore::conical::ConicalDesign {
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let form = crate::conical::form::ConFormState {
+            end_type: "squared_ground".into(),
+            wire_dia: "2".into(),
+            large_mean_dia: "20".into(),
+            small_mean_dia: "12".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            loads: "10, 25".into(),
+        };
+        crate::conical::form::parse_and_solve(
+            &form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .unwrap()
+        .design
+    }
+
+    #[test]
+    fn conical_sdf_part_and_cut_counts_reflect_dead_coil_flattening() {
+        let d = conical_fixture();
+        let scene = conical_sdf(&d);
+        // Same piecewise-flattening reconstruction as compression_sdf (see
+        // that test's comment): 3 Helix segments, 2 ground cuts.
+        assert_eq!(scene.parts.len(), 3);
+        assert_eq!(scene.cuts.len(), 2);
+    }
+
+    #[test]
+    fn conical_sdf_centerline_agrees_with_the_wireframe_scene() {
+        use crate::conical::scene_model::conical_scene;
+        let d = conical_fixture();
+        let scene = conical_sdf(&d);
+        let wire_r = d.inputs.wire_dia.millimeters() / 2.0;
+        let wireframe = conical_scene(&d);
+        for p in &wireframe.polylines[0].points {
+            if within_ground_cut_reach(&scene, *p, wire_r) {
+                continue; // see within_ground_cut_reach's doc: the ground cut sliver
+            }
+            let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
+            assert!(
+                (dist + wire_r).abs() < 0.1 * wire_r,
+                "point {p:?}: sdf={dist}, expected ~{}",
+                -wire_r
+            );
+        }
+    }
+
+    #[test]
+    fn conical_sdf_degenerate_design_yields_default() {
+        let mut d = conical_fixture();
+        d.inputs.large_mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(conical_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn conical_sdf_capped_coils_yield_default() {
+        let mut d = conical_fixture();
+        d.inputs.active_coils = 2001.0;
+        d.total_coils = 2003.0;
+        assert_eq!(conical_sdf(&d), SdfScene::default());
+    }
+
+    /// Golden fixture mirrored from `extension::scene_model`'s own test
+    /// (wire 2mm, mean 20mm, active 10 coils, free 100mm, Fi 5N).
+    fn extension_fixture() -> springcore::extension::ExtensionDesign {
+        use crate::extension::form::{parse_and_solve, ExtFormState};
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let form = ExtFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            active: "10".to_string(),
+            free_length: "100".to_string(),
+            initial_tension: "5".to_string(),
+            loads: "10, 30".to_string(),
+            ..Default::default()
+        };
+        parse_and_solve(
+            &form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::default(),
+        )
+        .unwrap()
+        .design
+    }
+
+    #[test]
+    fn extension_sdf_part_count_is_body_plus_two_hooks() {
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        assert_eq!(scene.parts.len(), 3); // 1 helix + 2 torus-arc hooks
+        assert!(scene.cuts.is_empty());
+    }
+
+    #[test]
+    fn extension_sdf_centerline_agrees_with_the_wireframe_scene_including_hooks() {
+        use crate::extension::scene_model::extension_scene;
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let wireframe = extension_scene(&d);
+        for line in &wireframe.polylines {
+            for p in &line.points {
+                let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
+                assert!(
+                    (dist + wire_r).abs() < 0.1 * wire_r,
+                    "point {p:?}: sdf={dist}, expected ~{}",
+                    -wire_r
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn extension_sdf_degenerate_design_yields_default() {
+        let mut d = extension_fixture();
+        d.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(extension_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn extension_sdf_capped_active_coils_yield_default() {
+        let mut d = extension_fixture();
+        d.active_coils = 2001.0;
+        assert_eq!(extension_sdf(&d), SdfScene::default());
+    }
+
+    /// Golden fixture mirrored from `torsion::scene_model`'s own test (wire
+    /// 2mm, mean 20mm, body 5 coils, legs 15mm/10mm).
+    fn torsion_fixture() -> springcore::torsion::TorsionDesign {
+        use crate::torsion::form::{parse_and_solve, TorFormState};
+        use springcore::{MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let form = TorFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            body_coils: "5".to_string(),
+            leg1: "15".to_string(),
+            leg2: "10".to_string(),
+            moments: "500, 1000".to_string(),
+            ..Default::default()
+        };
+        parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
+            .unwrap()
+            .design
+    }
+
+    #[test]
+    fn torsion_sdf_part_count_is_body_plus_two_legs() {
+        let d = torsion_fixture();
+        let scene = torsion_sdf(&d);
+        assert_eq!(scene.parts.len(), 3); // 1 helix + 2 capsule legs
+        assert!(scene.cuts.is_empty());
+    }
+
+    #[test]
+    fn torsion_sdf_centerline_agrees_with_the_wireframe_scene_including_legs() {
+        use crate::torsion::scene_model::torsion_scene;
+        let d = torsion_fixture();
+        let scene = torsion_sdf(&d);
+        let wire_r = d.inputs.wire_dia.millimeters() / 2.0;
+        let wireframe = torsion_scene(&d);
+        for line in &wireframe.polylines {
+            for p in &line.points {
+                let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
+                assert!(
+                    (dist + wire_r).abs() < 0.1 * wire_r,
+                    "point {p:?}: sdf={dist}, expected ~{}",
+                    -wire_r
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn torsion_sdf_degenerate_design_yields_default() {
+        let mut d = torsion_fixture();
+        d.inputs.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(torsion_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn torsion_sdf_capped_body_coils_yield_default() {
+        let mut d = torsion_fixture();
+        d.inputs.body_coils = 2001.0;
+        assert_eq!(torsion_sdf(&d), SdfScene::default());
+    }
+
+    /// Two-member fixture mirrored from `assembly::scene_model`'s own test
+    /// (wire 2/1.5mm, mean 20/16mm, active 10/8 coils, free 60mm each,
+    /// SquaredGround by default — `AsmMemberForm::blank`'s default end type).
+    fn two_member_assembly_fixture(topology: &str) -> springcore::assembly::AssemblyDesign {
+        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let mut f = AsmFormState::with_default_material("Music Wire");
+        f.topology = topology.to_string();
+        f.loads = "10, 25".into();
+        f.members[0] = AsmMemberForm {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        };
+        f.members.push(AsmMemberForm {
+            wire_dia: "1.5".into(),
+            mean_dia: "16".into(),
+            active: "8".into(),
+            free_length: "60".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        });
+        parse_and_solve(
+            &f,
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn assembly_sdf_nested_has_distinct_member_appearances() {
+        let d = two_member_assembly_fixture("nested");
+        let scene = assembly_sdf(&d);
+        // Both members default to SquaredGround (AsmMemberForm::blank), each
+        // with a nonzero, INTEGER dead_per_end, so each reconstructs to 3
+        // Helix segments (see helical_body_parts's doc) — 2 members x 3 = 6
+        // parts, not the "N member helices" a first glance at the brief's
+        // wording suggests (same piecewise-flattening reason as
+        // compression_sdf; flagged in the task report).
+        assert_eq!(scene.parts.len(), 6);
+        assert!(scene.cuts.is_empty());
+        let appearance0 = scene.parts[0].appearance;
+        let appearance1 = scene.parts[3].appearance;
+        assert_ne!(appearance0.base_color, appearance1.base_color);
+    }
+
+    #[test]
+    fn assembly_sdf_centerline_agrees_with_the_wireframe_scene() {
+        use crate::assembly::scene_model::assembly_scene;
+        let d = two_member_assembly_fixture("series");
+        let scene = assembly_sdf(&d);
+        let wireframe = assembly_scene(&d);
+        for (line, member) in wireframe.polylines.iter().zip(&d.members) {
+            let wire_r = member.design.wire_dia.millimeters() / 2.0;
+            for p in &line.points {
+                let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
+                assert!(
+                    (dist + wire_r).abs() < 0.1 * wire_r,
+                    "point {p:?}: sdf={dist}, expected ~{}",
+                    -wire_r
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn assembly_sdf_empty_members_yield_default() {
+        let mut d = two_member_assembly_fixture("nested");
+        d.members.clear();
+        assert_eq!(assembly_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn assembly_sdf_capped_member_yields_default() {
+        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let mut f = AsmFormState::with_default_material("Music Wire");
+        f.topology = "series".to_string();
+        f.loads = "10, 25".into();
+        f.members[0] = AsmMemberForm {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            active: "10".into(),
+            free_length: "60".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        };
+        f.members.push(AsmMemberForm {
+            wire_dia: "1.5".into(),
+            mean_dia: "16".into(),
+            active: "2001".into(),
+            free_length: "5000".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        });
+        let d = parse_and_solve(
+            &f,
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_eq!(assembly_sdf(&d), SdfScene::default());
     }
 }
