@@ -12,12 +12,12 @@ use crate::extension::form::{ExtFormState, Field, HookMode, ALL_EXT_SCENARIOS};
 use crate::extension::view_model::{
     ext_inputs_view, ext_results_view, ExtLoadTable, ExtPopulatedResults, ExtResultsView,
 };
-use crate::presenter::{unit_length_label, Emphasis};
+use crate::presenter::unit_length_label;
 use crate::widgets::{
-    divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading, segmented,
-    styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION,
-    SZ_LABEL,
+    divided_result_section, emphasis_color, field_label, labeled_input, panel_container,
+    render_governing_rate, results_empty, results_error, rows_section, section_divider,
+    section_heading, segmented, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW,
+    SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -224,18 +224,9 @@ fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'s
     );
 
     for lp in &lt.rows {
-        let body_color = match lp.body_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
-        let bending_color = match lp.bending_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
-        let torsion_color = match lp.torsion_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
+        let body_color = emphasis_color(pal, lp.body_emphasis);
+        let bending_color = emphasis_color(pal, lp.bending_emphasis);
+        let torsion_color = emphasis_color(pal, lp.torsion_emphasis);
         let data_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)

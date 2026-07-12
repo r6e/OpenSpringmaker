@@ -286,20 +286,24 @@ pub(crate) fn section_heading(
         .into()
 }
 
-/// Ghost/outline button style (used for secondary actions).
-pub(crate) fn ghost_button_style(
+/// Shared outline-button style factory: transparent background, `color`
+/// text, and a border that's `color` on hover, `pal.line` otherwise — the
+/// shape common to `ghost_button_style`, `danger_button_style`, and
+/// `nav_button_style` (each just names a different palette color).
+fn outline_button_style(
     pal: &'static Palette,
+    color: Color,
 ) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
     move |_theme, status| {
         use iced::widget::button::Status;
         let border_color = if matches!(status, Status::Hovered) {
-            pal.text
+            color
         } else {
             pal.line
         };
         iced::widget::button::Style {
             background: Some(Background::Color(Color::TRANSPARENT)),
-            text_color: pal.text,
+            text_color: color,
             border: Border {
                 color: border_color,
                 width: 1.0,
@@ -311,29 +315,18 @@ pub(crate) fn ghost_button_style(
     }
 }
 
+/// Ghost/outline button style (used for secondary actions).
+pub(crate) fn ghost_button_style(
+    pal: &'static Palette,
+) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
+    outline_button_style(pal, pal.text)
+}
+
 /// Danger/destructive ghost button style (remove actions).
 pub(crate) fn danger_button_style(
     pal: &'static Palette,
 ) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    move |_theme, status| {
-        use iced::widget::button::Status;
-        let border_color = if matches!(status, Status::Hovered) {
-            pal.danger
-        } else {
-            pal.line
-        };
-        iced::widget::button::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            text_color: pal.danger,
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: Default::default(),
-            snap: Default::default(),
-        }
-    }
+    outline_button_style(pal, pal.danger)
 }
 
 /// Accent/primary filled button style (save/commit actions).
@@ -369,25 +362,7 @@ pub(crate) fn accent_button_style(
 pub(crate) fn nav_button_style(
     pal: &'static Palette,
 ) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    move |_theme, status| {
-        use iced::widget::button::Status;
-        let border_color = if matches!(status, Status::Hovered) {
-            pal.accent
-        } else {
-            pal.line
-        };
-        iced::widget::button::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            text_color: pal.accent,
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: Default::default(),
-            snap: Default::default(),
-        }
-    }
+    outline_button_style(pal, pal.accent)
 }
 
 // ── Results panel helpers ────────────────────────────────────────────────────
@@ -421,7 +396,7 @@ pub(crate) fn results_error(pal: &'static Palette, msg: String) -> Element<'stat
 }
 
 /// A muted label + mono value row with an explicit value color.
-pub(crate) fn result_row_colored<'a>(
+fn result_row_colored<'a>(
     pal: &'static Palette,
     label: impl Into<String>,
     value: impl Into<String>,
@@ -450,28 +425,25 @@ pub(crate) fn result_row_colored<'a>(
     .into()
 }
 
-/// A muted label + mono value row in standard text color, used in results readouts.
-pub(crate) fn result_row<'a>(
-    pal: &'static Palette,
-    label: impl Into<String>,
-    value: impl Into<String>,
-    unit: impl Into<String>,
-) -> Element<'a, Message> {
-    result_row_colored(pal, label, value, unit, pal.text)
+/// Maps the presenter's emphasis to its rendered color: `Normal` is plain
+/// text, `Danger` is the danger color. Shared by every load-table row across
+/// all five families (each used to carry its own copy of this match).
+pub(crate) fn emphasis_color(pal: &'static Palette, e: Emphasis) -> Color {
+    match e {
+        Emphasis::Normal => pal.text,
+        Emphasis::Danger => pal.danger,
+    }
 }
 
 /// Render one result row, mapping the presenter's emphasis to a color.
 pub(crate) fn render_result_row(pal: &'static Palette, r: &ResultRow) -> Element<'static, Message> {
-    match r.emphasis {
-        Emphasis::Normal => result_row(pal, r.label.clone(), r.value.clone(), r.unit.clone()),
-        Emphasis::Danger => result_row_colored(
-            pal,
-            r.label.clone(),
-            r.value.clone(),
-            r.unit.clone(),
-            pal.danger,
-        ),
-    }
+    result_row_colored(
+        pal,
+        r.label.clone(),
+        r.value.clone(),
+        r.unit.clone(),
+        emphasis_color(pal, r.emphasis),
+    )
 }
 
 /// A heading followed by result rows (spacing 6), as used by every readout section.
@@ -500,6 +472,18 @@ pub(crate) fn divided_result_section(
         col = col.push(render_result_row(pal, r));
     }
     col.into()
+}
+
+/// A divider followed by one muted `SZ_LABEL` line of prose — the shared
+/// shape of compression's and torsion's fatigue `Note` arm and conical's
+/// always-present linear-model disclosure footer.
+pub(crate) fn divided_note(pal: &'static Palette, msg: &str) -> Element<'static, Message> {
+    column![
+        section_divider(pal),
+        text(msg.to_string()).size(SZ_LABEL).color(pal.muted)
+    ]
+    .spacing(SP_SM)
+    .into()
 }
 
 /// The hero spring-rate readout widget.

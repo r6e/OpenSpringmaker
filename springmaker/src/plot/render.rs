@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn render_chart_rasterizes_labels_in_y_band() {
         let (pixels, _) = render_chart(&DARK, &simple_data(true)).unwrap();
-        let bg = to_rgb(crate::app::DARK.panel);
+        let bg = to_rgb(DARK.panel);
         let differs = |col: u32, row: u32| {
             let i = ((row * CHART_W + col) * 4) as usize;
             pixels[i] != bg.0 || pixels[i + 1] != bg.1 || pixels[i + 2] != bg.2

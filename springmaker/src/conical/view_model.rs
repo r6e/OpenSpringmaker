@@ -6,8 +6,8 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, unit_force_label, unit_length_label, unit_stress_label, FieldDescriptor,
-    GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_stress_label,
+    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 use springcore::Material;
 
@@ -60,10 +60,7 @@ pub fn con_results_view(app: &App) -> ConResultsView {
 fn con_populated_results(out: &super::form::ConFormOutcome, app: &App) -> ConPopulatedResults {
     let d = &out.design;
     let us = app.unit_system;
-    // A present outcome means `app.material` already resolved during that
-    // solve; `.ok()` degrades gracefully rather than panicking on the
-    // documented-unreachable race where it no longer does (see `con_status_view`).
-    let material = app.materials.get(&app.material).ok();
+    let material = resolved_material(app);
     ConPopulatedResults {
         governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: con_geometry_rows(d, us),

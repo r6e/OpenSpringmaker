@@ -11,8 +11,8 @@ use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
-    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_rate_label,
+    unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 use springcore::{BindingConstraint, Material, SpringDesign, UnitSystem};
 
@@ -79,10 +79,7 @@ pub fn results_view(app: &App) -> ResultsView {
 fn populated_results(out: &FormOutcome, app: &App) -> PopulatedResults {
     let d = &out.design;
     let us = app.unit_system;
-    // A present outcome means `app.material` already resolved during that
-    // solve (the conical precedent); `.ok()` degrades gracefully rather than
-    // panicking on the documented-unreachable race where it no longer does.
-    let material = app.materials.get(&app.material).ok();
+    let material = resolved_material(app);
     PopulatedResults {
         governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: geometry_rows(d, us),

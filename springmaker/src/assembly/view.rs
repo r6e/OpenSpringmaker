@@ -9,9 +9,9 @@ use crate::assembly::view_model::{
     asm_results_view, AsmMemberResultView, AsmPopulatedResults, AsmResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
-use crate::presenter::{Emphasis, LoadTable};
+use crate::presenter::LoadTable;
 use crate::widgets::{
-    danger_button_style, field_label, ghost_button_style, labeled_input,
+    danger_button_style, emphasis_color, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, member_sub_card, panel_container, render_governing_rate,
     render_result_row, results_empty, results_error, rows_section, section_divider,
     section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS,
@@ -275,10 +275,7 @@ fn render_member_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'s
     );
 
     for lp in &lt.rows {
-        let stress_color = match lp.stress_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
+        let stress_color = emphasis_color(pal, lp.stress_emphasis);
         col = col.push(
             row![
                 text(lp.point.clone())

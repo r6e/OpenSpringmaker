@@ -11,11 +11,12 @@ use crate::conical::view_model::{
     con_inputs_view, con_results_view, ConPopulatedResults, ConResultsView, CON_LINEAR_MODEL_NOTE,
 };
 use crate::picker::{find_by_key, END_TYPES};
-use crate::presenter::{Emphasis, LoadTable};
+use crate::presenter::LoadTable;
 use crate::widgets::{
-    field_label, labeled_input, material_picker, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
+    divided_note, emphasis_color, field_label, labeled_input, material_picker, panel_container,
+    render_governing_rate, results_empty, results_error, rows_section, section_divider,
+    section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_XS,
+    SZ_CAPTION, SZ_LABEL,
 };
 use iced::widget::row;
 use iced::Font;
@@ -152,7 +153,7 @@ fn render_populated<'a>(
         section_divider(pal),
         toggle,
         visual,
-        render_linear_model_footer(pal),
+        divided_note(pal, CON_LINEAR_MODEL_NOTE),
     ]
     .spacing(SP_ROW)
     .into()
@@ -193,10 +194,7 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
     );
 
     for lp in &lt.rows {
-        let stress_color = match lp.stress_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
+        let stress_color = emphasis_color(pal, lp.stress_emphasis);
         let load_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
@@ -234,15 +232,4 @@ fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'stat
     }
 
     load_col.into()
-}
-
-/// The always-present linear-model disclosure footer.
-/// Mirrors compression's fatigue Note-arm rendering idiom.
-fn render_linear_model_footer(pal: &'static Palette) -> Element<'static, Message> {
-    column![
-        section_divider(pal),
-        text(CON_LINEAR_MODEL_NOTE).size(SZ_LABEL).color(pal.muted),
-    ]
-    .spacing(SP_SM)
-    .into()
 }

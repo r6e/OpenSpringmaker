@@ -114,6 +114,11 @@ pub(crate) const SCENE_PLACEHOLDER_CAPPED: &str =
 /// family's capped body and an assembly's capped whole-scene composition),
 /// while a non-empty body reaching `None` means the geometry itself is
 /// non-finite (bad input).
+///
+/// This discriminator would also call an (unreachable in practice)
+/// post-solve NaN-coil mutation "capped" rather than "check inputs" — a
+/// non-finite coil count also empties the body. Accepted: every REACHABLE
+/// path to an empty body today is the render cap, not a NaN coil count.
 fn placeholder_for(scene: &SceneData) -> &'static str {
     if super::coil_body_is_empty(scene) {
         SCENE_PLACEHOLDER_CAPPED

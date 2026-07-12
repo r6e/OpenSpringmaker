@@ -253,6 +253,11 @@ fn settings_changes_correction_and_recomputes() {
 /// so the caller can compare two renders directly. This is a differential
 /// pin: no golden file is stored in the repo, just a scratch directory the
 /// caller creates and removes around a pair of these calls.
+///
+/// The hash-file lookup below matches by `starts_with(stem)`, not exact
+/// equality — so within one `dir`, future snapshot stems must not be
+/// prefixes of one another (e.g. `"a"` and `"ab"`), or the lookup can find
+/// the wrong file depending on `read_dir`'s unspecified iteration order.
 fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &str) -> String {
     let mut sim = ui(app);
     let snapshot = sim
@@ -974,18 +979,27 @@ fn type_into_con(app: &mut App, field: crate::conical::form::Field, text: &str) 
     }
 }
 
+/// Drive the shared conical fixture (wire 2, large/small mean dia 20/12,
+/// 10 active coils, free length 60, loads "10, 25") used by every inline
+/// conical E2E test below — collapses five byte-identical drive blocks.
+/// Mirrors `probe_solve_extension`/`probe_solve_torsion`: the caller selects
+/// the Conical tab first.
+fn probe_solve_conical(app: &mut App) {
+    use crate::conical::form::Field as CF;
+    type_into_con(app, CF::WireDia, "2");
+    type_into_con(app, CF::LargeMeanDia, "20");
+    type_into_con(app, CF::SmallMeanDia, "12");
+    type_into_con(app, CF::Active, "10");
+    type_into_con(app, CF::FreeLength, "60");
+    type_into_con(app, CF::Loads, "10, 25");
+    assert!(app.con_outcome.is_some(), "conical fixture must solve");
+}
+
 #[test]
 fn conical_e2e_solve_renders_results_and_footer() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
-    assert!(app.con_outcome.is_some(), "solve must succeed");
+    probe_solve_conical(&mut app);
     assert!(shows(&app, "Geometry"));
     assert!(shows(&app, "Large end OD"));
     assert!(
@@ -1020,16 +1034,9 @@ fn conical_footer_absent_in_empty_state() {
 
 #[test]
 fn conical_save_load_round_trip() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
-    assert!(app.con_outcome.is_some(), "fixture must solve before save");
+    probe_solve_conical(&mut app);
 
     // Mirror the torsion round-trip's temp-file + save_to/load_from idiom exactly.
     let dir = std::env::temp_dir().join(format!("osm_con_e2e_{}", std::process::id()));
@@ -1324,18 +1331,11 @@ fn torsion_chart_renders_after_solve() {
 /// Conical: drive the same design as `conical_e2e_solve_renders_results_and_footer`.
 #[test]
 fn conical_chart_renders_after_solve() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
 
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
+    probe_solve_conical(&mut app);
 
-    assert!(app.con_outcome.is_some(), "solve must succeed");
     assert!(
         shows(&app, "Geometry"),
         "results must be Populated for the placeholder-absence check to be meaningful"
@@ -1576,17 +1576,10 @@ fn torsion_renders_3d_after_solve() {
 /// sequence verbatim.
 #[test]
 fn conical_renders_3d_after_solve() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
+    probe_solve_conical(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
-    assert!(app.con_outcome.is_some(), "solve must succeed");
     assert!(shows(&app, "Geometry"), "results must be Populated");
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
@@ -1761,15 +1754,9 @@ fn torsion_spring3d_arm_dispatches_scene_not_chart() {
 /// Spring3d mode — scene dispatch and validity, per the compression template.
 #[test]
 fn conical_spring3d_arm_dispatches_scene_not_chart() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
+    probe_solve_conical(&mut app);
 
     assert!(
         !shows(&app, CHART_PLACEHOLDER),

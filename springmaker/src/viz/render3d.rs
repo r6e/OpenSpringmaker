@@ -118,7 +118,7 @@ mod tests {
         let pixels = render_scene(&DARK, &test_scene(), Orbit::default()).unwrap();
         assert_eq!(pixels.len(), (CHART_W * CHART_H * 4) as usize);
         assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
-        let bg = to_rgb(crate::app::DARK.panel);
+        let bg = to_rgb(DARK.panel);
         assert!(
             pixels
                 .chunks_exact(4)

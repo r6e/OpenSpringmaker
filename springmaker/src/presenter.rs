@@ -280,6 +280,17 @@ pub(crate) fn common_status_lines(app: &crate::app::App) -> Vec<StatusLine> {
     lines
 }
 
+/// Resolve `app.material` against `app.materials`. A present outcome means
+/// `app.material` already resolved during that solve (the conical
+/// precedent); `.ok()` degrades gracefully rather than panicking on the
+/// documented-unreachable race where it no longer does (see
+/// `con_status_view`). Shared by compression's and conical's single-material
+/// `populated_results`; assembly's per-member lookup stays separate (each
+/// member names its own material).
+pub(crate) fn resolved_material(app: &crate::app::App) -> Option<&Material> {
+    app.materials.get(&app.material).ok()
+}
+
 // ── Hero rate readout ────────────────────────────────────────────────────────
 
 /// The hero spring-rate readout (label is constant in the view).

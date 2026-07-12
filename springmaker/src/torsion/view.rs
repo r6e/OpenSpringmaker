@@ -8,18 +8,17 @@ use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, Palette};
-use crate::presenter::Emphasis;
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{
     tor_fatigue_chart_data, tor_fatigue_inputs_view, tor_inputs_view, tor_results_view,
-    TorFatigueView, TorLoadTable, TorResultsView,
+    TorFatigueView, TorLoadTable, TorPopulatedResults, TorResultsView,
 };
 use crate::widgets::{
-    divided_result_section, field_label, labeled_input, material_picker, panel_container,
-    render_governing_rate, results_empty, results_error, rows_section, section_divider,
-    section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_SM, SP_XS,
-    SZ_CAPTION, SZ_LABEL,
+    divided_note, divided_result_section, emphasis_color, field_label, labeled_input,
+    material_picker, panel_container, render_governing_rate, results_empty, results_error,
+    rows_section, section_divider, section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG,
+    SP_MD, SP_ROW, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -244,10 +243,7 @@ fn render_tor_load_table(pal: &'static Palette, lt: &TorLoadTable) -> Element<'s
 
     // Data rows — stress and % allow are colored by emphasis.
     for lp in &lt.rows {
-        let stress_color = match lp.stress_emphasis {
-            Emphasis::Normal => pal.text,
-            Emphasis::Danger => pal.danger,
-        };
+        let stress_color = emphasis_color(pal, lp.stress_emphasis);
 
         let data_row = row![
             text(lp.point.clone())
@@ -331,50 +327,57 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let fatigue_chart =
                 tor_fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
-            let mut col = column![
-                section_heading(pal, "Results"),
-                section_divider(pal),
-                render_governing_rate(pal, "Angular rate", &p.governing_rate),
-                section_divider(pal),
-                rows_section(pal, "Geometry", &p.geometry),
-                section_divider(pal),
-                render_tor_load_table(pal, &p.load_table),
-                section_divider(pal),
-                toggle,
-                visual,
-            ]
-            .spacing(SP_ROW);
-
-            // Canon order: Fatigue precedes Min-weight (mirrors compression).
-            match &p.fatigue {
-                TorFatigueView::Hidden => {}
-                TorFatigueView::Computed(rows) => {
-                    col = col.push(divided_result_section(pal, "Fatigue analysis", rows));
-                }
-                TorFatigueView::Note(msg) => {
-                    col = col.push(
-                        column![
-                            section_divider(pal),
-                            text(*msg).size(SZ_LABEL).color(pal.muted),
-                        ]
-                        .spacing(SP_SM),
-                    );
-                }
-            }
-            // Directly beneath the fatigue rows; None whenever they are not
-            // Computed (the presenter gates both together).
-            if let Some(fc) = fatigue_chart {
-                col = col.push(fc);
-            }
-            if let Some(rows) = &p.min_weight {
-                col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
-            }
-
-            col.into()
+            render_populated(pal, &p, toggle, visual, fatigue_chart)
         }
     };
 
     container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
+}
+
+/// Assemble the populated results column from the presenter data plus the
+/// chart/3D toggle and the selected visual. Mirrors the other four
+/// families' `render_populated` shape (pure move, no behavior change).
+fn render_populated<'a>(
+    pal: &'static Palette,
+    p: &TorPopulatedResults,
+    toggle: Element<'a, Message>,
+    visual: Element<'a, Message>,
+    fatigue_chart: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut col = column![
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Angular rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_tor_load_table(pal, &p.load_table),
+        section_divider(pal),
+        toggle,
+        visual,
+    ]
+    .spacing(SP_ROW);
+
+    // Canon order: Fatigue precedes Min-weight (mirrors compression).
+    match &p.fatigue {
+        TorFatigueView::Hidden => {}
+        TorFatigueView::Computed(rows) => {
+            col = col.push(divided_result_section(pal, "Fatigue analysis", rows));
+        }
+        TorFatigueView::Note(msg) => {
+            col = col.push(divided_note(pal, msg));
+        }
+    }
+    // Directly beneath the fatigue rows; None whenever they are not
+    // Computed (the presenter gates both together).
+    if let Some(fc) = fatigue_chart {
+        col = col.push(fc);
+    }
+    if let Some(rows) = &p.min_weight {
+        col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
+    }
+
+    col.into()
 }
