@@ -7,9 +7,10 @@
 //! never OVER-estimate the true distance from a point to the surface it
 //! describes — sphere-tracing correctness depends on it (an overestimate
 //! lets the marcher step past a thin feature and miss the intersection
-//! entirely). Every primitive here is proven EXACT (not merely
-//! conservative), which trivially satisfies the invariant; each function's
-//! doc comment carries its own proof sketch.
+//! entirely). Every STANDALONE primitive here (capsule, torus arc, profile)
+//! is proven EXACT, which trivially satisfies the invariant; the CSG
+//! combinator [`cut_plane`] is conservative-but-not-exact near the cut seam
+//! (see its doc). Each function's doc comment carries its own argument.
 
 use std::f64::consts::TAU;
 
@@ -177,12 +178,14 @@ pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f6
     }
 }
 
-/// Exact half-space intersection: `max(d, dot(p - plane_point,
-/// plane_normal))`. `d` is the base shape's signed distance at `p`; the
-/// plane's own signed distance is positive on the side `plane_normal`
-/// points to (the side cut AWAY) and negative on the kept side. `max` is
-/// the standard CSG intersection combinator (both operands exact ⇒ the
-/// result is exact, hence conservative by construction).
+/// Half-space intersection: `max(d, dot(p - plane_point, plane_normal))`.
+/// `d` is the base shape's signed distance at `p`; the plane's own signed
+/// distance is positive on the side `plane_normal` points to (the side cut
+/// AWAY) and negative on the kept side. `max` is the standard CSG
+/// intersection combinator — CONSERVATIVE but not exact: near the cut seam
+/// (where the base surface meets the plane, e.g. a ground end's rim) it
+/// UNDER-estimates the true distance to the composed boundary, which is the
+/// safe direction for sphere tracing. Away from the seam it is exact.
 #[allow(dead_code)] // consumed by Task 2 (ground-end cuts) and Task 5 (WGSL mirror)
 pub(crate) fn cut_plane(d: f64, p: Vec3, plane_point: Vec3, plane_normal: Vec3) -> f64 {
     d.max(vdot(vsub(p, plane_point), plane_normal))
