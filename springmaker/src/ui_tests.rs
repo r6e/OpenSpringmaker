@@ -2708,3 +2708,74 @@ fn settings_theme_reclick_retries_after_a_failed_save() {
     fs::remove_file(&bogus_parent).ok();
     fs::remove_dir_all(&good_dir).ok();
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 5: OS-theme integration — differential rendering pins. `App::subscription`
+// itself is a thin humble shell over `iced::system::theme_changes()` (OrbitCanvas
+// discipline: the Simulator can't drive a real OS subscription), so these pins
+// dispatch `Message::SystemTheme`/`Message::ThemePref` directly and verify the
+// downstream rendering effect instead.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Differential snapshot pin (see `snapshot_hash`'s doc comment): the Settings
+/// screen, unchanged apart from the active theme, must render different pixels
+/// for Dark vs Light. Mirrors `segmented_selection_highlight_renders_differently`,
+/// except here the THEME itself (not just the selection highlight) is the
+/// varying input, so each snapshot call re-resolves `app.theme()` after the
+/// preference changes.
+#[test]
+fn theme_switch_changes_the_rendered_settings_screen() {
+    let mut app = test_app();
+    app.update(Message::NavigateTo(Screen::Settings));
+
+    let dir = env::temp_dir().join(format!(
+        "openspringmaker-theme-switch-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let dark_theme = app.theme();
+    let dark = snapshot_hash(&app, &dark_theme, &dir, "theme-dark");
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    let light_theme = app.theme();
+    let light = snapshot_hash(&app, &light_theme, &dir, "theme-light");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        dark, light,
+        "switching the palette must change rendered pixels"
+    );
+}
+
+/// End-to-end smoke test: a solved calculator screen must keep rendering its
+/// results (not fall back to the placeholder) after the theme preference
+/// flips to Light — the light palette works through the full results-render
+/// path, not just the isolated Settings screen pinned above.
+#[test]
+fn calculator_results_still_render_after_switching_to_light_theme() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(
+        shows(&app, "Spring rate"),
+        "precondition: the design solves under the default theme"
+    );
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+
+    assert!(
+        shows(&app, "Spring rate"),
+        "results must still render after switching to the light theme"
+    );
+    assert!(
+        !shows(&app, "Enter design parameters to see results."),
+        "the light-theme render must not fall back to the empty-state placeholder"
+    );
+}

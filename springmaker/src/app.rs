@@ -329,8 +329,7 @@ pub enum Message {
     ThemePref(ThemePref),
     // Emitted when the OS reports (or changes) its light/dark preference;
     // only affects rendering when `theme_pref` is `System`. Constructed by
-    // the OS-theme subscription (Task 5) — remove this allow once that lands.
-    #[allow(dead_code)]
+    // the OS-theme subscription (`App::subscription`, Task 5).
     SystemTheme(iced::theme::Mode),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
@@ -1031,6 +1030,18 @@ impl App {
         resolved_palette(self.theme_pref, self.system_mode)
     }
 
+    /// Supply the OS-theme subscription to the iced application builder.
+    /// Live theme-change events flow in as `Message::SystemTheme`; `update`'s
+    /// `SystemTheme` arm only affects rendering when `theme_pref` is `System`
+    /// (see `resolved_palette`). A thin humble shell over
+    /// `iced::system::theme_changes()` — the Simulator can't drive a real OS
+    /// subscription, so `ui_tests` pins the downstream rendering effect by
+    /// dispatching `Message::SystemTheme` directly instead (OrbitCanvas
+    /// discipline).
+    pub fn subscription(&self) -> iced::Subscription<Message> {
+        iced::system::theme_changes().map(Message::SystemTheme)
+    }
+
     fn set_field(&mut self, field: Field, value: String) {
         let f = &mut self.form;
         match field {
@@ -1449,6 +1460,26 @@ mod tests {
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// `Message::SystemTheme` actually applies the reported mode to
+    /// `system_mode` (and so, under the default `System` pref, to the
+    /// resolved palette) — not just that it leaves other channels alone
+    /// (`theme_messages_do_not_recompute_or_touch_error_channels`, below,
+    /// only makes negative assertions and would stay green even if the
+    /// handler dropped the mode on the floor).
+    #[test]
+    fn system_theme_message_switches_the_palette_under_system_pref() {
+        let mut app = test_app();
+        assert_eq!(app.theme_pref, ThemePref::System);
+        assert!(std::ptr::eq(app.pal(), &DARK), "no OS report yet ⇒ DARK");
+
+        app.update(Message::SystemTheme(iced::theme::Mode::Light));
+
+        assert!(
+            std::ptr::eq(app.pal(), &LIGHT),
+            "System pref must follow a reported OS-Light switch"
+        );
     }
 
     /// API-contract: `Message::ThemePref` and `Message::SystemTheme` are pure
