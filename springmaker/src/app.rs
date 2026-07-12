@@ -2215,6 +2215,11 @@ mod tests {
         );
     }
 
+    /// One named (label, dispatch) pair for
+    /// `pick_list_reselect_current_value_preserves_action_error` — named alias
+    /// keeps clippy's `type_complexity` lint quiet on the `Vec` below.
+    type NamedDispatch = (&'static str, Box<dyn Fn(&mut App)>);
+
     /// Panel R2 item 1: iced's `pick_list` dispatches `on_select`
     /// unconditionally, even when re-selecting the value that's ALREADY
     /// selected (vendored `pick_list.rs`) — so every pick_list-backed handler
@@ -2233,7 +2238,7 @@ mod tests {
         // A valid (non-OOB) member index for AsmMemberMaterial/AsmMemberEndType.
         assert_eq!(app.assembly.members.len(), 1);
 
-        let dispatchers: Vec<(&str, Box<dyn Fn(&mut App)>)> = vec![
+        let dispatchers: Vec<NamedDispatch> = vec![
             (
                 "Material",
                 Box::new(|a: &mut App| a.update(Message::Material(a.material.clone()))),
@@ -2264,9 +2269,7 @@ mod tests {
             ),
             (
                 "TorMomentEntry",
-                Box::new(|a: &mut App| {
-                    a.update(Message::TorMomentEntry(a.torsion.moment_entry))
-                }),
+                Box::new(|a: &mut App| a.update(Message::TorMomentEntry(a.torsion.moment_entry))),
             ),
             (
                 "TorDiaPolicy",
@@ -2282,9 +2285,7 @@ mod tests {
             ),
             (
                 "AsmTopology",
-                Box::new(|a: &mut App| {
-                    a.update(Message::AsmTopology(a.assembly.topology.clone()))
-                }),
+                Box::new(|a: &mut App| a.update(Message::AsmTopology(a.assembly.topology.clone()))),
             ),
             (
                 "AsmFixity",
