@@ -1,5 +1,8 @@
 //! Humble view for the Settings screen — renders SettingsViewModel only.
-//! No logic or branching; all rendering decisions live in `settings_view_model`.
+//! All BEHAVIORAL decisions (option lists, selection, clickability) live in
+//! `settings_view_model`; like every humble view in this app (ADR 0008, the
+//! `Emphasis`→color precedent), mapping a semantic kind to a palette color at
+//! render time is the view's job — the ViewModel stays iced-free.
 
 use iced::widget::{button, column, container, row, space, text};
 use iced::{Element, Font, Length};
