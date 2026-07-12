@@ -1012,8 +1012,8 @@ fn conical_e2e_solve_renders_results_and_footer() {
 }
 
 /// The linear-model footer must NOT appear in the Empty state (no inputs).
-/// Revert-probe: temporarily add `render_linear_model_footer()` to the Empty
-/// arm → test FAILS → restore → green.
+/// Revert-probe: temporarily add `divided_note(pal, CON_LINEAR_MODEL_NOTE)` to
+/// the Empty arm → test FAILS → restore → green.
 #[test]
 fn conical_footer_absent_in_empty_state() {
     let mut app = test_app();
@@ -2555,4 +2555,34 @@ fn settings_correction_reclick_retries_after_a_failed_save() {
 
     fs::remove_file(&bogus_parent).ok();
     fs::remove_dir_all(&good_dir).ok();
+}
+
+/// Wide-viewport pin for `screen_shell`'s nested max-width structure (panel R2
+/// item 4): at the suite's normal 1200px `VIEWPORT` the content cap and the
+/// viewport width coincide, so a regression to the single-container form
+/// (cap applied to the padded box, not the content — see `screen_shell`'s doc
+/// comment) is byte-identical there and unpinnable. At 1600px the two shapes
+/// diverge by exactly `SP_XL` (24px): measured directly, the "Results"
+/// heading renders at x = 652.0 on the correct nested shell vs x = 628.0 on
+/// the regressed single-container form.
+/// Revert-probe: collapse `screen_shell` back to
+/// `container(content).padding(SP_XL).max_width(CONTENT_MAX_W)` (one
+/// container instead of the nested `capped`/`padded` pair) → this test FAILS
+/// (measures 628.0, not 652.0) → restore → green.
+#[test]
+fn screen_shell_caps_content_not_padding_on_wide_windows() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    let size = iced::Size {
+        width: 1600.0,
+        height: 2400.0,
+    };
+    let mut sim = Simulator::with_size(Settings::default(), size, app.view());
+    let target = sim.find("Results").expect("Results heading must render");
+    assert_eq!(
+        target.bounds().x,
+        652.0,
+        "at a 1600px viewport the nested screen_shell must cap CONTENT at 1200px \
+         (Results heading at x=652), not the padded box (which would land at x=628)"
+    );
 }
