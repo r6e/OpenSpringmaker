@@ -1,6 +1,6 @@
 //! App-level preferences persisted as `settings.toml` in the platform config
-//! directory (same base as the materials overlay). v1 holds only the curvature-
-//! correction preference; the struct is the home for future preferences.
+//! directory (same base as the materials overlay). Holds the curvature-correction
+//! and theme preferences; the struct is the home for future preferences.
 
 use serde::{Deserialize, Serialize};
 use springcore::CurvatureCorrection;

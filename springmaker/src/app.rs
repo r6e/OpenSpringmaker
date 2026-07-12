@@ -229,7 +229,7 @@ pub(crate) fn resolved_palette(pref: ThemePref, system: iced::theme::Mode) -> &'
 pub enum Screen {
     Calculator,
     Materials,
-    /// Settings screen — curvature-correction preference.
+    /// Settings screen — curvature-correction and theme preferences.
     Settings,
 }
 
@@ -2713,6 +2713,8 @@ mod tests {
         }
         // Selected-option text is accent-on-accent_tint (segmented_style).
         assert!(contrast(LIGHT.accent, LIGHT.accent_tint) >= 4.5);
+        // Hovered-unselected-option text is text-on-hover (segmented_style).
+        assert!(contrast(LIGHT.text, LIGHT.hover) >= 4.5);
         // Structural sanity: light surfaces order light→dark as ink ≥ panel ≥ raised > hover.
         assert!(luminance(LIGHT.ink) > luminance(LIGHT.panel));
         assert!(luminance(LIGHT.panel) > luminance(LIGHT.raised));
@@ -2745,6 +2747,10 @@ mod tests {
                 );
             }
         }
+        // Selected-option text is accent-on-accent_tint (segmented_style).
+        assert!(contrast(DARK.accent, DARK.accent_tint) >= 4.5);
+        // Hovered-unselected-option text is text-on-hover (segmented_style).
+        assert!(contrast(DARK.text, DARK.hover) >= 4.5);
     }
 
     #[test]
