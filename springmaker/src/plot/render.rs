@@ -6,15 +6,15 @@ use super::{
     chart_extent, ensure_font, rgb_to_rgba, to_rgb, ChartData, LineRole, MarkerKind, CHART_H,
     CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA,
 };
-use crate::app::C;
+use crate::app::Palette;
 use plotters::prelude::*;
 
-fn line_style(role: LineRole) -> ShapeStyle {
+fn line_style(pal: &Palette, role: LineRole) -> ShapeStyle {
     let (color, width) = match role {
-        LineRole::Primary => (to_rgb(C::ACCENT), 2),
-        LineRole::Member => (to_rgb(C::MUTED), 1),
-        LineRole::Envelope => (to_rgb(C::WARN), 2),
-        LineRole::LoadLine => (to_rgb(C::MUTED), 1),
+        LineRole::Primary => (to_rgb(pal.accent), 2),
+        LineRole::Member => (to_rgb(pal.muted), 1),
+        LineRole::Envelope => (to_rgb(pal.warn), 2),
+        LineRole::LoadLine => (to_rgb(pal.muted), 1),
     };
     ShapeStyle {
         color: color.to_rgba(),
@@ -23,10 +23,10 @@ fn line_style(role: LineRole) -> ShapeStyle {
     }
 }
 
-fn marker_style(kind: MarkerKind) -> ShapeStyle {
+fn marker_style(pal: &Palette, kind: MarkerKind) -> ShapeStyle {
     let color = match kind {
-        MarkerKind::Operating => to_rgb(C::WARN),
-        MarkerKind::Limit => to_rgb(C::DANGER),
+        MarkerKind::Operating => to_rgb(pal.warn),
+        MarkerKind::Limit => to_rgb(pal.danger),
     };
     ShapeStyle {
         color: color.to_rgba(),
@@ -37,7 +37,7 @@ fn marker_style(kind: MarkerKind) -> ShapeStyle {
 
 /// Render `data` to an RGBA bitmap. `None` iff the chart has no finite
 /// positive extent (plotters must never see a non-finite range).
-pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
+pub fn render_chart(pal: &Palette, data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
     let (x_raw, y_raw) = chart_extent(data)?;
     // Headroom, with the legacy floor so tiny ranges don't degenerate, and a
     // ceiling so a near-f64::MAX finite extent doesn't overflow to +Inf under
@@ -49,7 +49,8 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut rgb, (CHART_W, CHART_H)).into_drawing_area();
-        root.fill(&to_rgb(C::PANEL)).expect("fill chart background");
+        root.fill(&to_rgb(pal.panel))
+            .expect("fill chart background");
         let mut chart = ChartBuilder::on(&root)
             .margin(MARGIN as i32)
             .x_label_area_size(X_LABEL_AREA as i32)
@@ -60,22 +61,22 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         chart
             .configure_mesh()
             .light_line_style(ShapeStyle {
-                color: to_rgb(C::LINE).to_rgba(),
+                color: to_rgb(pal.line).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
             .bold_line_style(ShapeStyle {
-                color: to_rgb(C::RAISED).to_rgba(),
+                color: to_rgb(pal.raised).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
             .axis_style(ShapeStyle {
-                color: to_rgb(C::TEXT).to_rgba(),
+                color: to_rgb(pal.text).to_rgba(),
                 filled: false,
                 stroke_width: 1,
             })
-            .label_style(("sans-serif", 14).into_font().color(&to_rgb(C::MUTED)))
-            .axis_desc_style(("sans-serif", 15).into_font().color(&to_rgb(C::TEXT)))
+            .label_style(("sans-serif", 14).into_font().color(&to_rgb(pal.muted)))
+            .axis_desc_style(("sans-serif", 15).into_font().color(&to_rgb(pal.text)))
             .x_desc(data.x_axis.label)
             .y_desc(data.y_axis.label)
             .draw()
@@ -83,7 +84,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
 
         let mut any_named = false;
         for line in &data.lines {
-            let style = line_style(line.role);
+            let style = line_style(pal, line.role);
             let pts = line
                 .points
                 .iter()
@@ -102,9 +103,9 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
         if any_named {
             chart
                 .configure_series_labels()
-                .background_style(to_rgb(C::PANEL).mix(0.9))
-                .border_style(to_rgb(C::LINE))
-                .label_font(("sans-serif", 13).into_font().color(&to_rgb(C::TEXT)))
+                .background_style(to_rgb(pal.panel).mix(0.9))
+                .border_style(to_rgb(pal.line))
+                .label_font(("sans-serif", 13).into_font().color(&to_rgb(pal.text)))
                 .draw()
                 .expect("legend");
         }
@@ -114,7 +115,7 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
                 data.markers
                     .iter()
                     .filter(|m| super::plottable(m.x, m.y))
-                    .map(|m| Circle::new((m.x, m.y), 5, marker_style(m.kind))),
+                    .map(|m| Circle::new((m.x, m.y), 5, marker_style(pal, m.kind))),
             )
             .expect("markers");
         root.present().expect("present chart bitmap");
@@ -127,7 +128,9 @@ pub fn render_chart(data: &ChartData) -> Option<(Vec<u8>, ChartMapping)> {
 mod tests {
     use super::super::{AxisMeta, Line, Marker};
     use super::*;
+    use crate::app::{Palette, DARK};
     use approx::assert_relative_eq;
+    use iced::Color;
 
     fn simple_data(named: bool) -> ChartData {
         ChartData {
@@ -168,7 +171,7 @@ mod tests {
     #[test]
     fn render_chart_filters_negative_coordinates() {
         let clean = simple_data(false);
-        let (clean_pixels, _) = render_chart(&clean).unwrap();
+        let (clean_pixels, _) = render_chart(&DARK, &clean).unwrap();
 
         let mut dirty = simple_data(false);
         dirty.lines[0].points.push((-5.0, 8.0));
@@ -177,7 +180,7 @@ mod tests {
             y: 8.0,
             kind: MarkerKind::Operating,
         });
-        let (dirty_pixels, _) = render_chart(&dirty).unwrap();
+        let (dirty_pixels, _) = render_chart(&DARK, &dirty).unwrap();
 
         assert_eq!(
             clean_pixels, dirty_pixels,
@@ -201,12 +204,12 @@ mod tests {
             lines: vec![],
             markers: vec![],
         };
-        assert!(render_chart(&d).is_none());
+        assert!(render_chart(&DARK, &d).is_none());
     }
 
     #[test]
     fn render_chart_returns_headroom_mapping_and_opaque_buffer() {
-        let (pixels, mapping) = render_chart(&simple_data(false)).unwrap();
+        let (pixels, mapping) = render_chart(&DARK, &simple_data(false)).unwrap();
         assert_eq!(pixels.len(), (CHART_W * CHART_H * 4) as usize);
         assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
         assert_relative_eq!(mapping.x_max, 15.0 * 1.1, max_relative = 1e-12);
@@ -236,19 +239,41 @@ mod tests {
             }],
             markers: vec![],
         };
-        let (_, mapping) = render_chart(&d).expect("a huge finite extent must still render");
+        let (_, mapping) = render_chart(&DARK, &d).expect("a huge finite extent must still render");
         assert!(mapping.x_max.is_finite());
         assert!(mapping.y_max.is_finite());
     }
 
     #[test]
     fn render_chart_rasterizes_labels_in_y_band() {
-        let (pixels, _) = render_chart(&simple_data(true)).unwrap();
-        let bg = to_rgb(crate::app::C::PANEL);
+        let (pixels, _) = render_chart(&DARK, &simple_data(true)).unwrap();
+        let bg = to_rgb(DARK.panel);
         let differs = |col: u32, row: u32| {
             let i = ((row * CHART_W + col) * 4) as usize;
             pixels[i] != bg.0 || pixels[i + 1] != bg.1 || pixels[i + 2] != bg.2
         };
         assert!((0..Y_LABEL_AREA).any(|c| (0..CHART_H).any(|r| differs(c, r))));
+    }
+
+    #[test]
+    fn render_chart_background_follows_the_palette() {
+        // Same data, two palettes differing only in panel color ⇒ different
+        // corner pixel. Pins that the renderer reads the parameter, not DARK.
+        let alt = Palette {
+            panel: Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            ..DARK
+        };
+        let (dark_px, _) = render_chart(&DARK, &simple_data(false)).unwrap();
+        let (alt_px, _) = render_chart(&alt, &simple_data(false)).unwrap();
+        assert_ne!(
+            dark_px[0..3],
+            alt_px[0..3],
+            "corner pixel must follow pal.panel"
+        );
     }
 }

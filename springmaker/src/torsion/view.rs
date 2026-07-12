@@ -7,18 +7,18 @@
 use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
-use crate::app::{App, Message, C};
-use crate::presenter::Emphasis;
+use crate::app::{App, Message, Palette};
 use crate::torsion::form::{Field, TorFormState, TorScenarioKind};
 use crate::torsion::form::{ALL_MOMENT_ENTRIES, ALL_TOR_SCENARIOS};
 use crate::torsion::view_model::{
     tor_fatigue_chart_data, tor_fatigue_inputs_view, tor_inputs_view, tor_results_view,
-    TorFatigueView, TorLoadTable, TorResultsView,
+    TorFatigueView, TorLoadTable, TorPopulatedResults, TorResultsView,
 };
 use crate::widgets::{
-    divided_result_section, field_label, labeled_input, material_picker, panel_container,
-    render_result_row, results_empty, results_error, rows_section, section_divider,
-    section_heading, styled_pick_list, visual_toggle, SZ_CAPTION, SZ_LABEL,
+    divided_note, divided_result_section, emphasis_color, field_label, labeled_input,
+    material_picker, panel_container, render_governing_rate, results_empty, results_error,
+    rows_section, section_divider, section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG,
+    SP_MD, SP_ROW, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -26,81 +26,92 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     // Setup group — material selector, scenario pick-list, optional moment-entry
     // pick-list (hidden for TwoLoad), and friction model pick-list.
     let scenario_col = column![
-        field_label("Input mode"),
+        field_label(pal, "Input mode"),
         styled_pick_list(
+            pal,
             ALL_TOR_SCENARIOS,
             Some(app.torsion.scenario),
             Message::TorScenario,
         ),
     ]
-    .spacing(4);
+    .spacing(SP_XS);
 
-    let mut setup_group =
-        column![section_heading("Setup"), material_picker(app), scenario_col].spacing(10);
+    let mut setup_group = column![
+        section_heading(pal, "Setup"),
+        material_picker(app),
+        scenario_col
+    ]
+    .spacing(SP_MD);
 
     if app.torsion.scenario != TorScenarioKind::TwoLoad
         && app.torsion.scenario != TorScenarioKind::MinWeight
     {
         setup_group = setup_group.push(
             column![
-                field_label("Moment entry"),
+                field_label(pal, "Moment entry"),
                 styled_pick_list(
+                    pal,
                     ALL_MOMENT_ENTRIES,
                     Some(app.torsion.moment_entry),
                     Message::TorMomentEntry,
                 ),
             ]
-            .spacing(4),
+            .spacing(SP_XS),
         );
     }
 
     if app.torsion.scenario == TorScenarioKind::MinWeight {
         setup_group = setup_group.push(
             column![
-                field_label("Diameter policy"),
+                field_label(pal, "Diameter policy"),
                 styled_pick_list(
+                    pal,
                     springcore::torsion::ALL_DIA_POLICIES,
                     Some(app.torsion.dia_policy),
                     Message::TorDiaPolicy,
                 ),
             ]
-            .spacing(4),
+            .spacing(SP_XS),
         );
     }
 
     setup_group = setup_group.push(
         column![
-            field_label("Friction model"),
+            field_label(pal, "Friction model"),
             styled_pick_list(
+                pal,
                 springcore::torsion::ALL_FRICTION_MODELS,
                 Some(app.torsion.friction_model),
                 Message::TorFriction,
             ),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     setup_group = setup_group.push(
         column![
-            field_label("Cycle life"),
+            field_label(pal, "Cycle life"),
             styled_pick_list(
+                pal,
                 springcore::torsion::ALL_CYCLE_LIVES,
                 Some(app.torsion.cycle_life),
                 Message::TorCycleLife,
             ),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     // Inputs group — driven by the presenter's field list.
     let inputs = tor_inputs_view(app);
-    let mut inputs_col = column![section_heading("Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
+            pal,
             &fd.label,
             tor_field_value(&app.torsion, field),
             tor_field_id(field),
@@ -112,11 +123,12 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     let fatigue_inputs = tor_fatigue_inputs_view(app);
     if !fatigue_inputs.is_empty() {
         inputs_col = inputs_col
-            .push(section_divider())
-            .push(section_heading("Fatigue cycle (leave blank to skip)"));
+            .push(section_divider(pal))
+            .push(section_heading(pal, "Fatigue cycle (leave blank to skip)"));
         for fd in &fatigue_inputs {
             let field = fd.field;
             inputs_col = inputs_col.push(labeled_input(
+                pal,
                 &fd.label,
                 tor_field_value(&app.torsion, field),
                 tor_field_id(field),
@@ -125,9 +137,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         }
     }
 
-    let inner = column![setup_group, section_divider(), inputs_col].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_col].spacing(SP_LG);
 
-    container(panel_container(inner))
+    container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -195,62 +207,59 @@ pub(crate) fn tor_field_id(field: Field) -> &'static str {
 // Results (right) panel — renderers
 // --------------------------------------------------------------------------
 
-fn render_tor_load_table(lt: &TorLoadTable) -> Element<'static, Message> {
-    let mut col = column![section_heading("Load points")].spacing(4);
+fn render_tor_load_table(pal: &'static Palette, lt: &TorLoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     // Header row.
     col = col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text("Moment")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(3)),
             text("Deflection")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(3)),
             text(format!("Stress ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("% Allow")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Wound ID")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     // Data rows — stress and % allow are colored by emphasis.
     for lp in &lt.rows {
-        let stress_color = match lp.stress_emphasis {
-            Emphasis::Normal => C::TEXT,
-            Emphasis::Danger => C::DANGER,
-        };
+        let stress_color = emphasis_color(pal, lp.stress_emphasis);
 
         let data_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text(lp.moment.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(3)),
             text(lp.deflection.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(3)),
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
@@ -265,10 +274,10 @@ fn render_tor_load_table(lt: &TorLoadTable) -> Element<'static, Message> {
             text(lp.wound_inner.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
 
         col = col.push(data_row);
     }
@@ -281,10 +290,11 @@ fn render_tor_load_table(lt: &TorLoadTable) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let us = app.unit_system;
     let content: Element<'_, Message> = match tor_results_view(app) {
-        TorResultsView::Error(msg) => results_error(msg),
-        TorResultsView::Empty => results_empty(),
+        TorResultsView::Error(msg) => results_error(pal, msg),
+        TorResultsView::Empty => results_empty(pal),
         TorResultsView::Populated(p) => {
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
@@ -299,67 +309,75 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("TorResultsView::Populated implies app.tor_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::torsion::plot_model::torsion_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::torsion::scene_model::torsion_scene(&outcome.design),
                     app.orbit,
                 ),
             };
-            let toggle = visual_toggle(app.results_visual);
+            let toggle = visual_toggle(pal, app.results_visual);
 
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only
             // renders the data it hands back. Reuses the `outcome` binding
             // above rather than re-deriving it from `app.tor_outcome`.
-            let fatigue_chart = tor_fatigue_chart_data(outcome, us).map(crate::plot::chart_element);
+            let fatigue_chart =
+                tor_fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
-            // Angular rate section — two ResultRows (per-degree and per-revolution).
-            let mut rate_col = column![section_heading("Angular rate")].spacing(6);
-            rate_col = rate_col.push(render_result_row(&p.rate_per_deg));
-            rate_col = rate_col.push(render_result_row(&p.rate_per_turn));
-
-            let mut col = column![
-                section_heading("Results"),
-                section_divider(),
-                rate_col,
-                section_divider(),
-                rows_section("Geometry", &p.geometry),
-                section_divider(),
-                render_tor_load_table(&p.load_table),
-                section_divider(),
-                toggle,
-                visual,
-            ]
-            .spacing(6);
-
-            if let Some(rows) = &p.min_weight {
-                col = col.push(divided_result_section("Min-weight optimisation", rows));
-            }
-
-            match &p.fatigue {
-                TorFatigueView::Hidden => {}
-                TorFatigueView::Computed(rows) => {
-                    col = col.push(divided_result_section("Fatigue analysis", rows));
-                }
-                TorFatigueView::Note(msg) => {
-                    col = col.push(
-                        column![section_divider(), text(*msg).size(SZ_LABEL).color(C::MUTED),]
-                            .spacing(8),
-                    );
-                }
-            }
-            // Directly beneath the fatigue rows; None whenever they are not
-            // Computed (the presenter gates both together).
-            if let Some(fc) = fatigue_chart {
-                col = col.push(fc);
-            }
-
-            col.into()
+            render_populated(pal, &p, toggle, visual, fatigue_chart)
         }
     };
 
-    container(panel_container(content))
+    container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
+}
+
+/// Assemble the populated results column from the presenter data plus the
+/// chart/3D toggle and the selected visual. Mirrors the other four
+/// families' `render_populated` shape (pure move, no behavior change).
+fn render_populated<'a>(
+    pal: &'static Palette,
+    p: &TorPopulatedResults,
+    toggle: Element<'a, Message>,
+    visual: Element<'a, Message>,
+    fatigue_chart: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut col = column![
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Angular rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_tor_load_table(pal, &p.load_table),
+        section_divider(pal),
+        toggle,
+        visual,
+    ]
+    .spacing(SP_ROW);
+
+    // Canon order: Fatigue precedes Min-weight (mirrors compression).
+    match &p.fatigue {
+        TorFatigueView::Hidden => {}
+        TorFatigueView::Computed(rows) => {
+            col = col.push(divided_result_section(pal, "Fatigue analysis", rows));
+        }
+        TorFatigueView::Note(msg) => {
+            col = col.push(divided_note(pal, msg));
+        }
+    }
+    // Directly beneath the fatigue rows; None whenever they are not
+    // Computed (the presenter gates both together).
+    if let Some(fc) = fatigue_chart {
+        col = col.push(fc);
+    }
+    if let Some(rows) = &p.min_weight {
+        col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
+    }
+
+    col.into()
 }

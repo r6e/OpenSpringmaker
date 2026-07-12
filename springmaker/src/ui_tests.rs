@@ -8,12 +8,15 @@
 //! `rfd` dialogs) and `Save to disk` (which writes the user overlay) — those
 //! perform IO and can't run headlessly.
 
+use std::env;
+use std::fs;
+
 use crate::app::{App, Message, Screen, VisualMode};
 use crate::compression::form::Field;
 use crate::extension::form::{build_spec, ExtScenarioKind, Field as ExtField, HookMode};
 use crate::extension::view_model::{ext_results_view, ExtResultsView};
 use crate::plot::CHART_PLACEHOLDER;
-use crate::viz::{Orbit, SCENE_PLACEHOLDER};
+use crate::viz::{Orbit, SCENE_PLACEHOLDER, SCENE_PLACEHOLDER_CAPPED};
 use iced_test::core::Settings;
 use iced_test::Simulator;
 use springcore::{Family, MaterialSet, MaterialStore, UnitSystem};
@@ -56,6 +59,26 @@ fn click(app: &mut App, label: &str) {
 /// Whether a widget matching `label` is present in the current render.
 fn shows(app: &App, label: &str) -> bool {
     ui(app).find(label).is_ok()
+}
+
+/// Substring-matching companion to `shows`: `&str`'s `Selector` impl matches
+/// a `Text` widget's content by EXACT equality, which makes it unsuitable
+/// for pinning that a full sentence merely NAMES a phrase (rather than pinning
+/// the whole sentence verbatim, which `shows` already does elsewhere). True
+/// if any rendered `Text` widget's content contains `needle`.
+fn shows_containing(app: &App, needle: &str) -> bool {
+    ui(app)
+        .find(
+            |candidate: iced_test::selector::Candidate<'_>| match candidate {
+                iced_test::selector::Candidate::Text { content, .. }
+                    if content.contains(needle) =>
+                {
+                    Some(())
+                }
+                _ => None,
+            },
+        )
+        .is_ok()
 }
 
 /// Apply an orbit drag delta (as `OrbitCanvas` would publish it — see
@@ -220,6 +243,90 @@ fn settings_changes_correction_and_recomputes() {
     assert!(
         after > before,
         "Wahl raises body shear vs the Bergsträsser default at C=10"
+    );
+}
+
+/// Snapshot the app's current render via `Simulator::snapshot`, hash it with
+/// `Snapshot::matches_hash` (which writes `<dir>/<stem>-<renderer>.sha256`
+/// since no file exists there yet, and — per its doc comment — always
+/// returns `Ok(true)` on that first write), then read the written hash back
+/// so the caller can compare two renders directly. This is a differential
+/// pin: no golden file is stored in the repo, just a scratch directory the
+/// caller creates and removes around a pair of these calls.
+///
+/// The hash-file lookup below matches by `starts_with(stem)`, not exact
+/// equality — so within one `dir`, future snapshot stems must not be
+/// prefixes of one another (e.g. `"a"` and `"ab"`), or the lookup can find
+/// the wrong file depending on `read_dir`'s unspecified iteration order.
+fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &str) -> String {
+    let mut sim = ui(app);
+    let snapshot = sim
+        .snapshot(theme)
+        .unwrap_or_else(|e| panic!("headless snapshot failed for {stem:?}: {e}"));
+    let base = dir.join(stem);
+    assert!(
+        snapshot
+            .matches_hash(&base)
+            .unwrap_or_else(|e| panic!("hash write/compare failed for {stem:?}: {e}")),
+        "the first write of a hash file always reports a match"
+    );
+    let hash_file = fs::read_dir(dir)
+        .expect("read temp snapshot dir")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy().into_owned();
+            name.starts_with(stem) && name.ends_with(".sha256")
+        })
+        .unwrap_or_else(|| panic!("no hash file written for stem {stem:?}"));
+    fs::read_to_string(hash_file.path()).expect("read hash file")
+}
+
+/// Differential snapshot pin for `widgets::segmented_style`'s selection
+/// highlight. The Settings screen with the default Bergsträsser correction
+/// selected vs. after `Message::SetCorrection(Wahl)` differs ONLY in which
+/// option button is highlighted — same screen, same text, same layout, same
+/// widget tree shape. There is no stored golden image/hash here (see
+/// `snapshot_hash`); the two renders are hashed and compared to each other
+/// directly. If they hash equal, the highlight isn't affecting pixels at
+/// all — exactly the mutant (`segmented_style` ignoring its `selected`
+/// parameter) that survived the Task 4 revert-probe because no test could
+/// observe rendered style before this one.
+#[test]
+fn segmented_selection_highlight_renders_differently() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser
+    );
+
+    let dir = env::temp_dir().join(format!(
+        "openspringmaker-segmented-selection-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let theme = app.theme();
+    let hash_bergstrasser = snapshot_hash(&app, &theme, &dir, "bergstrasser");
+
+    app.update(Message::SetCorrection(
+        springcore::CurvatureCorrection::Wahl,
+    ));
+    assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
+
+    let hash_wahl = snapshot_hash(&app, &theme, &dir, "wahl");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        hash_bergstrasser, hash_wahl,
+        "the Settings screen rendered identically for Bergsträsser and Wahl; \
+         the only visual difference between these two app states is which \
+         segmented option button `segmented_style` highlights, so equal \
+         renders mean the selection styling is dead"
     );
 }
 
@@ -872,18 +979,27 @@ fn type_into_con(app: &mut App, field: crate::conical::form::Field, text: &str) 
     }
 }
 
+/// Drive the shared conical fixture (wire 2, large/small mean dia 20/12,
+/// 10 active coils, free length 60, loads "10, 25") used by every inline
+/// conical E2E test below — collapses five byte-identical drive blocks.
+/// Mirrors `probe_solve_extension`/`probe_solve_torsion`: the caller selects
+/// the Conical tab first.
+fn probe_solve_conical(app: &mut App) {
+    use crate::conical::form::Field as CF;
+    type_into_con(app, CF::WireDia, "2");
+    type_into_con(app, CF::LargeMeanDia, "20");
+    type_into_con(app, CF::SmallMeanDia, "12");
+    type_into_con(app, CF::Active, "10");
+    type_into_con(app, CF::FreeLength, "60");
+    type_into_con(app, CF::Loads, "10, 25");
+    assert!(app.con_outcome.is_some(), "conical fixture must solve");
+}
+
 #[test]
 fn conical_e2e_solve_renders_results_and_footer() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
-    assert!(app.con_outcome.is_some(), "solve must succeed");
+    probe_solve_conical(&mut app);
     assert!(shows(&app, "Geometry"));
     assert!(shows(&app, "Large end OD"));
     assert!(
@@ -896,8 +1012,8 @@ fn conical_e2e_solve_renders_results_and_footer() {
 }
 
 /// The linear-model footer must NOT appear in the Empty state (no inputs).
-/// Revert-probe: temporarily add `render_linear_model_footer()` to the Empty
-/// arm → test FAILS → restore → green.
+/// Revert-probe: temporarily add `divided_note(pal, CON_LINEAR_MODEL_NOTE)` to
+/// the Empty arm → test FAILS → restore → green.
 #[test]
 fn conical_footer_absent_in_empty_state() {
     let mut app = test_app();
@@ -918,16 +1034,9 @@ fn conical_footer_absent_in_empty_state() {
 
 #[test]
 fn conical_save_load_round_trip() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
-    assert!(app.con_outcome.is_some(), "fixture must solve before save");
+    probe_solve_conical(&mut app);
 
     // Mirror the torsion round-trip's temp-file + save_to/load_from idiom exactly.
     let dir = std::env::temp_dir().join(format!("osm_con_e2e_{}", std::process::id()));
@@ -1222,18 +1331,11 @@ fn torsion_chart_renders_after_solve() {
 /// Conical: drive the same design as `conical_e2e_solve_renders_results_and_footer`.
 #[test]
 fn conical_chart_renders_after_solve() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
 
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
+    probe_solve_conical(&mut app);
 
-    assert!(app.con_outcome.is_some(), "solve must succeed");
     assert!(
         shows(&app, "Geometry"),
         "results must be Populated for the placeholder-absence check to be meaningful"
@@ -1316,20 +1418,11 @@ fn fatigue_chart_only_when_computed() {
 /// rendered pane without disturbing the solved results or falling back to
 /// either placeholder in either direction.
 ///
-/// Note: this does NOT assert that the toggle's own "Chart"/"3D" radio labels
-/// render, despite that being queryable text on other controls in this app.
-/// Unlike `settings_view`'s correction picker (which deliberately renders
-/// `button(text(label))` — see its comment — specifically so
-/// `iced_test::Simulator` can locate it), the family views' chart/3D toggle
-/// uses iced's built-in `radio` widget directly. `iced_widget::radio::Radio`
-/// draws its label directly in `draw()` with no child `Text` widget and no
-/// `operate()` override, so it never feeds a `Candidate::Text` — the label is
-/// structurally undiscoverable via `Simulator::find`/`shows`. (Verified: an
-/// earlier version of this test asserted `shows(&app, "Chart")` and failed
-/// even though the toggle renders correctly.) Making the toggle control
-/// itself queryable would require swapping every family's `radio` for a
-/// `button`-based look-alike — a real UI behavior change across five view
-/// files, out of this task's scope and requiring its own review.
+/// The toggle's own "Chart"/"3D" labels are now real `text()` children of the
+/// shared `segmented` widget (Task 4), so — unlike the previous single-select
+/// widget it replaced — both labels are queryable via `Simulator::find`/`shows`
+/// in either selection state; this test pins that directly instead of only
+/// inferring it from placeholder absence.
 #[test]
 fn visual_toggle_swaps_chart_for_3d() {
     let mut app = test_app();
@@ -1339,6 +1432,10 @@ fn visual_toggle_swaps_chart_for_3d() {
     type_into(&mut app, Field::FreeLength, "60");
     type_into(&mut app, Field::Loads, "10, 30");
     assert!(app.outcome.is_some(), "fixture must solve before toggling");
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must render before any selection is made"
+    );
 
     // Switch to the 3D visual: neither placeholder appears, and the
     // populated-proof label survives the swap.
@@ -1356,6 +1453,10 @@ fn visual_toggle_swaps_chart_for_3d() {
         shows(&app, "Spring rate"),
         "the results panel must remain populated while the 3D visual is shown"
     );
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must remain queryable while 3D is selected"
+    );
 
     // Switch back to Chart: symmetric — no placeholder, results still shown.
     app.update(Message::Visual(VisualMode::Chart));
@@ -1367,6 +1468,10 @@ fn visual_toggle_swaps_chart_for_3d() {
     assert!(
         shows(&app, "Spring rate"),
         "the results panel must remain populated after switching back to Chart"
+    );
+    assert!(
+        shows(&app, "Chart") && shows(&app, "3D"),
+        "both toggle labels must remain queryable while Chart is selected"
     );
 }
 
@@ -1407,157 +1512,134 @@ fn orbit_message_rerenders_without_disturbing_results() {
     );
 }
 
-/// Every family must render a real 3D scene (not the placeholder) once its
+/// Compression must render a real 3D scene (not the placeholder) once its
 /// design solves and the user switches to the Spring3d visual — the same
 /// non-vacuous double pin (populated-proof label + placeholder absence) as
-/// the `*_chart_renders_after_solve` family, reusing each one's drive
+/// the `compression_chart_renders_after_solve` test, reusing the drive
 /// sequence verbatim.
 #[test]
-fn every_family_renders_3d_after_solve() {
-    // Compression.
+fn compression_renders_3d_after_solve() {
     let mut app = test_app();
-    type_into(&mut app, Field::WireDia, "2.0");
-    type_into(&mut app, Field::MeanDia, "20.0");
-    type_into(&mut app, Field::Active, "10");
-    type_into(&mut app, Field::FreeLength, "60");
-    type_into(&mut app, Field::Loads, "10, 30");
+    probe_solve_compression(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
-    assert!(
-        shows(&app, "Spring rate"),
-        "compression: results must be Populated"
-    );
+    assert!(shows(&app, "Spring rate"), "results must be Populated");
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
-        "compression: a solved design must render a real 3D scene"
+        "a solved design must render a real 3D scene"
     );
+}
 
-    // Extension.
+/// Extension must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `ext_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn extension_renders_3d_after_solve() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));
-    type_into_ext(&mut app, ExtField::WireDia, "2.0");
-    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
-    type_into_ext(&mut app, ExtField::Active, "10");
-    type_into_ext(&mut app, ExtField::FreeLength, "60");
-    type_into_ext(&mut app, ExtField::InitialTension, "10");
-    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+    probe_solve_extension(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
     assert!(
         matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
-        "extension: results must be Populated"
+        "results must be Populated"
     );
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
-        "extension: a solved design must render a real 3D scene"
+        "a solved design must render a real 3D scene"
     );
+}
 
-    // Torsion.
-    {
-        use crate::torsion::form::Field as TF;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(Family::Torsion));
-        type_into_tor(&mut app, TF::WireDia, "2");
-        type_into_tor(&mut app, TF::MeanDia, "20");
-        type_into_tor(&mut app, TF::BodyCoils, "5");
-        type_into_tor(&mut app, TF::Leg1, "0");
-        type_into_tor(&mut app, TF::Leg2, "0");
-        type_into_tor(&mut app, TF::Moments, "1000");
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(app.tor_outcome.is_some(), "torsion: design must solve");
-        assert!(
-            shows(&app, "Geometry"),
-            "torsion: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "torsion: a solved design must render a real 3D scene"
-        );
-    }
+/// Torsion must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `torsion_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn torsion_renders_3d_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(app.tor_outcome.is_some(), "design must solve");
+    assert!(shows(&app, "Geometry"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
+}
 
-    // Conical.
-    {
-        use crate::conical::form::Field as CF;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(Family::Conical));
-        type_into_con(&mut app, CF::WireDia, "2");
-        type_into_con(&mut app, CF::LargeMeanDia, "20");
-        type_into_con(&mut app, CF::SmallMeanDia, "12");
-        type_into_con(&mut app, CF::Active, "10");
-        type_into_con(&mut app, CF::FreeLength, "60");
-        type_into_con(&mut app, CF::Loads, "10, 25");
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(app.con_outcome.is_some(), "conical: solve must succeed");
-        assert!(
-            shows(&app, "Geometry"),
-            "conical: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "conical: a solved design must render a real 3D scene"
-        );
-    }
+/// Conical must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `conical_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn conical_renders_3d_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    probe_solve_conical(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(shows(&app, "Geometry"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
+}
 
-    // Assembly.
-    {
-        use crate::assembly::form::MemberField as F;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(springcore::Family::Assembly));
-        type_into_asm_member(&mut app, 0, F::WireDia, "2");
-        type_into_asm_member(&mut app, 0, F::MeanDia, "20");
-        type_into_asm_member(&mut app, 0, F::Active, "10");
-        type_into_asm_member(&mut app, 0, F::FreeLength, "60");
-        app.update(Message::AsmMemberAdd);
-        type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
-        type_into_asm_member(&mut app, 1, F::MeanDia, "16");
-        type_into_asm_member(&mut app, 1, F::Active, "8");
-        type_into_asm_member(&mut app, 1, F::FreeLength, "60");
-        app.update(Message::AsmLoads("10, 25".into()));
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(
-            app.asm_outcome.is_some(),
-            "assembly: two-member assembly must solve"
-        );
-        assert!(
-            shows(&app, "Summary"),
-            "assembly: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "assembly: a solved design must render a real 3D scene"
-        );
-    }
+/// Assembly must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `assembly_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn assembly_renders_3d_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+    probe_solve_assembly(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(app.asm_outcome.is_some(), "two-member assembly must solve");
+    assert!(shows(&app, "Summary"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
 }
 
 /// CRITICAL reproduction (panel R2, item 1): a body-coil count past the
 /// helix render cap (`MAX_RENDER_TURNS` = 2000) is plain positive form
 /// input — "2001" solves fine — but the capped sampler returns an EMPTY
-/// body. Toggling to Spring3d must surface the 3D placeholder, not panic
-/// inside `view()` indexing `polylines[0].points[0]` on the empty body.
+/// body. Toggling to Spring3d must surface the CAPPED 3D placeholder (this
+/// is valid input hitting a renderer limit, not a bad-input case), not
+/// panic inside `view()` indexing `polylines[0].points[0]` on the empty body.
 #[test]
 fn torsion_capped_body_coils_shows_placeholder_not_panic() {
-    use crate::torsion::form::Field as TF;
-    let mut app = test_app();
-    app.update(Message::SelectFamily(Family::Torsion));
-    type_into_tor(&mut app, TF::WireDia, "2");
-    type_into_tor(&mut app, TF::MeanDia, "20");
-    type_into_tor(&mut app, TF::BodyCoils, "2001");
-    type_into_tor(&mut app, TF::Leg1, "0");
-    type_into_tor(&mut app, TF::Leg2, "0");
-    type_into_tor(&mut app, TF::Moments, "1000");
-    assert!(
-        app.tor_outcome.is_some(),
-        "2001 body coils is valid input and must solve"
-    );
+    let mut app = probe_solve_torsion_with_body_coils("2001");
 
     app.update(Message::Visual(VisualMode::Spring3d));
 
     assert!(
-        shows(&app, SCENE_PLACEHOLDER),
-        "a capped (empty) coil body must show the 3D placeholder"
+        shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "a capped (empty) coil body must show the capped-wording 3D placeholder"
     );
     assert!(
         shows(&app, "Geometry"),
         "the results panel must stay populated — only the 3D slot degrades"
     );
+}
+
+/// The capped-coils wording must name the RENDER LIMIT, not imply the
+/// design's inputs are bad — "2001" body coils is valid, solved input; only
+/// the renderer's `MAX_RENDER_TURNS` self-defense caps it. Companion to
+/// `torsion_capped_body_coils_shows_placeholder_not_panic` (content pin,
+/// not a duplicate — that test also asserts the results panel stays
+/// populated).
+#[test]
+fn capped_torsion_names_the_render_limit_not_bad_inputs() {
+    let mut app = probe_solve_torsion_with_body_coils("2001");
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(shows_containing(&app, "renderable 3D limit"));
+    assert!(!shows_containing(&app, "check inputs"));
 }
 
 /// When a compression design's chart becomes degenerate (rate=0, making
@@ -1672,15 +1754,9 @@ fn torsion_spring3d_arm_dispatches_scene_not_chart() {
 /// Spring3d mode — scene dispatch and validity, per the compression template.
 #[test]
 fn conical_spring3d_arm_dispatches_scene_not_chart() {
-    use crate::conical::form::Field as CF;
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Conical));
-    type_into_con(&mut app, CF::WireDia, "2");
-    type_into_con(&mut app, CF::LargeMeanDia, "20");
-    type_into_con(&mut app, CF::SmallMeanDia, "12");
-    type_into_con(&mut app, CF::Active, "10");
-    type_into_con(&mut app, CF::FreeLength, "60");
-    type_into_con(&mut app, CF::Loads, "10, 25");
+    probe_solve_conical(&mut app);
 
     assert!(
         !shows(&app, CHART_PLACEHOLDER),
@@ -1772,10 +1848,25 @@ fn probe_solve_extension(app: &mut App) {
 /// Drive the torsion fixture used by the shipped 3D pins (the caller
 /// selects the Torsion tab first, mirroring the other probe helpers).
 fn probe_solve_torsion(app: &mut App) {
+    probe_solve_torsion_with_coils(app, "5");
+}
+
+/// Generalizes `probe_solve_torsion` over the body-coil count, so capped
+/// (`"2001"`, past `MAX_RENDER_TURNS`) and ordinary (`"5"`) fixtures share
+/// one field-filling implementation. Selects the Torsion tab itself and
+/// returns a ready `App`, since every current caller needs a fresh instance.
+fn probe_solve_torsion_with_body_coils(coils: &str) -> App {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion_with_coils(&mut app, coils);
+    app
+}
+
+fn probe_solve_torsion_with_coils(app: &mut App, coils: &str) {
     use crate::torsion::form::Field as TF;
     type_into_tor(app, TF::WireDia, "2");
     type_into_tor(app, TF::MeanDia, "20");
-    type_into_tor(app, TF::BodyCoils, "5");
+    type_into_tor(app, TF::BodyCoils, coils);
     type_into_tor(app, TF::Leg1, "0");
     type_into_tor(app, TF::Leg2, "0");
     type_into_tor(app, TF::Moments, "1000");
@@ -2155,6 +2246,17 @@ fn probe_fatigue_region_renders_in_both_visual_modes() {
     }
 }
 
+/// Torsion's hero readout must render under its canonical "Angular rate"
+/// label (compression's hero is "Spring rate" — each family's hero label is
+/// distinct and threaded through `render_governing_rate`).
+#[test]
+fn torsion_shows_the_angular_rate_hero() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion(&mut app);
+    assert!(shows(&app, "Angular rate"));
+}
+
 /// API-contract: `Message::Visual` must be a pure mode flip — it must not
 /// clear `action_error` (no recompute) and must not clear a solve error.
 #[test]
@@ -2217,4 +2319,270 @@ fn probe_units_toggle_in_3d_stays_solved_when_valid_both_ways() {
         "the 3D scene re-renders from the re-solved US design"
     );
     assert!(shows(&app, "Spring rate"), "populated panel under US units");
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 4: shared `segmented` control — every single-select cluster now
+// renders real `text()` labels, so (unlike the previous per-screen widgets
+// they replaced) these are clickable by label through the Simulator, exactly
+// like the settings correction picker already was.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The units toggle (calculator footer) must be clickable by its own label,
+/// not just settable via `Message::Units` directly.
+#[test]
+fn units_toggle_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(app.unit_system, UnitSystem::Metric, "default is Metric");
+    click(&mut app, "US (in, lbf)");
+    assert_eq!(app.unit_system, UnitSystem::Us);
+}
+
+/// The chart/3D visual toggle must be clickable by its own label ("3D"),
+/// which the previous widget it replaced structurally could not offer (see
+/// the doc comment on `visual_toggle_swaps_chart_for_3d`).
+#[test]
+fn visual_toggle_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    click(&mut app, "3D");
+    assert_eq!(app.results_visual, VisualMode::Spring3d);
+    assert!(!shows(&app, CHART_PLACEHOLDER) && !shows(&app, SCENE_PLACEHOLDER));
+}
+
+/// The extension hook-mode toggle must be clickable by its own label.
+#[test]
+fn hook_mode_switches_by_clicking_the_label() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    probe_solve_extension(&mut app);
+    click(&mut app, "Custom radii");
+    assert_eq!(app.extension.hook_mode, HookMode::Custom);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 5: family tab row replaces the header `pick_list` — all five families
+// render as a `segmented` control, so (unlike the pick_list it replaced, whose
+// menu labels are only real widgets once opened) they're all simultaneously
+// visible and clickable by label, same idiom as Task 4's toggles.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The family tab row must be clickable by its own label, not just settable via
+/// `Message::SelectFamily` directly — and all five tabs must render at once
+/// (the demo-breadth requirement the pick_list couldn't satisfy).
+#[test]
+fn family_tab_row_switches_family_by_clicking_the_label() {
+    let mut app = test_app();
+    click(&mut app, "Torsion");
+    assert_eq!(app.family, Family::Torsion);
+    for name in ["Compression", "Extension", "Torsion", "Conical", "Assembly"] {
+        assert!(shows(&app, name), "tab {name} must be visible");
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Panel R1 item 1: re-clicking an already-selected segmented/settings option
+// must be a no-op. Every option in `segmented` (and the settings screen's own
+// prose-button loop) previously attached `.on_press` unconditionally — even to
+// the already-selected option — so clicking it still dispatched a same-valued
+// message. Every one of those handlers unconditionally returns `true` (or, for
+// settings, unconditionally clears `settings_error`), which drives
+// `App::update` to call `recompute()` — and `recompute()` unconditionally
+// clears `action_error` (app.rs:345), erasing a save-failure status though
+// nothing actually changed. Fix: only attach `.on_press` when the option is
+// NOT already selected, so a re-click produces zero messages.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Re-clicking the already-selected family tab must not clear a stale
+/// `action_error` — nothing changed, so nothing should recompute.
+#[test]
+fn family_tab_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(
+        app.family,
+        Family::Compression,
+        "default family is Compression"
+    );
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Compression");
+    assert_eq!(app.family, Family::Compression);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected family tab must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected units option must not clear a stale
+/// `action_error`.
+#[test]
+fn units_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(app.unit_system, UnitSystem::Metric, "default is Metric");
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Metric (mm, N)");
+    assert_eq!(app.unit_system, UnitSystem::Metric);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected units option must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected hook-mode option must not clear a stale
+/// `action_error`.
+#[test]
+fn hook_mode_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    probe_solve_extension(&mut app);
+    assert_eq!(
+        app.extension.hook_mode,
+        HookMode::Default,
+        "default hook mode is Default"
+    );
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Default (machine loops)");
+    assert_eq!(app.extension.hook_mode, HookMode::Default);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected hook mode must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected settings correction option must not clear
+/// a stale `action_error` — the settings screen's own prose-button loop (not
+/// the shared `segmented` widget) needs the same guard. Only exercised while
+/// no save is failing (`settings_error` is `None`): panel R2 item 2 adds a
+/// deliberate exception to this no-op contract when a save IS failing — see
+/// `settings_correction_reclick_retries_after_a_failed_save` below.
+#[test]
+fn settings_correction_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "test_app's fixed default correction is Bergstrasser"
+    );
+    app.action_error = Some("sentinel".into());
+    assert!(
+        app.settings_error.is_none(),
+        "pre-condition: no save is currently failing"
+    );
+    click(&mut app, "Bergsträsser (EN 13906-1 / Shigley default)");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser
+    );
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected correction option must not recompute \
+         while no save is failing"
+    );
+}
+
+/// Panel R2 item 2: `SetCorrection` performs a real file write
+/// (`AppSettings::save_to`), and a FAILED write must remain retryable from
+/// this screen even though the value shown is already "selected" — the
+/// no-op guard above is deliberately relaxed while `settings_error` is Some
+/// (settings_view.rs's button loop attaches `.on_press` to the selected
+/// option in that case). This is the discriminating half: only the RETRY
+/// click goes through the Simulator (view-driven), so a guard that never
+/// attaches `.on_press` on failure makes the click a no-op and this test
+/// fails to observe recovery.
+/// Revert-probe: drop the `|| app.settings_error.is_some()` clause from
+/// settings_view.rs's guard → the selected button gets no `.on_press` even
+/// on failure → the retry click below emits zero messages → `settings_error`
+/// stays `Some` → this test FAILS → restore → green.
+#[test]
+fn settings_correction_reclick_retries_after_a_failed_save() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "test_app's fixed default correction is Bergstrasser"
+    );
+
+    // Point settings_path at a location whose PARENT is a FILE (not a
+    // directory), so `save_to`'s `create_dir_all` fails deterministically —
+    // no reliance on filesystem permissions.
+    let bogus_parent = env::temp_dir().join(format!(
+        "osm-settings-retry-parent-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
+    app.settings_path = Some(bogus_parent.join("settings.toml"));
+
+    // Setup half: dispatch directly to seed the failure (only the RETRY
+    // below needs to be view-driven).
+    app.update(Message::SetCorrection(
+        springcore::CurvatureCorrection::Bergstrasser,
+    ));
+    assert!(
+        app.settings_error.is_some(),
+        "pre-condition: saving to an unwritable path must fail"
+    );
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "the in-memory preference still applies even though the save failed"
+    );
+
+    // Repoint at a writable temp directory, then click the SELECTED option
+    // through the Simulator.
+    let good_dir = env::temp_dir().join(format!(
+        "osm-settings-retry-good-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&good_dir).expect("create a writable temp dir");
+    app.settings_path = Some(good_dir.join("settings.toml"));
+
+    click(&mut app, "Bergsträsser (EN 13906-1 / Shigley default)");
+
+    assert!(
+        app.settings_error.is_none(),
+        "re-clicking the selected option after a failed save must retry and succeed"
+    );
+
+    fs::remove_file(&bogus_parent).ok();
+    fs::remove_dir_all(&good_dir).ok();
+}
+
+/// Wide-viewport pin for `screen_shell`'s nested max-width structure (panel R2
+/// item 4): at the suite's normal 1200px `VIEWPORT` the content cap and the
+/// viewport width coincide, so a regression to the single-container form
+/// (cap applied to the padded box, not the content — see `screen_shell`'s doc
+/// comment) is byte-identical there and unpinnable. At 1600px the two shapes
+/// diverge by exactly `SP_XL` (24px): measured directly, the "Results"
+/// heading renders at x = 652.0 on the correct nested shell vs x = 628.0 on
+/// the regressed single-container form.
+/// Revert-probe: collapse `screen_shell` back to
+/// `container(content).padding(SP_XL).max_width(CONTENT_MAX_W)` (one
+/// container instead of the nested `capped`/`padded` pair) → this test FAILS
+/// (measures 628.0, not 652.0) → restore → green.
+#[test]
+fn screen_shell_caps_content_not_padding_on_wide_windows() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    let size = iced::Size {
+        width: 1600.0,
+        height: 2400.0,
+    };
+    let mut sim = Simulator::with_size(Settings::default(), size, app.view());
+    let target = sim.find("Results").expect("Results heading must render");
+    assert_eq!(
+        target.bounds().x,
+        652.0,
+        "at a 1600px viewport the nested screen_shell must cap CONTENT at 1200px \
+         (Results heading at x=652), not the padded box (which would land at x=628)"
+    );
 }

@@ -4,19 +4,21 @@
 //! family's design and results panels. The active family is dispatched via
 //! [`App::family`]; the inner panels are supplied by the family's own view module.
 
-use iced::widget::{button, column, container, radio, row, scrollable, space, text};
-use iced::{Background, Element, Font, Length};
+use iced::widget::{button, column, row, space, text};
+use iced::{Element, Font, Length};
 
-use crate::app::{App, Message, Screen, C};
+use crate::app::{App, Message, Palette, Screen};
 use crate::presenter::{StatusKind, StatusLine};
 use crate::widgets::{
-    accent_button_style, ghost_button_style, nav_button_style, panel_container, section_divider,
-    section_heading, styled_pick_list, SZ_BODY, SZ_LABEL, SZ_TITLE,
+    accent_button_style, ghost_button_style, nav_button_style, panel_container, screen_shell,
+    section_divider, section_heading, segmented, COL_STATUS_PREFIX, HEADER_GAP, SP_LG, SP_MD,
+    SP_ROW, SP_SM, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
-use springcore::{Family, UnitSystem, ALL_FAMILIES};
+use springcore::{Family, UnitSystem};
 
 /// Build the complete Calculator screen UI.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let header = header(app);
     let (left, right) = match app.family {
         Family::Compression => (
@@ -41,31 +43,20 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         ),
     };
     let status = status_panel(app);
-    let footer = footer();
+    let footer = footer(app);
 
-    let header_divider = section_divider();
+    let header_divider = section_divider(pal);
 
     let content = column![
         header,
         header_divider,
-        row![left, right].spacing(16),
+        row![left, right].spacing(SP_LG),
         status,
         footer,
     ]
-    .spacing(16)
-    .max_width(1200);
+    .spacing(SP_LG);
 
-    let root = container(scrollable(
-        container(content).padding(24).width(Length::Fill),
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(Background::Color(C::INK)),
-        ..Default::default()
-    });
-
-    root.into()
+    screen_shell(pal, content, true)
 }
 
 // --------------------------------------------------------------------------
@@ -73,56 +64,45 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn header(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let app_name = text("OpenSpringmaker")
         .size(SZ_TITLE)
-        .color(C::ACCENT)
+        .color(pal.accent)
         .font(Font {
             weight: iced::font::Weight::Semibold,
             ..Font::DEFAULT
         });
 
-    let family_selector = container(styled_pick_list(
-        ALL_FAMILIES.to_vec(),
-        Some(app.family),
+    let family_tabs = segmented(
+        pal,
+        &[
+            ("Compression", Family::Compression),
+            ("Extension", Family::Extension),
+            ("Torsion", Family::Torsion),
+            ("Conical", Family::Conical),
+            ("Assembly", Family::Assembly),
+        ],
+        app.family,
         Message::SelectFamily,
-    ))
-    .width(Length::Fixed(180.0));
+    );
 
-    let unit_metric = radio(
-        "Metric (mm, N)",
-        UnitSystem::Metric,
-        Some(app.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let unit_us = radio(
-        "US (in, lbf)",
-        UnitSystem::Us,
-        Some(app.unit_system),
-        Message::Units,
-    )
-    .text_size(SZ_LABEL);
-
-    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(C::ACCENT))
+    let materials_btn = button(text("Materials →").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Materials))
-        .style(nav_button_style);
+        .style(nav_button_style(pal));
 
-    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(C::ACCENT))
+    let settings_btn = button(text("Settings →").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Settings))
-        .style(nav_button_style);
+        .style(nav_button_style(pal));
 
     row![
         app_name,
-        space().width(Length::Fixed(160.0)),
-        family_selector,
+        space().width(Length::Fixed(HEADER_GAP)),
+        family_tabs,
         space().width(Length::Fill),
         materials_btn,
         settings_btn,
-        unit_metric,
-        unit_us,
     ]
-    .spacing(16)
+    .spacing(SP_LG)
     .align_y(iced::Alignment::Center)
     .into()
 }
@@ -132,6 +112,7 @@ fn header(app: &App) -> Element<'_, Message> {
 // --------------------------------------------------------------------------
 
 fn status_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let lines = match app.family {
         Family::Compression => crate::compression::view_model::status_view(app),
         Family::Extension => crate::extension::view_model::ext_status_view(app),
@@ -144,30 +125,30 @@ fn status_panel(app: &App) -> Element<'_, Message> {
         return column![].into();
     }
 
-    let mut col = column![section_heading("Status")].spacing(6);
+    let mut col = column![section_heading(pal, "Status")].spacing(SP_ROW);
     for line in &lines {
-        col = col.push(render_status_line(line));
+        col = col.push(render_status_line(pal, line));
     }
 
-    panel_container(col)
+    panel_container(pal, col)
 }
 
-fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
+fn render_status_line(pal: &'static Palette, line: &StatusLine) -> Element<'static, Message> {
     let (prefix, color) = match line.kind {
-        StatusKind::ActionError => ("Error:", C::DANGER),
-        StatusKind::LoadWarning => ("Warning:", C::WARN),
-        StatusKind::Info => ("Info:", C::MUTED),
-        StatusKind::Caution => ("Caution:", C::WARN),
-        StatusKind::DesignWarning => ("Warning:", C::DANGER),
+        StatusKind::ActionError => ("Error:", pal.danger),
+        StatusKind::LoadWarning => ("Warning:", pal.warn),
+        StatusKind::Info => ("Info:", pal.muted),
+        StatusKind::Caution => ("Caution:", pal.warn),
+        StatusKind::DesignWarning => ("Warning:", pal.danger),
     };
     row![
         text(prefix)
             .size(SZ_LABEL)
             .color(color)
-            .width(Length::Fixed(72.0)),
+            .width(Length::Fixed(COL_STATUS_PREFIX)),
         text(line.text.clone()).size(SZ_LABEL).color(color),
     ]
-    .spacing(8)
+    .spacing(SP_SM)
     .into()
 }
 
@@ -175,14 +156,33 @@ fn render_status_line(line: &StatusLine) -> Element<'static, Message> {
 // Footer
 // --------------------------------------------------------------------------
 
-fn footer() -> Element<'static, Message> {
-    let save_btn = button(text("Save design").size(SZ_BODY).color(C::INK))
+fn footer(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
+    let save_btn = button(text("Save design").size(SZ_BODY).color(pal.ink))
         .on_press(Message::Save)
-        .style(accent_button_style);
+        .style(accent_button_style(pal));
 
-    let load_btn = button(text("Load design").size(SZ_BODY).color(C::TEXT))
+    let load_btn = button(text("Load design").size(SZ_BODY).color(pal.text))
         .on_press(Message::Load)
-        .style(ghost_button_style);
+        .style(ghost_button_style(pal));
 
-    row![save_btn, load_btn].spacing(12).into()
+    let units_toggle = segmented(
+        pal,
+        &[
+            ("Metric (mm, N)", UnitSystem::Metric),
+            ("US (in, lbf)", UnitSystem::Us),
+        ],
+        app.unit_system,
+        Message::Units,
+    );
+
+    row![
+        save_btn,
+        load_btn,
+        space().width(Length::Fill),
+        units_toggle
+    ]
+    .spacing(SP_MD)
+    .align_y(iced::Alignment::Center)
+    .into()
 }

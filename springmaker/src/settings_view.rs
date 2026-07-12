@@ -2,80 +2,43 @@
 //! No logic or branching; all rendering decisions live in `settings_view_model`.
 
 use iced::widget::{button, column, container, row, space, text};
-use iced::{Background, Border, Color, Element, Font, Length};
+use iced::{Element, Font, Length};
 
-use crate::app::{App, Message, Screen, C};
+use crate::app::{App, Message, Screen};
 use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
 use crate::widgets::{
-    nav_button_style, panel_container, section_divider, section_heading, SZ_BODY, SZ_LABEL,
-    SZ_TITLE,
+    nav_button_style, panel_container, screen_shell, section_divider, section_heading,
+    segmented_style, SP_LG, SP_MD, SP_SM, SZ_BODY, SZ_LABEL, SZ_TITLE,
 };
-
-/// Style for a correction-option row: highlighted when selected, muted when not.
-fn correction_option_style(
-    selected: bool,
-) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style {
-    move |_theme, status| {
-        let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
-        let bg_color = if selected {
-            Color {
-                r: C::ACCENT.r * 0.15,
-                g: C::ACCENT.g * 0.15,
-                b: C::ACCENT.b * 0.15,
-                a: 1.0,
-            }
-        } else if is_hovered {
-            Color {
-                r: C::RAISED.r + 0.05,
-                g: C::RAISED.g + 0.05,
-                b: C::RAISED.b + 0.05,
-                a: 1.0,
-            }
-        } else {
-            Color::TRANSPARENT
-        };
-        let border_color = if selected { C::ACCENT } else { C::LINE };
-        iced::widget::button::Style {
-            background: Some(Background::Color(bg_color)),
-            text_color: if selected { C::ACCENT } else { C::TEXT },
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: Default::default(),
-            snap: Default::default(),
-        }
-    }
-}
 
 /// Build the Settings screen.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let vm = SettingsViewModel::from_app(app);
 
-    let back_btn = button(text("\u{2190} Calculator").size(SZ_LABEL).color(C::ACCENT))
+    let back_btn = button(text("\u{2190} Calculator").size(SZ_LABEL).color(pal.accent))
         .on_press(Message::NavigateTo(Screen::Calculator))
-        .style(nav_button_style);
+        .style(nav_button_style(pal));
 
-    let title = text("Settings").size(SZ_TITLE).color(C::TEXT).font(Font {
+    let title = text("Settings").size(SZ_TITLE).color(pal.text).font(Font {
         weight: iced::font::Weight::Semibold,
         ..Font::DEFAULT
     });
 
     let header = row![title, space().width(Length::Fill), back_btn]
-        .spacing(16)
+        .spacing(SP_LG)
         .align_y(iced::Alignment::Center);
 
     // Build correction-option buttons. Each option emits SetCorrection on press;
-    // the presenter's `selected` flag drives visual differentiation. Using
-    // `button(text(label))` (rather than iced's `radio`) makes the label text a
-    // first-class `Candidate::Text` widget, which the iced_test Simulator can
-    // locate and click by label in headless tests.
+    // the presenter's `selected` flag drives visual differentiation via the
+    // shared `segmented_style` (Task 4). Full-width rows (rather than the
+    // shared `segmented` row widget) because option labels are long prose
+    // ("Bergsträsser (EN 13906-1 / Shigley default)"), not short chips.
     let mut options_col = column![
-        section_heading("Curvature-correction factor"),
-        section_divider(),
+        section_heading(pal, "Curvature-correction factor"),
+        section_divider(pal),
     ]
-    .spacing(8);
+    .spacing(SP_SM);
 
     // Extract save_feedback before consuming vm.options into option_data.
     let save_feedback = vm.save_feedback;
@@ -90,43 +53,42 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     for (value, label, selected) in option_data {
         let label_text = text(label).size(SZ_BODY);
-        let btn = button(label_text)
-            .on_press(Message::SetCorrection(value))
-            .style(correction_option_style(selected))
+        let mut btn = button(label_text)
+            .style(segmented_style(pal, selected))
             .width(Length::Fill)
-            .padding([8, 12]);
+            .padding([SP_SM, SP_MD]);
+        // The already-selected option normally gets no `.on_press` (same no-op
+        // guard as `widgets::segmented`): re-clicking it would dispatch
+        // `SetCorrection` with the same value for no visible reason. BUT
+        // `SetCorrection` also performs a real file write (`AppSettings::save_to`),
+        // and a FAILED write leaves the selected option as the one the user needs
+        // to retry — with no `.on_press`, a failed save could never be retried
+        // from this screen. So the no-op guard is relaxed specifically when a
+        // save is currently failing, keeping the selected button live for a
+        // one-click retry. Read via `save_feedback` (the ViewModel's own
+        // rendering of `app.settings_error`) rather than `app` directly — this
+        // is a humble view (ADR 0008): it may branch on presenter output, not
+        // reach past it into model state it's meant to be insulated from.
+        if !selected || save_feedback.is_some() {
+            btn = btn.on_press(Message::SetCorrection(value));
+        }
         options_col = options_col.push(btn);
     }
 
-    let correction_panel: Element<'_, Message> = container(panel_container(options_col))
+    let correction_panel: Element<'_, Message> = container(panel_container(pal, options_col))
         .width(Length::Fill)
         .into();
 
-    let mut content = column![header, section_divider(), correction_panel]
-        .spacing(16)
-        .max_width(800);
+    let mut content = column![header, section_divider(pal), correction_panel].spacing(SP_LG);
 
     // Surface a settings-save error below the correction panel (spec §5).
     // The in-memory preference still applies regardless of this status.
     if let Some(fb) = save_feedback {
         let color = match fb.kind {
-            SettingsFeedbackKind::Error => C::DANGER,
+            SettingsFeedbackKind::Error => pal.danger,
         };
         content = content.push(text(fb.text).size(SZ_LABEL).color(color));
     }
 
-    let root = container(
-        container(content)
-            .padding(24)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(Background::Color(C::INK)),
-        ..Default::default()
-    });
-
-    root.into()
+    screen_shell(pal, content, true)
 }

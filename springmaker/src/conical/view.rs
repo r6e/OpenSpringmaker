@@ -5,7 +5,7 @@
 use iced::widget::{column, container, text};
 use iced::{Element, Length};
 
-use crate::app::{App, Message, C};
+use crate::app::{App, Message, Palette};
 use crate::conical::form::Field;
 use crate::conical::view_model::{
     con_inputs_view, con_results_view, ConPopulatedResults, ConResultsView, CON_LINEAR_MODEL_NOTE,
@@ -13,9 +13,10 @@ use crate::conical::view_model::{
 use crate::picker::{find_by_key, END_TYPES};
 use crate::presenter::LoadTable;
 use crate::widgets::{
-    field_label, labeled_input, material_picker, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    divided_note, emphasis_color, field_label, labeled_input, material_picker, panel_container,
+    render_governing_rate, results_empty, results_error, rows_section, section_divider,
+    section_heading, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW, SP_XS,
+    SZ_CAPTION, SZ_LABEL,
 };
 use iced::widget::row;
 use iced::Font;
@@ -27,26 +28,28 @@ use iced::Font;
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
     use crate::picker::KeyLabel;
 
+    let pal = app.pal();
     let selected_end = find_by_key(END_TYPES, &app.conical.end_type).copied();
 
     let setup_group = column![
-        section_heading("Setup"),
+        section_heading(pal, "Setup"),
         material_picker(app),
         column![
-            field_label("End type"),
-            styled_pick_list(END_TYPES, selected_end, |kl: KeyLabel| {
+            field_label(pal, "End type"),
+            styled_pick_list(pal, END_TYPES, selected_end, |kl: KeyLabel| {
                 Message::ConEndType(kl.key.to_string())
             }),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     let inputs = con_inputs_view(app);
-    let mut inputs_col = column![section_heading("Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
+            pal,
             &fd.label,
             con_field_value(&app.conical, field),
             con_field_id(field),
@@ -54,9 +57,9 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
         ));
     }
 
-    let inner = column![setup_group, section_divider(), inputs_col].spacing(16);
+    let inner = column![setup_group, section_divider(pal), inputs_col].spacing(SP_LG);
 
-    container(panel_container(inner))
+    container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -90,10 +93,11 @@ pub(crate) fn con_field_id(field: Field) -> &'static str {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let us = app.unit_system;
     let content: Element<'_, Message> = match con_results_view(app) {
-        ConResultsView::Error(msg) => results_error(msg),
-        ConResultsView::Empty => results_empty(),
+        ConResultsView::Error(msg) => results_error(pal, msg),
+        ConResultsView::Empty => results_empty(pal),
         ConResultsView::Populated(p) => {
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
@@ -108,20 +112,22 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("ConResultsView::Populated implies app.con_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::conical::plot_model::conical_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::conical::scene_model::conical_scene(&outcome.design),
                     app.orbit,
                 ),
             };
-            let toggle = visual_toggle(app.results_visual);
+            let toggle = visual_toggle(pal, app.results_visual);
 
-            render_populated(&p, toggle, visual)
+            render_populated(pal, &p, toggle, visual)
         }
     };
 
-    container(panel_container(content))
+    container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -131,108 +137,99 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 /// calculator's shared status panel (as siblings do — see
 /// `calculator::status_panel`).
 fn render_populated<'a>(
+    pal: &'static Palette,
     p: &ConPopulatedResults,
     toggle: Element<'a, Message>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     column![
-        section_heading("Results"),
-        section_divider(),
-        render_governing_rate(&p.governing_rate),
-        section_divider(),
-        rows_section("Geometry", &p.geometry),
-        section_divider(),
-        render_con_load_table(&p.load_table),
-        section_divider(),
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Spring rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_con_load_table(pal, &p.load_table),
+        section_divider(pal),
         toggle,
         visual,
-        render_linear_model_footer(),
+        divided_note(pal, CON_LINEAR_MODEL_NOTE),
     ]
-    .spacing(6)
+    .spacing(SP_ROW)
     .into()
 }
 
 /// The load-point table. Mirrors compression's `render_load_table` exactly.
-fn render_con_load_table(lt: &LoadTable) -> Element<'static, Message> {
-    let mut load_col = column![section_heading("Load points")].spacing(4);
+fn render_con_load_table(pal: &'static Palette, lt: &LoadTable) -> Element<'static, Message> {
+    let mut load_col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     load_col = load_col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Deflection")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Length")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Stress ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%MTS")
+            text("% MTS")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
+        let stress_color = emphasis_color(pal, lp.stress_emphasis);
         let load_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.deflection.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.length.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.stress.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(stress_color)
                 .width(Length::FillPortion(2)),
             text(lp.pct_mts.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(stress_color)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
         load_col = load_col.push(load_row);
     }
 
     load_col.into()
-}
-
-/// The always-present linear-model disclosure footer.
-/// Mirrors compression's `render_fatigue` Note arm idiom exactly.
-fn render_linear_model_footer() -> Element<'static, Message> {
-    column![
-        section_divider(),
-        text(CON_LINEAR_MODEL_NOTE).size(SZ_LABEL).color(C::MUTED),
-    ]
-    .spacing(8)
-    .into()
 }

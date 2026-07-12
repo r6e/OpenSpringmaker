@@ -5,8 +5,8 @@
 
 use crate::form_helpers::MM_PER_M;
 use springcore::{
-    Angle, AngularRate, Force, Length, Moment, Severity, SpringRate, StatusMessage, Stress,
-    UnitSystem,
+    Angle, AngularRate, Force, Length, Material, Moment, Severity, SpringRate, StatusMessage,
+    Stress, UnitSystem,
 };
 
 // ── Results panel ───────────────────────────────────────────────────────────
@@ -62,6 +62,33 @@ pub(crate) struct LoadRow {
     pub length: String,
     pub stress: String,
     pub pct_mts: String,
+    /// Danger exactly when the engine's own overstress check
+    /// (`springcore::design::evaluate_status`) would warn on this point — see
+    /// [`overstress_emphasis`]. Assembly-level rows (no per-load stress) always
+    /// carry `Normal`.
+    pub stress_emphasis: Emphasis,
+}
+
+/// Danger emphasis exactly when the engine calls this load point overstressed:
+/// `pct_mts` past the material's allowable fraction of MTS
+/// (`Material::allowable_pct_torsion`) — the same field and the same strict
+/// `>` that `evaluate_status` warns against in compression, conical, and
+/// per-member assembly status checks (an exact match at the allowable is not
+/// overstressed, matching the engine). NOT `pct_mts > 1.0`: that's stress vs.
+/// MTS, a different (and looser) severity than the allowable-normalized
+/// fractions torsion/extension already use.
+///
+/// `material: None` is the "material name failed to resolve" race the conical
+/// precedent documents as unreachable in practice (a solved outcome means the
+/// material already resolved during that solve); it falls back to the prior
+/// `> 1.0` rule rather than guessing.
+pub(crate) fn overstress_emphasis(pct_mts: f64, material: Option<&Material>) -> Emphasis {
+    let allowable = material.map_or(1.0, |m| m.allowable_pct_torsion);
+    if pct_mts > allowable {
+        Emphasis::Danger
+    } else {
+        Emphasis::Normal
+    }
 }
 
 /// The load-points table: a stress-unit header label plus per-point rows.
@@ -253,6 +280,17 @@ pub(crate) fn common_status_lines(app: &crate::app::App) -> Vec<StatusLine> {
     lines
 }
 
+/// Resolve `app.material` against `app.materials`. A present outcome means
+/// `app.material` already resolved during that solve (the conical
+/// precedent); `.ok()` degrades gracefully rather than panicking on the
+/// documented-unreachable race where it no longer does (see
+/// `con_status_view`). Shared by compression's and conical's single-material
+/// `populated_results`; assembly's per-member lookup stays separate (each
+/// member names its own material).
+pub(crate) fn resolved_material(app: &crate::app::App) -> Option<&Material> {
+    app.materials.get(&app.material).ok()
+}
+
 // ── Hero rate readout ────────────────────────────────────────────────────────
 
 /// The hero spring-rate readout (label is constant in the view).
@@ -438,5 +476,58 @@ mod tests {
         assert_eq!(fmt_row_value(1e6, 2), "1.000e6");
         assert_eq!(fmt_row_value(1e300, 2), "1.000e300");
         assert_eq!(fmt_row_value(-2.5e9, 2), "-2.500e9");
+    }
+
+    // ── overstress_emphasis ──────────────────────────────────────────────────
+
+    fn music_wire() -> springcore::Material {
+        springcore::MaterialSet::load_default()
+            .get("Music Wire")
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn overstress_emphasis_below_allowable_is_normal() {
+        let m = music_wire();
+        assert_eq!(
+            overstress_emphasis(0.44, Some(&m)),
+            Emphasis::Normal,
+            "Music Wire's allowable_pct_torsion is 0.45"
+        );
+    }
+
+    /// Exactly at the allowable is not overstressed — mirrors the engine's own
+    /// strict `>` (design.rs's `pct_mts == allowable` boundary test).
+    #[test]
+    fn overstress_emphasis_exactly_at_allowable_is_normal() {
+        let m = music_wire();
+        assert_eq!(
+            overstress_emphasis(m.allowable_pct_torsion, Some(&m)),
+            Emphasis::Normal
+        );
+    }
+
+    /// The gap the whole fix is about: above the allowable but still under
+    /// 100% MTS — the old `pct_mts > 1.0` rule missed this entirely.
+    #[test]
+    fn overstress_emphasis_above_allowable_below_mts_is_danger() {
+        let m = music_wire();
+        assert_eq!(overstress_emphasis(0.72, Some(&m)), Emphasis::Danger);
+    }
+
+    #[test]
+    fn overstress_emphasis_above_mts_is_danger() {
+        let m = music_wire();
+        assert_eq!(overstress_emphasis(1.5, Some(&m)), Emphasis::Danger);
+    }
+
+    /// Unresolvable material name (the documented-unreachable race): falls
+    /// back to the prior `> 1.0` rule rather than guessing.
+    #[test]
+    fn overstress_emphasis_missing_material_falls_back_to_mts_threshold() {
+        assert_eq!(overstress_emphasis(0.72, None), Emphasis::Normal);
+        assert_eq!(overstress_emphasis(1.0, None), Emphasis::Normal);
+        assert_eq!(overstress_emphasis(1.01, None), Emphasis::Danger);
     }
 }

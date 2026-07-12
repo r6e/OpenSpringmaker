@@ -3,6 +3,9 @@
 //! cannot drift; the letterbox composes widget↔bitmap coordinates on top.
 
 use super::{CHART_H, CHART_W, MARGIN, X_LABEL_AREA, Y_LABEL_AREA};
+use iced::widget::canvas::Frame;
+use iced::widget::image;
+use iced::{Point, Rectangle, Size};
 
 /// Floor applied to the letterbox scale so a transient zero/degenerate widget
 /// bounds (iced may report these for a single layout pass) can never divide
@@ -95,6 +98,21 @@ impl Letterbox {
             by * self.scale + self.offset_y,
         )
     }
+}
+
+/// Draw the pre-rendered `CHART_W`×`CHART_H` bitmap into `frame`, letterboxed
+/// per `lb`. Shared by `ChartCanvas::draw` and `OrbitCanvas::draw` — the only
+/// difference between the two draw calls was which bitmap handle they drew,
+/// so the frame+letterbox+draw_image block is extracted here rather than
+/// kept as two copies that could silently drift apart. Takes `&Letterbox`
+/// (not the raw widget bounds) so `ChartCanvas` can keep reusing its own
+/// `lb` afterward for the hover-crosshair overlay.
+pub(crate) fn draw_letterboxed_bitmap(frame: &mut Frame, lb: &Letterbox, handle: &image::Handle) {
+    let (w, h) = (CHART_W as f32 * lb.scale, CHART_H as f32 * lb.scale);
+    frame.draw_image(
+        Rectangle::new(Point::new(lb.offset_x, lb.offset_y), Size::new(w, h)),
+        handle,
+    );
 }
 
 #[cfg(test)]

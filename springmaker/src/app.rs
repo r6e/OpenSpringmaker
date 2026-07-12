@@ -5,7 +5,6 @@ use crate::conical::form::{ConFormOutcome, ConFormState};
 use crate::extension::form::{ExtFormOutcome, ExtFormState};
 use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
-use iced::theme::Palette;
 use iced::{Color, Theme};
 use springcore::{
     CurvatureCorrection, Family, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
@@ -16,81 +15,95 @@ use springcore::{
 // Design tokens — single source of truth for colours used in view.rs
 // --------------------------------------------------------------------------
 
-/// Global colour constants for the engineering-instrument palette.
-pub struct C;
-
-impl C {
+/// One resolved color palette. PR 2 adds `LIGHT`; views resolve the active
+/// palette once per view build via [`App::pal`] and pass it down — theme
+/// switches re-run `view()`, so build-time resolution stays correct.
+pub struct Palette {
     /// App background — near-black ink.
-    pub const INK: Color = Color {
+    pub ink: Color,
+    /// Card/panel surface.
+    pub panel: Color,
+    /// Raised input field surface.
+    pub raised: Color,
+    /// Hairline border / divider.
+    pub line: Color,
+    /// Primary text.
+    pub text: Color,
+    /// Muted / secondary labels.
+    pub muted: Color,
+    /// Accent — active controls, focus, governing result.
+    pub accent: Color,
+    /// Caution / warning indicator.
+    pub warn: Color,
+    /// Danger / error indicator.
+    pub danger: Color,
+    /// Success / healthy indicator.
+    pub success: Color,
+}
+
+/// The engineering-instrument dark palette (the shipped identity).
+pub const DARK: Palette = Palette {
+    ink: Color {
         r: 0.055,
         g: 0.067,
         b: 0.086,
         a: 1.0,
-    };
-    /// Card/panel surface.
-    pub const PANEL: Color = Color {
+    },
+    panel: Color {
         r: 0.090,
         g: 0.110,
         b: 0.141,
         a: 1.0,
-    };
-    /// Raised input field surface.
-    pub const RAISED: Color = Color {
+    },
+    raised: Color {
         r: 0.122,
         g: 0.149,
         b: 0.188,
         a: 1.0,
-    };
-    /// Hairline border / divider.
-    pub const LINE: Color = Color {
+    },
+    line: Color {
         r: 0.165,
         g: 0.196,
         b: 0.239,
         a: 1.0,
-    };
-    /// Primary text.
-    pub const TEXT: Color = Color {
+    },
+    text: Color {
         r: 0.902,
         g: 0.918,
         b: 0.941,
         a: 1.0,
-    };
-    /// Muted / secondary labels.
-    pub const MUTED: Color = Color {
+    },
+    muted: Color {
         r: 0.541,
         g: 0.592,
         b: 0.651,
         a: 1.0,
-    };
-    /// Accent — active controls, focus, governing result.
-    pub const ACCENT: Color = Color {
+    },
+    accent: Color {
         r: 0.298,
         g: 0.761,
         b: 1.0,
         a: 1.0,
-    };
-    /// Caution / warning indicator.
-    pub const WARN: Color = Color {
+    },
+    warn: Color {
         r: 0.949,
         g: 0.710,
         b: 0.227,
         a: 1.0,
-    };
-    /// Danger / error indicator.
-    pub const DANGER: Color = Color {
+    },
+    danger: Color {
         r: 1.0,
         g: 0.420,
         b: 0.420,
         a: 1.0,
-    };
-    /// Success / healthy indicator.
-    pub const SUCCESS: Color = Color {
+    },
+    success: Color {
         r: 0.31,
         g: 0.78,
         b: 0.47,
         a: 1.0,
-    };
-}
+    },
+};
 
 // --------------------------------------------------------------------------
 // Screen routing
@@ -189,8 +202,8 @@ pub enum Message {
     // than an orbit computed against the canvas's own possibly-stale
     // `Orbit`) means the single accumulation point is `App::update`, so
     // coalesced drag events compose instead of dropping intermediate steps.
-    // `Visual` is constructed by the shared `widgets::visual_toggle` radios
-    // used by every family (compression, conical, extension, torsion,
+    // `Visual` is constructed by the shared `widgets::visual_toggle` segmented
+    // control used by every family (compression, conical, extension, torsion,
     // assembly).
     Orbit(f32, f32),
     Visual(VisualMode),
@@ -322,6 +335,17 @@ impl Default for App {
         let (materials, load_warnings) = MaterialStore::load();
         Self::from_store(materials, load_warnings, CurvatureCorrection::default())
     }
+}
+
+/// Assign `value` to `slot` only if it differs; returns whether it changed.
+/// Mirrors the update contract: `false` ⇒ no mutation ⇒ no recompute ⇒
+/// `action_error` preserved (the pick_list no-op guard).
+fn set_if_changed<T: PartialEq>(slot: &mut T, value: T) -> bool {
+    let changed = *slot != value;
+    if changed {
+        *slot = value;
+    }
+    changed
 }
 
 impl App {
@@ -516,50 +540,31 @@ impl App {
                 self.extension.hook_mode = m;
                 true
             }
-            Message::ExtScenario(s) => {
-                self.extension.scenario = s;
-                true
-            }
+            // A pick_list dispatches `on_select` unconditionally even when
+            // re-selecting the current value (iced's pick_list.rs), so this
+            // must not blindly recompute — that would clear a pending
+            // `action_error` though nothing changed. `set_if_changed` is the
+            // shared no-op guard for every pick_list-backed handler below.
+            Message::ExtScenario(s) => set_if_changed(&mut self.extension.scenario, s),
             Message::TorField(f, v) => {
                 self.set_tor_field(f, v);
                 true
             }
-            Message::TorFriction(m) => {
-                self.torsion.friction_model = m;
-                true
-            }
-            Message::TorScenario(s) => {
-                self.torsion.scenario = s;
-                true
-            }
-            Message::TorMomentEntry(m) => {
-                self.torsion.moment_entry = m;
-                true
-            }
-            Message::TorDiaPolicy(p) => {
-                self.torsion.dia_policy = p;
-                true
-            }
-            Message::TorCycleLife(l) => {
-                self.torsion.cycle_life = l;
-                true
-            }
+            // Same pick_list no-op contract as `ExtScenario` above for the
+            // remaining torsion pick_list handlers.
+            Message::TorFriction(m) => set_if_changed(&mut self.torsion.friction_model, m),
+            Message::TorScenario(s) => set_if_changed(&mut self.torsion.scenario, s),
+            Message::TorMomentEntry(m) => set_if_changed(&mut self.torsion.moment_entry, m),
+            Message::TorDiaPolicy(p) => set_if_changed(&mut self.torsion.dia_policy, p),
+            Message::TorCycleLife(l) => set_if_changed(&mut self.torsion.cycle_life, l),
             Message::ConField(f, v) => {
                 self.set_con_field(f, v);
                 true
             }
-            Message::ConEndType(e) => {
-                self.conical.end_type = e;
-                true
-            }
-            Message::AsmTopology(t) => {
-                self.assembly.topology = t;
-                true
-            }
-            Message::AsmFixity(f) => {
-                self.assembly.fixity = f;
-                true
-            }
+            // Same pick_list no-op contract as `ExtScenario` above.
+            Message::ConEndType(e) => set_if_changed(&mut self.conical.end_type, e),
+            Message::AsmTopology(t) => set_if_changed(&mut self.assembly.topology, t),
+            Message::AsmFixity(f) => set_if_changed(&mut self.assembly.fixity, f),
             Message::AsmLoads(v) => {
                 self.assembly.loads = v;
                 true
@@ -582,22 +587,19 @@ impl App {
                     false
                 }
             }
-            Message::AsmMemberMaterial(i, mat) => {
-                if let Some(m) = self.assembly.members.get_mut(i) {
-                    m.material = mat;
-                    true
-                } else {
-                    false
-                }
-            }
-            Message::AsmMemberEndType(i, et) => {
-                if let Some(m) = self.assembly.members.get_mut(i) {
-                    m.end_type = et;
-                    true
-                } else {
-                    false
-                }
-            }
+            // Bounds-checked per the `AsmField` precedent above, AND value-checked
+            // per the pick_list no-op contract (`ExtScenario` above): re-selecting
+            // a member's CURRENT material/end type is also a no-op.
+            Message::AsmMemberMaterial(i, mat) => self
+                .assembly
+                .members
+                .get_mut(i)
+                .is_some_and(|m| set_if_changed(&mut m.material, mat)),
+            Message::AsmMemberEndType(i, et) => self
+                .assembly
+                .members
+                .get_mut(i)
+                .is_some_and(|m| set_if_changed(&mut m.end_type, et)),
             Message::AsmMemberAdd => {
                 self.assembly
                     .members
@@ -615,26 +617,15 @@ impl App {
                     false
                 }
             }
-            Message::Material(m) => {
-                self.material = m;
-                true
-            }
-            Message::Scenario(s) => {
-                self.form.scenario = s;
-                true
-            }
+            // Same pick_list no-op contract as `ExtScenario` above.
+            Message::Material(m) => set_if_changed(&mut self.material, m),
+            Message::Scenario(s) => set_if_changed(&mut self.form.scenario, s),
             Message::Units(u) => {
                 self.unit_system = u;
                 true
             }
-            Message::EndType(e) => {
-                self.form.end_type = e;
-                true
-            }
-            Message::Fixity(f) => {
-                self.form.fixity = f;
-                true
-            }
+            Message::EndType(e) => set_if_changed(&mut self.form.end_type, e),
+            Message::Fixity(f) => set_if_changed(&mut self.form.fixity, f),
             // Save never mutates the form, so it must not recompute — that would
             // clear the `action_error` a failed save just set.
             Message::Save => {
@@ -696,14 +687,21 @@ impl App {
                 self.mat_error = None;
                 false
             }
+            // Same pick_list no-op contract as `ExtScenario` above, applied to
+            // `mat_error` rather than `action_error`: re-selecting the
+            // materials-editor pick_list's CURRENT value must not clear a
+            // pending error, but a genuine change still must (deliberate
+            // policy for real edits, unchanged).
             Message::MatFormKind(k) => {
-                self.mat_form.mts_form = k;
-                self.mat_error = None;
+                if set_if_changed(&mut self.mat_form.mts_form, k) {
+                    self.mat_error = None;
+                }
                 false
             }
             Message::MatUnits(u) => {
-                self.mat_form.mts_units = u;
-                self.mat_error = None;
+                if set_if_changed(&mut self.mat_form.mts_units, u) {
+                    self.mat_error = None;
+                }
                 false
             }
             Message::MatToggleEndurance(b) => {
@@ -850,15 +848,21 @@ impl App {
     pub fn theme(&self) -> Theme {
         Theme::custom(
             "OpenSpringmaker".to_string(),
-            Palette {
-                background: C::INK,
-                text: C::TEXT,
-                primary: C::ACCENT,
-                success: C::SUCCESS,
-                warning: C::WARN,
-                danger: C::DANGER,
+            iced::theme::Palette {
+                background: DARK.ink,
+                text: DARK.text,
+                primary: DARK.accent,
+                success: DARK.success,
+                warning: DARK.warn,
+                danger: DARK.danger,
             },
         )
+    }
+
+    /// The active palette. PR 2 resolves Light/Dark/System here; today it is
+    /// always the dark identity.
+    pub(crate) fn pal(&self) -> &'static Palette {
+        &DARK
     }
 
     fn set_field(&mut self, field: Field, value: String) {
@@ -1141,6 +1145,48 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn palette_dark_matches_the_legacy_c_tokens() {
+        // Pin the exact legacy values so the C→Palette migration is provably
+        // color-identical (any drift = silent restyle).
+        assert_eq!(
+            DARK.ink,
+            Color {
+                r: 0.055,
+                g: 0.067,
+                b: 0.086,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.accent,
+            Color {
+                r: 0.298,
+                g: 0.761,
+                b: 1.0,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.danger,
+            Color {
+                r: 1.0,
+                g: 0.420,
+                b: 0.420,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.success,
+            Color {
+                r: 0.31,
+                g: 0.78,
+                b: 0.47,
+                a: 1.0
+            }
+        );
+    }
 
     /// An `App` with a curated-only store (no on-disk user overlay), so the
     /// materials-CRUD tests are hermetic regardless of the developer's saved
@@ -2089,6 +2135,158 @@ mod tests {
             Some("prior status"),
             "OOB member-attribute writes are no-ops and must not clear action_error"
         );
+    }
+
+    /// One named (label, dispatch) pair for
+    /// `pick_list_reselect_current_value_preserves_action_error` — named alias
+    /// keeps clippy's `type_complexity` lint quiet on the `Vec` below.
+    type NamedDispatch = (&'static str, Box<dyn Fn(&mut App)>);
+
+    /// Panel R2 item 1: iced's `pick_list` dispatches `on_select`
+    /// unconditionally, even when re-selecting the value that's ALREADY
+    /// selected (vendored `pick_list.rs`) — so every pick_list-backed handler
+    /// must guard at the UPDATE boundary (this file's own `AsmField`/
+    /// `AsmMemberRemove` precedent above), not rely on the view-level
+    /// (`segmented`) guard alone. Exercises all 15 affected handlers: firing
+    /// each with its OWN current value must be a no-op, so a pending
+    /// `action_error` must survive every one of them.
+    /// Revert-probe: revert any ONE handler to its old unconditional-`true`
+    /// shape (e.g. `Message::Material(m) => { self.material = m; true }`) →
+    /// that handler's iteration clears `action_error` → the assert for that
+    /// name fails → restore → green.
+    #[test]
+    fn pick_list_reselect_current_value_preserves_action_error() {
+        let mut app = test_app();
+        // A valid (non-OOB) member index for AsmMemberMaterial/AsmMemberEndType.
+        assert_eq!(app.assembly.members.len(), 1);
+
+        let dispatchers: Vec<NamedDispatch> = vec![
+            (
+                "Material",
+                Box::new(|a: &mut App| a.update(Message::Material(a.material.clone()))),
+            ),
+            (
+                "Scenario",
+                Box::new(|a: &mut App| a.update(Message::Scenario(a.form.scenario))),
+            ),
+            (
+                "EndType",
+                Box::new(|a: &mut App| a.update(Message::EndType(a.form.end_type.clone()))),
+            ),
+            (
+                "Fixity",
+                Box::new(|a: &mut App| a.update(Message::Fixity(a.form.fixity.clone()))),
+            ),
+            (
+                "ExtScenario",
+                Box::new(|a: &mut App| a.update(Message::ExtScenario(a.extension.scenario))),
+            ),
+            (
+                "TorFriction",
+                Box::new(|a: &mut App| a.update(Message::TorFriction(a.torsion.friction_model))),
+            ),
+            (
+                "TorScenario",
+                Box::new(|a: &mut App| a.update(Message::TorScenario(a.torsion.scenario))),
+            ),
+            (
+                "TorMomentEntry",
+                Box::new(|a: &mut App| a.update(Message::TorMomentEntry(a.torsion.moment_entry))),
+            ),
+            (
+                "TorDiaPolicy",
+                Box::new(|a: &mut App| a.update(Message::TorDiaPolicy(a.torsion.dia_policy))),
+            ),
+            (
+                "TorCycleLife",
+                Box::new(|a: &mut App| a.update(Message::TorCycleLife(a.torsion.cycle_life))),
+            ),
+            (
+                "ConEndType",
+                Box::new(|a: &mut App| a.update(Message::ConEndType(a.conical.end_type.clone()))),
+            ),
+            (
+                "AsmTopology",
+                Box::new(|a: &mut App| a.update(Message::AsmTopology(a.assembly.topology.clone()))),
+            ),
+            (
+                "AsmFixity",
+                Box::new(|a: &mut App| a.update(Message::AsmFixity(a.assembly.fixity.clone()))),
+            ),
+            (
+                "AsmMemberMaterial",
+                Box::new(|a: &mut App| {
+                    let mat = a.assembly.members[0].material.clone();
+                    a.update(Message::AsmMemberMaterial(0, mat));
+                }),
+            ),
+            (
+                "AsmMemberEndType",
+                Box::new(|a: &mut App| {
+                    let et = a.assembly.members[0].end_type.clone();
+                    a.update(Message::AsmMemberEndType(0, et));
+                }),
+            ),
+        ];
+
+        for (name, dispatch) in dispatchers {
+            app.action_error = Some("sentinel".to_string());
+            dispatch(&mut app);
+            assert_eq!(
+                app.action_error.as_deref(),
+                Some("sentinel"),
+                "re-selecting {name}'s current value must be a no-op and must not clear action_error"
+            );
+        }
+    }
+
+    /// Panel R3 item 1 (adversary, reproduced): `MatFormKind`/`MatUnits` were
+    /// missed by the R2 sweep above — both unconditionally cleared
+    /// `mat_error`, so re-selecting the materials-editor pick_list's CURRENT
+    /// value wiped a pending error banner though nothing changed. Same no-op
+    /// contract as `pick_list_reselect_current_value_preserves_action_error`
+    /// above, but for `mat_error` on these two handlers — AND a genuine
+    /// change must still clear `mat_error` (the deliberate policy for real
+    /// edits, unchanged).
+    /// Revert-probe: drop either guard back to an unconditional `self.mat_error
+    /// = None` → that handler's same-value assertion fails → restore → green.
+    #[test]
+    fn mat_form_pick_lists_guard_mat_error_on_same_value_only() {
+        let mut app = test_app();
+
+        // Same-value dispatch must NOT clear a pending mat_error.
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatFormKind(app.mat_form.mts_form));
+        assert_eq!(
+            app.mat_error.as_deref(),
+            Some("sentinel"),
+            "re-selecting MatFormKind's current value must not clear mat_error"
+        );
+
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatUnits(app.mat_form.mts_units));
+        assert_eq!(
+            app.mat_error.as_deref(),
+            Some("sentinel"),
+            "re-selecting MatUnits's current value must not clear mat_error"
+        );
+
+        // A REAL change must still clear mat_error (deliberate policy preserved).
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatFormKind(MtsForm::Constant));
+        assert!(
+            app.mat_error.is_none(),
+            "a genuine MatFormKind change must still clear mat_error"
+        );
+        assert_eq!(app.mat_form.mts_form, MtsForm::Constant);
+
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatUnits(StrengthUnits::UsKpsiInch));
+        assert!(
+            app.mat_error.is_none(),
+            "a genuine MatUnits change must still clear mat_error"
+        );
+        assert_eq!(app.mat_form.mts_units, StrengthUnits::UsKpsiInch);
     }
 
     /// Switching away from Assembly must clear the asm_outcome so the results

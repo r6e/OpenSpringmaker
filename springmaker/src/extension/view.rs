@@ -4,19 +4,20 @@
 //! iced widgets from the current [`App`] state, delegating data decisions to
 //! the presenter layer (ADR 0008).
 
-use iced::widget::{column, container, radio, row, text};
+use iced::widget::{column, container, row, text};
 use iced::{Element, Font, Length};
 
-use crate::app::{App, Message, C};
+use crate::app::{App, Message, Palette};
 use crate::extension::form::{ExtFormState, Field, HookMode, ALL_EXT_SCENARIOS};
 use crate::extension::view_model::{
     ext_inputs_view, ext_results_view, ExtLoadTable, ExtPopulatedResults, ExtResultsView,
 };
 use crate::presenter::unit_length_label;
 use crate::widgets::{
-    divided_result_section, field_label, labeled_input, panel_container, render_governing_rate,
-    results_empty, results_error, rows_section, section_divider, section_heading, styled_pick_list,
-    visual_toggle, SZ_CAPTION, SZ_LABEL,
+    divided_result_section, emphasis_color, field_label, labeled_input, panel_container,
+    render_governing_rate, results_empty, results_error, rows_section, section_divider,
+    section_heading, segmented, styled_pick_list, visual_toggle, COL_PT, SP_LG, SP_MD, SP_ROW,
+    SP_SM, SP_XS, SZ_CAPTION, SZ_LABEL,
 };
 
 // --------------------------------------------------------------------------
@@ -24,28 +25,31 @@ use crate::widgets::{
 // --------------------------------------------------------------------------
 
 pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     // Setup group — material + scenario picker (no end-type/fixity for extension springs).
     let setup_group = column![
-        section_heading("Setup"),
+        section_heading(pal, "Setup"),
         crate::widgets::material_picker(app),
         column![
-            field_label("Scenario"),
+            field_label(pal, "Scenario"),
             styled_pick_list(
+                pal,
                 ALL_EXT_SCENARIOS,
                 Some(app.extension.scenario),
                 Message::ExtScenario
             ),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     ]
-    .spacing(10);
+    .spacing(SP_MD);
 
     // Inputs group — driven by the presenter's field list.
     let inputs = ext_inputs_view(app);
-    let mut inputs_col = column![section_heading("Inputs")].spacing(12);
+    let mut inputs_col = column![section_heading(pal, "Inputs")].spacing(SP_MD);
     for fd in &inputs {
         let field = fd.field;
         inputs_col = inputs_col.push(labeled_input(
+            pal,
             &fd.label,
             ext_field_value(&app.extension, field),
             ext_field_id(field),
@@ -58,54 +62,46 @@ pub(crate) fn design_panel(app: &App) -> Element<'_, Message> {
 
     let inner = column![
         setup_group,
-        section_divider(),
+        section_divider(pal),
         inputs_col,
-        section_divider(),
+        section_divider(pal),
         hooks_group,
     ]
-    .spacing(16);
+    .spacing(SP_LG);
 
-    container(panel_container(inner))
+    container(panel_container(pal, inner))
         .width(Length::FillPortion(1))
         .into()
 }
 
 fn hooks_group(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let len_label = unit_length_label(app.unit_system);
     let mode = app.extension.hook_mode;
 
-    let default_radio = radio(
-        "Default (machine loops)",
-        HookMode::Default,
-        Some(mode),
+    let mode_toggle = segmented(
+        pal,
+        &[
+            ("Default (machine loops)", HookMode::Default),
+            ("Custom radii", HookMode::Custom),
+        ],
+        mode,
         Message::ExtHookMode,
-    )
-    .text_size(SZ_LABEL);
+    );
 
-    let custom_radio = radio(
-        "Custom radii",
-        HookMode::Custom,
-        Some(mode),
-        Message::ExtHookMode,
-    )
-    .text_size(SZ_LABEL);
-
-    let mut col = column![
-        section_heading("Hook geometry"),
-        default_radio,
-        custom_radio,
-    ]
-    .spacing(8);
+    let mut col = column![section_heading(pal, "Hook geometry"), mode_toggle].spacing(SP_SM);
 
     if mode == HookMode::Custom {
         col = col
             .push(labeled_input(
+                pal,
                 &format!("Hook radius r1 ({len_label})"),
                 &app.extension.hook_r1,
                 ext_field_id(Field::HookR1),
                 |s| Message::ExtField(Field::HookR1, s),
             ))
             .push(labeled_input(
+                pal,
                 &format!("Hook radius r2 ({len_label})"),
                 &app.extension.hook_r2,
                 ext_field_id(Field::HookR2),
@@ -146,8 +142,8 @@ fn ext_field_value(form: &ExtFormState, field: Field) -> &str {
 /// content and select by this id instead. An explicit, exhaustive match (rather
 /// than a `Debug`-derived string) keeps the ids a deliberate stable contract,
 /// avoids a per-render allocation, and forces a choice when a `Field` is added.
-/// Single source of truth shared by the view and the tests, which resolve their
-/// target inputs through this function (see `type_into_ext`) rather than
+/// Single source of truth shared by the view and Simulator tests, which resolve
+/// their target inputs through this function (see `type_into_ext`) rather than
 /// hardcoding the strings, so the two cannot drift. Each `Field` renders at most
 /// one input per frame.
 pub(crate) fn ext_field_id(field: Field) -> &'static str {
@@ -178,109 +174,112 @@ pub(crate) fn ext_field_id(field: Field) -> &'static str {
 // Results (right) panel — renderers
 // --------------------------------------------------------------------------
 
-fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
-    let mut col = column![section_heading("Load points")].spacing(4);
+fn render_ext_load_table(pal: &'static Palette, lt: &ExtLoadTable) -> Element<'static, Message> {
+    let mut col = column![section_heading(pal, "Load points")].spacing(SP_XS);
 
     col = col.push(
         row![
             text("Pt")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text("Force")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Deflection")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text("Length")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Body \u{03c4} ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Hook \u{03c3} ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
             text(format!("Hook \u{03c4} ({})", lt.stress_unit))
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(2)),
-            text("%\u{03c4}_body")
+            text("% \u{03c4}_body")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
-            text("%\u{03c3}")
+            text("% \u{03c3}")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
-            text("%\u{03c4}_hook")
+            text("% \u{03c4}_hook")
                 .size(SZ_CAPTION)
-                .color(C::MUTED)
+                .color(pal.muted)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4),
+        .spacing(SP_XS),
     );
 
     for lp in &lt.rows {
+        let body_color = emphasis_color(pal, lp.body_emphasis);
+        let bending_color = emphasis_color(pal, lp.bending_emphasis);
+        let torsion_color = emphasis_color(pal, lp.torsion_emphasis);
         let data_row = row![
             text(lp.point.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::MUTED)
-                .width(Length::Fixed(24.0)),
+                .color(pal.muted)
+                .width(Length::Fixed(COL_PT)),
             text(lp.force.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.deflection.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.length.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(pal.text)
                 .width(Length::FillPortion(2)),
             text(lp.body_shear.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(body_color)
                 .width(Length::FillPortion(2)),
             text(lp.hook_bending.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(bending_color)
                 .width(Length::FillPortion(2)),
             text(lp.hook_torsion.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(torsion_color)
                 .width(Length::FillPortion(2)),
             text(lp.pct_body.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(body_color)
                 .width(Length::FillPortion(1)),
             text(lp.pct_bending.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(bending_color)
                 .width(Length::FillPortion(1)),
             text(lp.pct_torsion.clone())
                 .font(Font::MONOSPACE)
                 .size(SZ_LABEL)
-                .color(C::TEXT)
+                .color(torsion_color)
                 .width(Length::FillPortion(1)),
         ]
-        .spacing(4);
+        .spacing(SP_XS);
         col = col.push(data_row);
     }
 
@@ -292,10 +291,11 @@ fn render_ext_load_table(lt: &ExtLoadTable) -> Element<'static, Message> {
 // --------------------------------------------------------------------------
 
 pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
+    let pal = app.pal();
     let us = app.unit_system;
     let content: Element<'_, Message> = match ext_results_view(app) {
-        ExtResultsView::Error(msg) => results_error(msg),
-        ExtResultsView::Empty => results_empty(),
+        ExtResultsView::Error(msg) => results_error(pal, msg),
+        ExtResultsView::Empty => results_empty(pal),
         ExtResultsView::Populated(p) => {
             // The results panel's shared visual slot: chart or orbitable 3D
             // scene, selected by `app.results_visual`. Each visual is pure
@@ -310,20 +310,22 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
             let visual: Element<'_, Message> = match app.results_visual {
                 crate::app::VisualMode::Chart => crate::plot::chart_element(
+                    pal,
                     crate::extension::plot_model::extension_chart(&outcome.design, us),
                 ),
                 crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                    pal,
                     crate::extension::scene_model::extension_scene(&outcome.design),
                     app.orbit,
                 ),
             };
-            let toggle = visual_toggle(app.results_visual);
+            let toggle = visual_toggle(pal, app.results_visual);
 
-            render_populated(&p, toggle, visual)
+            render_populated(pal, &p, toggle, visual)
         }
     };
 
-    container(panel_container(content))
+    container(panel_container(pal, content))
         .width(Length::FillPortion(1))
         .into()
 }
@@ -331,25 +333,26 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 /// Assemble the populated results column from the presenter data plus the
 /// chart/3D toggle and the selected visual.
 fn render_populated<'a>(
+    pal: &'static Palette,
     p: &ExtPopulatedResults,
     toggle: Element<'a, Message>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let mut col = column![
-        section_heading("Results"),
-        section_divider(),
-        render_governing_rate(&p.governing_rate),
-        section_divider(),
-        rows_section("Geometry", &p.geometry),
-        section_divider(),
-        render_ext_load_table(&p.load_table),
-        section_divider(),
+        section_heading(pal, "Results"),
+        section_divider(pal),
+        render_governing_rate(pal, "Spring rate", &p.governing_rate),
+        section_divider(pal),
+        rows_section(pal, "Geometry", &p.geometry),
+        section_divider(pal),
+        render_ext_load_table(pal, &p.load_table),
+        section_divider(pal),
         toggle,
         visual,
     ]
-    .spacing(6);
+    .spacing(SP_ROW);
     if let Some(rows) = &p.min_weight {
-        col = col.push(divided_result_section("Min-weight optimisation", rows));
+        col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
     }
     col.into()
 }

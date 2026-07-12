@@ -9,7 +9,7 @@ use crate::presenter::{
     append_status_messages, display_ang_rate_per_deg, display_ang_rate_per_turn,
     display_angle_degrees, display_angle_turns, display_len, display_moment, display_stress,
     fmt_row_value, unit_force_label, unit_length_label, unit_moment_label, unit_stress_label,
-    Emphasis, FieldDescriptor, ResultRow, StatusLine,
+    Emphasis, FieldDescriptor, GoverningRate, ResultRow, StatusLine,
 };
 use crate::torsion::form::{Field, MomentEntry, TorFatigueStatus, TorFormOutcome, TorScenarioKind};
 use springcore::torsion::{TorBindingConstraint, TorsionDesign};
@@ -166,11 +166,11 @@ pub enum TorResultsView {
 /// Everything the torsion results panel shows when a design is solved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TorPopulatedResults {
-    /// Angular rate expressed as moment per degree (one ResultRow).
-    pub rate_per_deg: ResultRow,
-    /// Angular rate expressed as moment per revolution (one ResultRow).
-    pub rate_per_turn: ResultRow,
-    /// Geometry summary rows: spring index and effective active coils.
+    /// Hero angular-rate readout (moment per degree) — the canonical governing
+    /// rate for the torsion family.
+    pub governing_rate: GoverningRate,
+    /// Geometry summary rows: rate per revolution leads, then spring index
+    /// and effective active coils.
     pub geometry: Vec<ResultRow>,
     /// Per-moment load-point table.
     pub load_table: TorLoadTable,
@@ -180,27 +180,31 @@ pub struct TorPopulatedResults {
     pub(crate) fatigue: TorFatigueView,
 }
 
-/// Geometry summary rows: spring index and effective active coils.
-fn geometry_rows(d: &TorsionDesign) -> Vec<ResultRow> {
+/// Geometry summary rows: the per-revolution rate leads (the hero already
+/// carries the per-degree figure), then spring index and effective active coils.
+fn geometry_rows(d: &TorsionDesign, us: springcore::UnitSystem) -> Vec<ResultRow> {
     vec![
+        rate_per_turn_row(d, us),
         ResultRow::new("Spring index", fmt_row_value(d.index, 3), ""),
         ResultRow::new("Active coils", fmt_row_value(d.active_coils, 3), ""),
     ]
 }
 
-/// Build the angular-rate-per-degree result row.
-fn rate_per_deg_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow {
-    ResultRow::new(
-        "Angular rate",
-        fmt_row_value(display_ang_rate_per_deg(d.rate, us), 4),
-        format!("{}/°", unit_moment_label(us)),
-    )
+/// Build the hero governing-rate readout, expressed as moment per degree —
+/// the same formatted value the standalone `rate_per_deg` row used to carry.
+fn governing_rate(d: &TorsionDesign, us: springcore::UnitSystem) -> GoverningRate {
+    GoverningRate {
+        value: fmt_row_value(display_ang_rate_per_deg(d.rate, us), 4),
+        unit: format!("{}/°", unit_moment_label(us)),
+    }
 }
 
-/// Build the angular-rate-per-revolution result row.
+/// Build the angular-rate-per-revolution result row (leads the Geometry
+/// section). Labeled distinctly from the hero ("Angular rate") so the two
+/// readouts don't collide under a shared text pin.
 fn rate_per_turn_row(d: &TorsionDesign, us: springcore::UnitSystem) -> ResultRow {
     ResultRow::new(
-        "Angular rate",
+        "Rate (per turn)",
         fmt_row_value(display_ang_rate_per_turn(d.rate, us), 4),
         format!("{}/rev", unit_moment_label(us)),
     )
@@ -215,9 +219,8 @@ pub fn tor_results_view(app: &App) -> TorResultsView {
         Some(out) => {
             let us = app.unit_system;
             TorResultsView::Populated(Box::new(TorPopulatedResults {
-                rate_per_deg: rate_per_deg_row(&out.design, us),
-                rate_per_turn: rate_per_turn_row(&out.design, us),
-                geometry: geometry_rows(&out.design),
+                governing_rate: governing_rate(&out.design, us),
+                geometry: geometry_rows(&out.design, us),
                 load_table: tor_load_table(&out.design, us),
                 min_weight: tor_min_weight_rows(out),
                 fatigue: tor_fatigue_view(out, us),
@@ -570,27 +573,42 @@ mod tests {
     }
 
     #[test]
-    fn rate_rows_have_angular_rate_label_and_correct_units() {
-        let p = tor_populated(&app_with_tor(metric_form()));
-        assert_eq!(p.rate_per_deg.label, "Angular rate");
-        assert_eq!(p.rate_per_turn.label, "Angular rate");
-        assert!(
-            p.rate_per_deg.unit.contains("N·mm") && p.rate_per_deg.unit.contains('°'),
-            "per-deg unit should contain 'N·mm' and '°'; got '{}'",
-            p.rate_per_deg.unit
+    fn tor_populated_carries_a_governing_rate_hero() {
+        // The hero's value is the same formatted per-degree figure the old
+        // standalone `rate_per_deg` row used to carry; the per-turn row now
+        // leads the Geometry section instead of living in its own field.
+        let app = app_with_tor(metric_form());
+        let out = app.tor_outcome.as_ref().expect("solved outcome");
+        let expected_value = fmt_row_value(
+            display_ang_rate_per_deg(out.design.rate, app.unit_system),
+            4,
         );
+        let p = tor_populated(&app);
+        assert_eq!(p.governing_rate.value, expected_value);
+        assert_eq!(p.geometry[0].label, "Rate (per turn)");
+    }
+
+    #[test]
+    fn governing_rate_and_geometry_lead_row_have_correct_units() {
+        let p = tor_populated(&app_with_tor(metric_form()));
         assert!(
-            p.rate_per_turn.unit.contains("N·mm") && p.rate_per_turn.unit.contains("rev"),
-            "per-rev unit should contain 'N·mm' and 'rev'; got '{}'",
-            p.rate_per_turn.unit
+            p.governing_rate.unit.contains("N·mm") && p.governing_rate.unit.contains('°'),
+            "governing rate unit should contain 'N·mm' and '°'; got '{}'",
+            p.governing_rate.unit
+        );
+        assert_eq!(p.geometry[0].label, "Rate (per turn)");
+        assert!(
+            p.geometry[0].unit.contains("N·mm") && p.geometry[0].unit.contains("rev"),
+            "geometry lead row unit should contain 'N·mm' and 'rev'; got '{}'",
+            p.geometry[0].unit
         );
     }
 
     #[test]
-    fn rate_per_turn_is_360x_rate_per_deg() {
+    fn geometry_lead_row_is_360x_governing_rate() {
         let p = tor_populated(&app_with_tor(metric_form()));
-        let per_deg: f64 = p.rate_per_deg.value.parse().expect("parseable f64");
-        let per_turn: f64 = p.rate_per_turn.value.parse().expect("parseable f64");
+        let per_deg: f64 = p.governing_rate.value.parse().expect("parseable f64");
+        let per_turn: f64 = p.geometry[0].value.parse().expect("parseable f64");
         assert!(per_deg > 0.0 && per_turn > 0.0, "rates must be positive");
         // Both values are formatted to 4 decimal places independently; the ratio
         // per_turn/per_deg must be 360 to within the combined rounding error

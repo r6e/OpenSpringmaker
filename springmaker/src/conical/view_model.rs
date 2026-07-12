@@ -6,9 +6,10 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    unit_force_label, unit_length_label, unit_stress_label, FieldDescriptor, GoverningRate,
-    LoadRow, LoadTable, ResultRow, StatusLine,
+    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_stress_label,
+    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
+use springcore::Material;
 
 use super::form::Field;
 
@@ -59,10 +60,11 @@ pub fn con_results_view(app: &App) -> ConResultsView {
 fn con_populated_results(out: &super::form::ConFormOutcome, app: &App) -> ConPopulatedResults {
     let d = &out.design;
     let us = app.unit_system;
+    let material = resolved_material(app);
     ConPopulatedResults {
         governing_rate: GoverningRate::from_rate(d.rate, us),
         geometry: con_geometry_rows(d, us),
-        load_table: con_load_table(d, us),
+        load_table: con_load_table(d, us, material),
     }
 }
 
@@ -113,7 +115,11 @@ fn con_geometry_rows(
 /// Build the load-point table. Mirrors compression's `load_table` construction.
 /// No at-solid row: at-solid surfaces via the status warnings and the
 /// conservative solid-length geometry row.
-fn con_load_table(d: &springcore::conical::ConicalDesign, us: springcore::UnitSystem) -> LoadTable {
+fn con_load_table(
+    d: &springcore::conical::ConicalDesign,
+    us: springcore::UnitSystem,
+    material: Option<&Material>,
+) -> LoadTable {
     let rows = d
         .load_points
         .iter()
@@ -139,6 +145,7 @@ fn con_load_table(d: &springcore::conical::ConicalDesign, us: springcore::UnitSy
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
+                stress_emphasis: overstress_emphasis(lp.pct_mts, material),
             }
         })
         .collect();
@@ -190,6 +197,7 @@ pub fn con_status_view(app: &App) -> Vec<StatusLine> {
 mod tests {
     use super::*;
     use crate::conical::form::ConFormState;
+    use crate::presenter::Emphasis;
     use springcore::{CurvatureCorrection, Family, MaterialSet, MaterialStore};
 
     fn store() -> MaterialStore {
@@ -339,6 +347,44 @@ mod tests {
             stress_cell.contains('e') && stress_cell.len() < 12,
             "expected scientific notation in stress cell, got '{stress_cell}'"
         );
+    }
+
+    // ── stress_emphasis ──────────────────────────────────────────────────────
+
+    #[test]
+    fn overstressed_load_point_carries_danger_emphasis() {
+        // Reuses the huge_finite_load fixture: loads="1e9" N drives pct_mts far
+        // past 1.0.
+        let mut app = fresh_app_conical();
+        app.conical = ConFormState {
+            loads: "1e9".into(),
+            ..metric_form()
+        };
+        app.recompute();
+        let p = con_populated(&app);
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn normal_load_point_carries_normal_emphasis() {
+        let p = con_populated(&solved_metric_app());
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Normal);
+    }
+
+    /// Gap case: pct_mts (72.3%) sits between Music Wire's 45% allowable and
+    /// 100% MTS. The engine's own status warning already calls this
+    /// overstressed (`evaluate_status` fires at `pct_mts > allowable_pct_torsion`),
+    /// but the old `pct_mts > 1.0` rule rendered it Normal.
+    #[test]
+    fn gap_case_overstressed_by_engine_carries_danger_emphasis() {
+        let mut app = fresh_app_conical();
+        app.conical = ConFormState {
+            loads: "200".into(),
+            ..metric_form()
+        };
+        app.recompute();
+        let p = con_populated(&app);
+        assert_eq!(p.load_table.rows[0].stress_emphasis, Emphasis::Danger);
     }
 
     // ── telescoping_message_passes_through ──────────────────────────────────

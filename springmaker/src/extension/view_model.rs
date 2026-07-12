@@ -7,7 +7,7 @@ use crate::extension::form::{ExtScenarioKind, Field};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
     fmt_row_value, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
-    FieldDescriptor, GoverningRate, ResultRow, StatusLine,
+    Emphasis, FieldDescriptor, GoverningRate, ResultRow, StatusLine,
 };
 use springcore::extension::{ExtBindingConstraint, ExtensionDesign};
 
@@ -32,6 +32,14 @@ pub(crate) struct ExtLoadRow {
     pub pct_bending: String,
     /// hook_torsion as % of allowable (e.g. "61.4%").
     pub pct_torsion: String,
+    /// Danger when `pct_body_allow > 1.0`; the view maps this to a danger color.
+    pub body_emphasis: Emphasis,
+    /// Danger when `pct_hook_bending_allow > 1.0`; the view maps this to a
+    /// danger color.
+    pub bending_emphasis: Emphasis,
+    /// Danger when `pct_hook_torsion_allow > 1.0`; the view maps this to a
+    /// danger color.
+    pub torsion_emphasis: Emphasis,
 }
 
 /// Stress-unit header label plus per-point rows for the extension load-points table.
@@ -51,6 +59,13 @@ fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTab
             let (body_val, _) = display_stress(lp.body_shear, us);
             let (bending_val, _) = display_stress(lp.hook_bending, us);
             let (torsion_val, _) = display_stress(lp.hook_torsion, us);
+            let emphasis_for = |pct: f64| {
+                if pct > 1.0 {
+                    Emphasis::Danger
+                } else {
+                    Emphasis::Normal
+                }
+            };
             ExtLoadRow {
                 point: format!("{}", i + 1),
                 force: format!(
@@ -74,6 +89,9 @@ fn ext_load_table(d: &ExtensionDesign, us: springcore::UnitSystem) -> ExtLoadTab
                 pct_body: format!("{}%", fmt_row_value(lp.pct_body_allow * 100.0, 1)),
                 pct_bending: format!("{}%", fmt_row_value(lp.pct_hook_bending_allow * 100.0, 1)),
                 pct_torsion: format!("{}%", fmt_row_value(lp.pct_hook_torsion_allow * 100.0, 1)),
+                body_emphasis: emphasis_for(lp.pct_body_allow),
+                bending_emphasis: emphasis_for(lp.pct_hook_bending_allow),
+                torsion_emphasis: emphasis_for(lp.pct_hook_torsion_allow),
             }
         })
         .collect();
@@ -368,6 +386,65 @@ mod tests {
             r0.hook_bending, r0.hook_torsion,
             "hook bending and torsion stresses are distinct for this design point"
         );
+    }
+
+    // ── stress emphasis (per-column, independent) ──
+
+    #[test]
+    fn normal_load_point_carries_normal_emphasis_on_all_three_columns() {
+        let p = ext_populated(&app_with_ext(metric_form()));
+        let r0 = &p.load_table.rows[0];
+        assert_eq!(r0.body_emphasis, Emphasis::Normal);
+        assert_eq!(r0.bending_emphasis, Emphasis::Normal);
+        assert_eq!(r0.torsion_emphasis, Emphasis::Normal);
+    }
+
+    #[test]
+    fn overstressed_load_point_carries_danger_emphasis_on_all_three_columns() {
+        // Reuses the huge_finite_stress fixture: loads = "1e9" N drives all
+        // three pct_*_allow fractions far past 1.0.
+        let form = ExtFormState {
+            loads: "1e9".to_string(),
+            ..power_user_metric()
+        };
+        let p = ext_populated(&app_with_ext(form));
+        let r0 = &p.load_table.rows[0];
+        assert_eq!(r0.body_emphasis, Emphasis::Danger);
+        assert_eq!(r0.bending_emphasis, Emphasis::Danger);
+        assert_eq!(r0.torsion_emphasis, Emphasis::Danger);
+    }
+
+    /// Proves each column's emphasis follows ITS OWN fraction, not a shared
+    /// flag: at 115 N, body shear stays under its allowable (Normal) while both
+    /// hook stresses exceed theirs (Danger) — geometry-driven, since the three
+    /// stresses scale together with load but each compares against a different
+    /// allowable fraction of MTS.
+    #[test]
+    fn mixed_case_body_normal_while_hooks_danger() {
+        let form = ExtFormState {
+            loads: "115".to_string(),
+            ..metric_form()
+        };
+        let app = app_with_ext(form);
+        let out = app.ext_outcome.as_ref().expect("must be solved");
+        let lp0 = &out.design.load_points[0];
+        assert!(
+            lp0.pct_body_allow <= 1.0,
+            "fixture must keep body shear under allowable, got {}",
+            lp0.pct_body_allow
+        );
+        assert!(
+            lp0.pct_hook_bending_allow > 1.0 && lp0.pct_hook_torsion_allow > 1.0,
+            "fixture must overstress both hook stresses, got bending={} torsion={}",
+            lp0.pct_hook_bending_allow,
+            lp0.pct_hook_torsion_allow
+        );
+
+        let p = ext_populated(&app);
+        let r0 = &p.load_table.rows[0];
+        assert_eq!(r0.body_emphasis, Emphasis::Normal);
+        assert_eq!(r0.bending_emphasis, Emphasis::Danger);
+        assert_eq!(r0.torsion_emphasis, Emphasis::Danger);
     }
 
     // ── inputs view ──

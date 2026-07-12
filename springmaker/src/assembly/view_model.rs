@@ -4,11 +4,11 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_rate, display_stress,
-    fmt_row_value, unit_force_label, unit_length_label, unit_rate_label, unit_stress_label,
-    GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    fmt_row_value, overstress_emphasis, unit_force_label, unit_length_label, unit_rate_label,
+    unit_stress_label, Emphasis, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
 };
 use springcore::assembly::{evaluate_status, AssemblyDesign, MemberResult, Topology};
-use springcore::{SpringDesign, UnitSystem};
+use springcore::{Material, MaterialStore, SpringDesign, UnitSystem};
 
 // ── Populated results ─────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ pub struct AsmMemberResultView {
     pub heading: String,
     /// Share %, rate, spring index, buckling flag.
     pub rows: Vec<ResultRow>,
-    /// Per-member load table: full force / deflection / length / stress / %MTS.
+    /// Per-member load table: full force / deflection / length / stress / % MTS.
     pub loads: LoadTable,
 }
 
@@ -71,7 +71,7 @@ fn asm_populated_results(out: &AssemblyDesign, app: &App) -> AsmPopulatedResults
             .members
             .iter()
             .enumerate()
-            .map(|(i, mr)| asm_member_result_view(i, mr, us))
+            .map(|(i, mr)| asm_member_result_view(i, mr, us, &app.materials))
             .collect(),
     }
 }
@@ -144,6 +144,7 @@ fn asm_assembly_load_table(out: &AssemblyDesign, us: UnitSystem) -> LoadTable {
             ),
             stress: String::new(),
             pct_mts: String::new(),
+            stress_emphasis: Emphasis::Normal,
         })
         .collect();
     // stress_unit="" signals to the view that the stress columns are absent.
@@ -153,12 +154,22 @@ fn asm_assembly_load_table(out: &AssemblyDesign, us: UnitSystem) -> LoadTable {
     }
 }
 
-fn asm_member_result_view(i: usize, mr: &MemberResult, us: UnitSystem) -> AsmMemberResultView {
+fn asm_member_result_view(
+    i: usize,
+    mr: &MemberResult,
+    us: UnitSystem,
+    materials: &MaterialStore,
+) -> AsmMemberResultView {
     let buckling_row = if mr.design.buckling_stable {
         ResultRow::new("Buckling", "stable", "")
     } else {
         ResultRow::danger("Buckling", "buckling risk", "")
     };
+    // Each member carries its own material (Decision 2); a present outcome
+    // means it already resolved during that solve (the conical precedent),
+    // so `.ok()` degrades gracefully rather than panicking on the
+    // documented-unreachable race where it no longer does.
+    let material = materials.get(&mr.material_name).ok();
     AsmMemberResultView {
         heading: format!("Member {} ({})", i + 1, mr.material_name),
         rows: vec![
@@ -171,13 +182,13 @@ fn asm_member_result_view(i: usize, mr: &MemberResult, us: UnitSystem) -> AsmMem
             ResultRow::new("Spring index", fmt_row_value(mr.design.index, 3), ""),
             buckling_row,
         ],
-        loads: member_load_table(&mr.design, us),
+        loads: member_load_table(&mr.design, us, material),
     }
 }
 
 /// Per-member load table: full 6-column force / deflection / length / stress /
-/// %MTS. Mirrors `con_load_table` in the conical presenter.
-fn member_load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
+/// % MTS. Mirrors `con_load_table` in the conical presenter.
+fn member_load_table(d: &SpringDesign, us: UnitSystem, material: Option<&Material>) -> LoadTable {
     let rows = d
         .load_points
         .iter()
@@ -203,6 +214,7 @@ fn member_load_table(d: &SpringDesign, us: UnitSystem) -> LoadTable {
                 ),
                 stress: fmt_row_value(stress_val, 3),
                 pct_mts: format!("{}%", fmt_row_value(lp.pct_mts * 100.0, 1)),
+                stress_emphasis: overstress_emphasis(lp.pct_mts, material),
             }
         })
         .collect();
@@ -404,6 +416,55 @@ mod tests {
                 .map(|m| m.loads.rows.iter().map(|r| &r.stress).collect::<Vec<_>>())
                 .collect::<Vec<_>>()
         );
+    }
+
+    // ── stress_emphasis ────────────────────────────────────────────────────────
+
+    #[test]
+    fn overstressed_member_load_point_carries_danger_emphasis() {
+        // Reuses the huge_finite_load fixture: loads = "1e9" N drives every
+        // member's pct_mts far past 1.0.
+        let mut app = fresh_asm_app();
+        app.assembly = AsmFormState {
+            loads: "1e9".into(),
+            ..two_member_form()
+        };
+        app.recompute();
+        let p = asm_populated(&app);
+        assert_eq!(p.members[0].loads.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn normal_member_load_point_carries_normal_emphasis() {
+        let p = asm_populated(&solved_asm_app());
+        assert_eq!(p.members[0].loads.rows[0].stress_emphasis, Emphasis::Normal);
+    }
+
+    /// Gap case: member 1's pct_mts (56.8%) sits between Music Wire's 45%
+    /// allowable and 100% MTS (member 0 stays at 40.8%, still below allowable
+    /// at this load — Nested topology splits load by rate fraction, so
+    /// members land at different stresses for the same assembly load). The
+    /// engine's own status warning already calls member 1 overstressed
+    /// (`evaluate_status` fires at `pct_mts > allowable_pct_torsion`), but the
+    /// old `pct_mts > 1.0` rule rendered it Normal.
+    #[test]
+    fn gap_case_overstressed_by_engine_carries_danger_emphasis() {
+        let mut app = fresh_asm_app();
+        app.assembly = AsmFormState {
+            loads: "200".into(),
+            ..two_member_form()
+        };
+        app.recompute();
+        let p = asm_populated(&app);
+        assert_eq!(p.members[1].loads.rows[0].stress_emphasis, Emphasis::Danger);
+    }
+
+    #[test]
+    fn assembly_level_empty_stress_row_carries_normal_emphasis() {
+        // Assembly-level rows have no per-load stress (String::new()); the
+        // presenter must set Normal rather than leave emphasis undetermined.
+        let p = asm_populated(&solved_asm_app());
+        assert_eq!(p.assembly_loads.rows[0].stress_emphasis, Emphasis::Normal);
     }
 
     // ── member_prefixed_status_passthrough ────────────────────────────────────

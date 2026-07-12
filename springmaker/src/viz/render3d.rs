@@ -3,15 +3,15 @@
 //! deliberately suppressed — the scene reads as a clean engineering sketch.
 
 use super::{finite3, scene_extent, Orbit, SceneData, SceneExtent, SceneRole};
-use crate::app::C;
+use crate::app::Palette;
 use crate::plot::{ensure_font, rgb_to_rgba, to_rgb, CHART_H, CHART_W};
 use plotters::prelude::*;
 
-fn role_color(role: SceneRole) -> RGBColor {
+fn role_color(pal: &Palette, role: SceneRole) -> RGBColor {
     match role {
-        SceneRole::Wire => to_rgb(C::ACCENT),
-        SceneRole::Member => to_rgb(C::MUTED),
-        SceneRole::Detail => to_rgb(C::WARN),
+        SceneRole::Wire => to_rgb(pal.accent),
+        SceneRole::Member => to_rgb(pal.muted),
+        SceneRole::Detail => to_rgb(pal.warn),
     }
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn frame_ranges(extent: &SceneExtent) -> Option<((f64, f64), (f64, f6
 /// Render the scene under the given orbit. `None` iff the scene has no
 /// finite extent, or the framed ranges overflow (degenerate — the caller
 /// shows the placeholder).
-pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
+pub fn render_scene(pal: &Palette, scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
     let extent = scene_extent(scene)?;
     let ((x_lo, x_hi), (y_lo, y_hi)) = frame_ranges(&extent)?;
 
@@ -59,7 +59,8 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
     let mut rgb = vec![0u8; (CHART_W * CHART_H * 3) as usize];
     {
         let root = BitMapBackend::with_buffer(&mut rgb, (CHART_W, CHART_H)).into_drawing_area();
-        root.fill(&to_rgb(C::PANEL)).expect("fill scene background");
+        root.fill(&to_rgb(pal.panel))
+            .expect("fill scene background");
         let mut chart = ChartBuilder::on(&root)
             .margin(8)
             .build_cartesian_3d(x_lo..x_hi, y_lo..y_hi, x_lo..x_hi)
@@ -74,7 +75,7 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
 
         for line in &scene.polylines {
             let style = ShapeStyle {
-                color: role_color(line.role).to_rgba(),
+                color: role_color(pal, line.role).to_rgba(),
                 filled: false,
                 stroke_width: line.stroke_px,
             };
@@ -93,7 +94,9 @@ pub fn render_scene(scene: &SceneData, orbit: Orbit) -> Option<Vec<u8>> {
 mod tests {
     use super::super::helix;
     use super::*;
+    use crate::app::{Palette, DARK};
     use approx::assert_relative_eq;
+    use iced::Color;
 
     fn test_scene() -> SceneData {
         SceneData {
@@ -107,15 +110,15 @@ mod tests {
 
     #[test]
     fn render_scene_none_for_degenerate() {
-        assert!(render_scene(&SceneData { polylines: vec![] }, Orbit::default()).is_none());
+        assert!(render_scene(&DARK, &SceneData { polylines: vec![] }, Orbit::default()).is_none());
     }
 
     #[test]
     fn render_scene_draws_content_over_background() {
-        let pixels = render_scene(&test_scene(), Orbit::default()).unwrap();
+        let pixels = render_scene(&DARK, &test_scene(), Orbit::default()).unwrap();
         assert_eq!(pixels.len(), (CHART_W * CHART_H * 4) as usize);
         assert!(pixels.chunks_exact(4).all(|p| p[3] == 255));
-        let bg = to_rgb(crate::app::C::PANEL);
+        let bg = to_rgb(DARK.panel);
         assert!(
             pixels
                 .chunks_exact(4)
@@ -125,10 +128,33 @@ mod tests {
     }
 
     #[test]
+    fn render_scene_background_follows_the_palette() {
+        // Same scene, two palettes differing only in panel color ⇒ different
+        // corner pixel. Pins that the renderer reads the parameter, not DARK.
+        let alt = Palette {
+            panel: Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            ..DARK
+        };
+        let dark_px = render_scene(&DARK, &test_scene(), Orbit::default()).unwrap();
+        let alt_px = render_scene(&alt, &test_scene(), Orbit::default()).unwrap();
+        assert_ne!(
+            dark_px[0..3],
+            alt_px[0..3],
+            "corner pixel must follow pal.panel"
+        );
+    }
+
+    #[test]
     fn orbit_changes_the_rendered_image() {
         // The projection is load-bearing: two different orbits must not produce
         // identical bitmaps (this is the drag-to-orbit contract at the pixel level).
         let a = render_scene(
+            &DARK,
             &test_scene(),
             Orbit {
                 yaw: 0.2,
@@ -137,6 +163,7 @@ mod tests {
         )
         .unwrap();
         let b = render_scene(
+            &DARK,
             &test_scene(),
             Orbit {
                 yaw: 1.2,
@@ -151,8 +178,8 @@ mod tests {
     fn non_finite_points_are_filtered() {
         let mut scene = test_scene();
         scene.polylines[0].points.push((f64::NAN, 10.0, 0.0));
-        let clean = render_scene(&test_scene(), Orbit::default()).unwrap();
-        let dirty = render_scene(&scene, Orbit::default()).unwrap();
+        let clean = render_scene(&DARK, &test_scene(), Orbit::default()).unwrap();
+        let dirty = render_scene(&DARK, &scene, Orbit::default()).unwrap();
         assert_eq!(
             clean, dirty,
             "non-finite points must be filtered, not drawn"
@@ -263,6 +290,6 @@ mod tests {
                 stroke_px: 1,
             }],
         };
-        assert!(render_scene(&scene, Orbit::default()).is_none());
+        assert!(render_scene(&DARK, &scene, Orbit::default()).is_none());
     }
 }
