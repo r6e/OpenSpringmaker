@@ -216,8 +216,48 @@ pub(crate) struct HelixParams {
 /// alone drifts by `~dR*(R_local - radial)/(dR^2 + pitch^2)` turns and can
 /// miss the true winding entirely on a steep cone
 /// (`taper_window_reaches_the_small_end_winding` pins the reviewer's 109%
-/// over-estimate). Four neighbors still bracket the close-wound
-/// rounding cases (`close_wound_gap_never_reports_negative_between_coils`).
+/// over-estimate).
+///
+/// **R2 finding — does `k*` also bracket the Jordan-refined vertex?** `k*`
+/// is the vertex of the coarse ring-plane objective `d^2(k) = a(k)^2 +
+/// b(k)^2` (fixing `u = 0`), not of the Jordan-refined per-winding value
+/// this function actually evaluates, `V(k) = min_u f_k(u)` with `f_k(u) =
+/// (a(k) - g*u)^2 + (b(k) - s*u)^2 + c^2*u^2` (`c^2`, defined below in the
+/// per-winding bound, `= 4*radial*R_min/PI^2`). `f_k(u)` is a JOINT
+/// quadratic in `(k, u)`, and in general a joint quadratic's
+/// profile-minimized vertex (`k**`, from `V(k)`) need not coincide with a
+/// fixed-slice vertex (`k*`, from `V`'s `u = 0` cross-section). Solving
+/// `f_k(u)`'s 2x2 stationarity system (`d f/dk = 0`, `d f/du = 0`) proves
+/// they coincide here anyway: `a(k, u)` and `b(k, u)` depend on `(k, u)`
+/// only through the combined phase `TAU*k + u` (because `dR_turn = TAU*g`
+/// and `pitch = TAU*s` — the per-turn and per-radian centerline slopes are
+/// the same rate measured two ways), so `d f/du = 0` reduces to
+/// `c^2*u** = 0` at the joint stationary point — forcing `u** = 0` and
+/// collapsing the joint vertex onto the exact `u = 0` slice `k*` already
+/// comes from. Concretely, both vertices reduce to the identical closed
+/// form `(g*A + s*B) / (TAU*(g^2 + s^2))` (`A, B` the `phi_c = theta`,
+/// i.e. `k = 0`, values of `a(k), b(k)`): `c^2` shifts `V(k)`'s curvature
+/// and minimum value but never its argmin location. This is an EXACT
+/// identity for every geometry, not merely "close enough"
+/// (`ring_plane_vertex_matches_jordan_refined_vertex` pins `k* == k**` to
+/// `1e-6` against an independent numeric argmin of `V(k)` — built from the
+/// raw `f_k(u)` formula and golden-section refined, never touching the
+/// closed form — over 1500 randomized interior/high-radial/high-taper
+/// geometries; reverting the anchor to the taper-blind `k_est` reproduces
+/// a real divergence in that same test, confirming it has teeth). The
+/// identity relies on `c^2` being CONSTANT in `k` (the part's global
+/// `R_min`, not a per-winding radius) — a future per-winding tightening of
+/// the Jordan bound would break the cancellation and require re-deriving
+/// `k**` from the 2x2 system directly rather than reusing `k*`.
+///
+/// So the window, anchored at `floor(k*)`, is PROVEN to bracket `V(k)`'s
+/// true vertex `k**` exactly; combined with the per-winding Jordan bound
+/// making every evaluated winding conservative (below), the reported
+/// minimum is conservative wherever the window covers the true winner. The
+/// four-wide (not two-wide) span still matters for a separate reason:
+/// `floor` rounding near a half-integer vertex can put the true winner one
+/// slot off center, which the close-wound rounding case exercises directly
+/// (`close_wound_gap_never_reports_negative_between_coils`).
 ///
 /// The window anchor is clamped so the four candidates always sweep the
 /// COVERING windings — those whose intersection with the real sweep
@@ -308,11 +348,10 @@ pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
     let g = (small_r - h.radius_mm) / max_phi;
     let r_min = h.radius_mm.min(small_r);
 
-    // Finding-2 anchor: closed-form quadratic minimizer over the turn index.
-    let k_est = (axial - s * theta) / h.pitch_mm;
-    let dr_turn = g * TAU;
-    let k_star = (h.pitch_mm * h.pitch_mm * k_est + dr_turn * (radial - h.radius_mm - theta * g))
-        / (dr_turn * dr_turn + h.pitch_mm * h.pitch_mm);
+    // Finding-2 / R2 anchor: closed-form quadratic minimizer over the turn
+    // index — proven in the doc above to equal BOTH the ring-plane vertex
+    // k* and the Jordan-refined joint vertex k**.
+    let k_star = candidate_window_vertex(radial, axial, theta, h.radius_mm, h.pitch_mm, g);
 
     // Covering windings and the window anchor clamp (see doc).
     let k_cov_lo = ((-PI - theta) / TAU).ceil();
@@ -369,6 +408,28 @@ pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
         best = best.min(vlen(vsub(p, end)) - profile_cap_radius(h.profile));
     }
     best
+}
+
+/// Closed-form vertex used to anchor [`sd_helix`]'s candidate window —
+/// proven in that function's doc to be simultaneously `k*` (the coarse
+/// ring-plane objective's vertex, `u = 0` fixed) and `k**` (the true vertex
+/// of the Jordan-refined joint objective `V(k) = min_u f_k(u)`), so one
+/// closed form serves both roles. `radial`/`axial`/`theta` are the query's
+/// cylindrical coordinates, `g = dR/dphi` the signed radial centerline
+/// slope; `radius_mm`/`pitch_mm` are the part's large-end radius and pitch.
+fn candidate_window_vertex(
+    radial: f64,
+    axial: f64,
+    theta: f64,
+    radius_mm: f64,
+    pitch_mm: f64,
+    g: f64,
+) -> f64 {
+    let s = pitch_mm / TAU;
+    let k_est = (axial - s * theta) / pitch_mm;
+    let dr_turn = g * TAU;
+    (pitch_mm * pitch_mm * k_est + dr_turn * (radial - radius_mm - theta * g))
+        / (dr_turn * dr_turn + pitch_mm * pitch_mm)
 }
 
 /// Per-winding candidate distance at the shifted in-plane offsets, with the
@@ -519,7 +580,13 @@ mod tests {
     /// rendered solid (ring-plane discs swept along the centerline) is a
     /// subset of the tube, so `sd_helix <= tube distance` is the strictly
     /// stronger conservativeness statement.
-    fn true_helix_distance(p: Vec3, h: &HelixParams) -> f64 {
+    ///
+    /// `pre_scan_n` is the dense-sample count used only to locate the right
+    /// winding's basin before golden-section refinement takes over; the
+    /// refinement supplies the actual precision, so a coarser scan (used by
+    /// the bulk randomized sweep, for speed) is exact as long as it is fine
+    /// enough to not skip past a whole winding (basins are `TAU` wide).
+    fn true_helix_distance(p: Vec3, h: &HelixParams, pre_scan_n: u32) -> f64 {
         let wire_r = match h.profile {
             Profile::Circle { radius_mm } => radius_mm,
             _ => unreachable!(),
@@ -539,7 +606,7 @@ mod tests {
             let d = vsub(p, c);
             vdot(d, d)
         };
-        let n = 200_000_u32;
+        let n = pre_scan_n;
         let mut best_i = 0_u32;
         let mut best = f64::INFINITY;
         for i in 0..=n {
@@ -627,7 +694,7 @@ mod tests {
             for &(radial, y, azimuth) in grid {
                 let p = [radial * azimuth.cos(), y, radial * azimuth.sin()];
                 let d = sd_helix(p, h);
-                let true_d = true_helix_distance(p, h);
+                let true_d = true_helix_distance(p, h, 200_000);
                 assert!(
                     d <= true_d + 1e-9,
                     "over-estimate at radial={radial} y={y} azimuth={azimuth} \
@@ -699,6 +766,158 @@ mod tests {
         }
     }
 
+    /// Deterministic xorshift64 PRNG for reproducible randomized test
+    /// sweeps — a pure-`f64`-math file pulls in no RNG crate dependency for
+    /// test-only sampling. Returns values in `[0, 1)`.
+    struct TestRng(u64);
+    impl TestRng {
+        fn next_unit(&mut self) -> f64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn range(&mut self, lo: f64, hi: f64) -> f64 {
+            lo + self.next_unit() * (hi - lo)
+        }
+    }
+
+    #[test]
+    fn ring_plane_vertex_matches_jordan_refined_vertex() {
+        // R2 review: `k*` (`sd_helix`'s window anchor) is the vertex of the
+        // coarse ring-plane objective `d^2(k)` (fixing `u = 0`) — is it also
+        // the vertex `k**` of the Jordan-refined joint objective `V(k) =
+        // min_u f_k(u)` the rest of the function actually evaluates? The doc
+        // above proves `k* == k**` algebraically (the `c^2*u^2` azimuth term
+        // shifts `V(k)`'s curvature but never its argmin). This test checks
+        // that identity against a GENUINELY INDEPENDENT ground truth: `V(k)`
+        // built straight from the raw joint quadratic `f_k(u)` and minimized
+        // over `u` in closed form (a *different*, standalone expression from
+        // `candidate_window_vertex`'s), then the resulting 1-D profile's own
+        // vertex located by golden-section search — never calling
+        // `candidate_window_vertex` for anything but the value under test.
+        // No dense pre-scan is needed first (unlike `true_helix_distance`):
+        // `V(k)` is a single convex parabola in `k` by construction (see the
+        // doc's derivation), so it has exactly one basin and golden section
+        // finds it directly from a wide bracket.
+        let mut rng = TestRng(0x5eed_1234_dead_beef);
+        for _ in 0..1500 {
+            // Interior / high-radial (near R) / high-taper combinations —
+            // the regime the R2 review flagged as the divergence risk.
+            let radius_mm = rng.range(5.0, 50.0);
+            let taper_small_r = radius_mm * rng.range(0.05, 1.0); // up to 95% taper
+            let pitch_mm = rng.range(0.5, 15.0);
+            let turns = rng.range(1.0, 9.0);
+            let r_min = radius_mm.min(taper_small_r);
+            let radial = r_min * rng.range(0.3, 1.7); // near-cylinder, off-axis
+            let axial = rng.range(-1.0, 1.0) * pitch_mm * turns;
+            let theta = rng.range(0.0, TAU);
+
+            let max_phi = TAU * turns;
+            let s = pitch_mm / TAU;
+            let g = (taper_small_r - radius_mm) / max_phi;
+            let c_sq = 4.0 * radial * r_min / (PI * PI);
+
+            let k_star = candidate_window_vertex(radial, axial, theta, radius_mm, pitch_mm, g);
+
+            // Independent V(k): raw f_k(u) minimized over u in closed form.
+            let v_of_k = |k: f64| -> f64 {
+                let phi_c = theta + TAU * k;
+                let a = radial - (radius_mm + g * phi_c);
+                let b = axial - s * phi_c;
+                let denom = g * g + s * s + c_sq;
+                let u = if denom > 0.0 {
+                    (a * g + b * s) / denom
+                } else {
+                    0.0
+                };
+                (a - g * u).powi(2) + (b - s * u).powi(2) + c_sq * u * u
+            };
+
+            // Golden-section search for V(k)'s vertex over a bracket wide
+            // enough to contain it regardless of where k_star lands.
+            let (mut lo, mut hi) = (k_star - 5.0, k_star + 5.0);
+            let inv_gold = (5.0_f64.sqrt() - 1.0) / 2.0;
+            let mut mid_lo = hi - inv_gold * (hi - lo);
+            let mut mid_hi = lo + inv_gold * (hi - lo);
+            let (mut f_lo, mut f_hi) = (v_of_k(mid_lo), v_of_k(mid_hi));
+            for _ in 0..200 {
+                if f_lo < f_hi {
+                    hi = mid_hi;
+                    mid_hi = mid_lo;
+                    f_hi = f_lo;
+                    mid_lo = hi - inv_gold * (hi - lo);
+                    f_lo = v_of_k(mid_lo);
+                } else {
+                    lo = mid_lo;
+                    mid_lo = mid_hi;
+                    f_lo = f_hi;
+                    mid_hi = lo + inv_gold * (hi - lo);
+                    f_hi = v_of_k(mid_hi);
+                }
+            }
+            let k_star_star = if f_lo < f_hi { mid_lo } else { mid_hi };
+
+            assert!(
+                (k_star - k_star_star).abs() < 1e-6,
+                "k* and k** diverged: k*={k_star} k**~{k_star_star} \
+                 (radius={radius_mm} taper_small_r={taper_small_r} pitch={pitch_mm} \
+                 turns={turns} radial={radial} axial={axial} theta={theta})"
+            );
+        }
+    }
+
+    #[test]
+    fn broadened_conservativeness_sweep_interior_high_radial_high_taper() {
+        // Broadens the finding-1 conservativeness sweep with 2000 points
+        // deliberately targeted at the R2-flagged risk regime: query points
+        // near the coil cylinder ("high-radial"), on steeply tapered cones
+        // ("high-taper"), sampled along the actual swept body ("interior")
+        // rather than only at a handful of hand-picked grid points.
+        let mut rng = TestRng(0xc0ff_ee12_3456_789a);
+        for _ in 0..2000 {
+            let radius_mm = rng.range(5.0, 50.0);
+            let taper_small_r = radius_mm * rng.range(0.05, 1.0);
+            let pitch_mm = rng.range(0.5, 12.0);
+            let turns = rng.range(1.0, 8.0);
+            // Wire radius kept plausible relative to pitch and coil radius
+            // (form-reachable geometry, not degenerate self-overlap).
+            let r_min = radius_mm.min(taper_small_r);
+            let wire_r = rng.range(0.1, (pitch_mm * 0.45).min(r_min * 0.4).max(0.1001));
+            let h = HelixParams {
+                radius_mm,
+                taper_small_r: Some(taper_small_r),
+                pitch_mm,
+                turns,
+                profile: Profile::Circle { radius_mm: wire_r },
+                axial_offset_mm: 0.0,
+            };
+
+            // Query near a random point along the actual sweep: pick a wire
+            // parameter, then jitter radially (biased near the local coil
+            // radius — high-radial) and axially (spanning inside the wire,
+            // in the gap, and a bit beyond).
+            let max_phi = TAU * turns;
+            let phi_query = rng.range(0.0, max_phi);
+            let t = phi_query / max_phi;
+            let local_r = radius_mm + (taper_small_r - radius_mm) * t;
+            let local_y = pitch_mm * phi_query / TAU;
+            let radial = (local_r * rng.range(0.5, 1.5)).max(0.0);
+            let theta = phi_query.rem_euclid(TAU) + rng.range(-0.5, 0.5);
+            let axial = local_y + rng.range(-2.0, 2.0) * pitch_mm;
+
+            let p = [radial * theta.cos(), axial, radial * theta.sin()];
+            let d = sd_helix(p, &h);
+            let true_d = true_helix_distance(p, &h, 4000);
+            assert!(
+                d <= true_d + 1e-9,
+                "over-estimate: d={d} > true={true_d} (radius={radius_mm} \
+                 taper_small_r={taper_small_r} pitch={pitch_mm} turns={turns} \
+                 p={p:?})"
+            );
+        }
+    }
+
     #[test]
     fn sub_turn_end_reports_exterior_distance_not_phantom() {
         // Review finding 3: for turns < 1 the residual raw-phi clamp snaps a
@@ -719,7 +938,7 @@ mod tests {
         let d = sd_helix(p, &h);
         assert!(d > 12.0, "sub-turn phantom: d={d}, expected ~13.14");
         assert!(
-            d <= true_helix_distance(p, &h) + 1e-9,
+            d <= true_helix_distance(p, &h, 200_000) + 1e-9,
             "sub-turn end over-estimates: d={d}"
         );
         // Surface sweep sanity for the sub-turn body itself.
