@@ -37,14 +37,18 @@ pub fn assembly_scene(design: &AssemblyDesign) -> SceneData {
             d.wire_dia.millimeters(),
         );
         // Contrast with the NaN-cascade semantics pinned in the tests below:
-        // a NaN-poisoned member still CONTRIBUTES points (non-finite,
-        // filtered per point by `finite3`) because the solver output was
-        // already poisoned upstream, and a partial render is the accepted
-        // trade-off. A CAPPED member is different — its input is VALID and
-        // solvable, and the sampler returned an EMPTY body; rendering the
-        // assembly minus one member would silently misrepresent the design.
-        // Honest bail instead: any empty member body degrades the WHOLE
-        // scene (empty SceneData → extent None → placeholder).
+        // NaN in COIL COUNTS (active_coils, total_coils) routes through
+        // `scene_from_radius`'s entry guard (empty body → whole-scene bail
+        // via `coil_body_is_empty`). Only NaN in NON-COIL fields (pitch,
+        // mean_dia) produces the contributing-points cascade: a NaN-poisoned
+        // member still CONTRIBUTES points (non-finite, filtered per point by
+        // `finite3`) because the solver output was already poisoned upstream,
+        // and a partial render is the accepted trade-off. A CAPPED member is
+        // different — its input is VALID and solvable, and the sampler
+        // returned an EMPTY body; rendering the assembly minus one member
+        // would silently misrepresent the design. Honest bail instead: any
+        // empty member body degrades the WHOLE scene (empty SceneData →
+        // extent None → placeholder).
         if coil_body_is_empty(&member_scene) {
             return SceneData {
                 polylines: Vec::new(),

@@ -1512,14 +1512,13 @@ fn orbit_message_rerenders_without_disturbing_results() {
     );
 }
 
-/// Every family must render a real 3D scene (not the placeholder) once its
+/// Compression must render a real 3D scene (not the placeholder) once its
 /// design solves and the user switches to the Spring3d visual — the same
 /// non-vacuous double pin (populated-proof label + placeholder absence) as
-/// the `*_chart_renders_after_solve` family, reusing each one's drive
+/// the `compression_chart_renders_after_solve` test, reusing the drive
 /// sequence verbatim.
 #[test]
-fn every_family_renders_3d_after_solve() {
-    // Compression.
+fn compression_renders_3d_after_solve() {
     let mut app = test_app();
     type_into(&mut app, Field::WireDia, "2.0");
     type_into(&mut app, Field::MeanDia, "20.0");
@@ -1527,109 +1526,95 @@ fn every_family_renders_3d_after_solve() {
     type_into(&mut app, Field::FreeLength, "60");
     type_into(&mut app, Field::Loads, "10, 30");
     app.update(Message::Visual(VisualMode::Spring3d));
-    assert!(
-        shows(&app, "Spring rate"),
-        "compression: results must be Populated"
-    );
+    assert!(shows(&app, "Spring rate"), "results must be Populated");
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
-        "compression: a solved design must render a real 3D scene"
+        "a solved design must render a real 3D scene"
     );
+}
 
-    // Extension.
+/// Extension must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `extension_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn extension_renders_3d_after_solve() {
     let mut app = test_app();
     app.update(Message::SelectFamily(Family::Extension));
-    type_into_ext(&mut app, ExtField::WireDia, "2.0");
-    type_into_ext(&mut app, ExtField::MeanDia, "20.0");
-    type_into_ext(&mut app, ExtField::Active, "10");
-    type_into_ext(&mut app, ExtField::FreeLength, "60");
-    type_into_ext(&mut app, ExtField::InitialTension, "10");
-    type_into_ext(&mut app, ExtField::Loads, "10, 30");
+    probe_solve_extension(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
     assert!(
         matches!(ext_results_view(&app), ExtResultsView::Populated(_)),
-        "extension: results must be Populated"
+        "results must be Populated"
     );
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
-        "extension: a solved design must render a real 3D scene"
+        "a solved design must render a real 3D scene"
     );
+}
 
-    // Torsion.
-    {
-        use crate::torsion::form::Field as TF;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(Family::Torsion));
-        type_into_tor(&mut app, TF::WireDia, "2");
-        type_into_tor(&mut app, TF::MeanDia, "20");
-        type_into_tor(&mut app, TF::BodyCoils, "5");
-        type_into_tor(&mut app, TF::Leg1, "0");
-        type_into_tor(&mut app, TF::Leg2, "0");
-        type_into_tor(&mut app, TF::Moments, "1000");
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(app.tor_outcome.is_some(), "torsion: design must solve");
-        assert!(
-            shows(&app, "Geometry"),
-            "torsion: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "torsion: a solved design must render a real 3D scene"
-        );
-    }
+/// Torsion must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `torsion_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn torsion_renders_3d_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Torsion));
+    probe_solve_torsion(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(app.tor_outcome.is_some(), "design must solve");
+    assert!(shows(&app, "Geometry"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
+}
 
-    // Conical.
-    {
-        use crate::conical::form::Field as CF;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(Family::Conical));
-        type_into_con(&mut app, CF::WireDia, "2");
-        type_into_con(&mut app, CF::LargeMeanDia, "20");
-        type_into_con(&mut app, CF::SmallMeanDia, "12");
-        type_into_con(&mut app, CF::Active, "10");
-        type_into_con(&mut app, CF::FreeLength, "60");
-        type_into_con(&mut app, CF::Loads, "10, 25");
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(app.con_outcome.is_some(), "conical: solve must succeed");
-        assert!(
-            shows(&app, "Geometry"),
-            "conical: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "conical: a solved design must render a real 3D scene"
-        );
-    }
+/// Conical must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `conical_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn conical_renders_3d_after_solve() {
+    use crate::conical::form::Field as CF;
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Conical));
+    type_into_con(&mut app, CF::WireDia, "2");
+    type_into_con(&mut app, CF::LargeMeanDia, "20");
+    type_into_con(&mut app, CF::SmallMeanDia, "12");
+    type_into_con(&mut app, CF::Active, "10");
+    type_into_con(&mut app, CF::FreeLength, "60");
+    type_into_con(&mut app, CF::Loads, "10, 25");
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(app.con_outcome.is_some(), "solve must succeed");
+    assert!(shows(&app, "Geometry"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
+}
 
-    // Assembly.
-    {
-        use crate::assembly::form::MemberField as F;
-        let mut app = test_app();
-        app.update(Message::SelectFamily(springcore::Family::Assembly));
-        type_into_asm_member(&mut app, 0, F::WireDia, "2");
-        type_into_asm_member(&mut app, 0, F::MeanDia, "20");
-        type_into_asm_member(&mut app, 0, F::Active, "10");
-        type_into_asm_member(&mut app, 0, F::FreeLength, "60");
-        app.update(Message::AsmMemberAdd);
-        type_into_asm_member(&mut app, 1, F::WireDia, "1.5");
-        type_into_asm_member(&mut app, 1, F::MeanDia, "16");
-        type_into_asm_member(&mut app, 1, F::Active, "8");
-        type_into_asm_member(&mut app, 1, F::FreeLength, "60");
-        app.update(Message::AsmLoads("10, 25".into()));
-        app.update(Message::Visual(VisualMode::Spring3d));
-        assert!(
-            app.asm_outcome.is_some(),
-            "assembly: two-member assembly must solve"
-        );
-        assert!(
-            shows(&app, "Summary"),
-            "assembly: results must be Populated"
-        );
-        assert!(
-            !shows(&app, SCENE_PLACEHOLDER),
-            "assembly: a solved design must render a real 3D scene"
-        );
-    }
+/// Assembly must render a real 3D scene (not the placeholder) once its
+/// design solves and the user switches to the Spring3d visual — the same
+/// non-vacuous double pin (populated-proof label + placeholder absence) as
+/// the `assembly_chart_renders_after_solve` test, reusing the drive
+/// sequence verbatim.
+#[test]
+fn assembly_renders_3d_after_solve() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(springcore::Family::Assembly));
+    probe_solve_assembly(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(app.asm_outcome.is_some(), "two-member assembly must solve");
+    assert!(shows(&app, "Summary"), "results must be Populated");
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a solved design must render a real 3D scene"
+    );
 }
 
 /// CRITICAL reproduction (panel R2, item 1): a body-coil count past the
