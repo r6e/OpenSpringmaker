@@ -2393,3 +2393,108 @@ fn family_tab_row_switches_family_by_clicking_the_label() {
         assert!(shows(&app, name), "tab {name} must be visible");
     }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Panel R1 item 1: re-clicking an already-selected segmented/settings option
+// must be a no-op. Every option in `segmented` (and the settings screen's own
+// prose-button loop) previously attached `.on_press` unconditionally — even to
+// the already-selected option — so clicking it still dispatched a same-valued
+// message. Every one of those handlers unconditionally returns `true` (or, for
+// settings, unconditionally clears `settings_error`), which drives
+// `App::update` to call `recompute()` — and `recompute()` unconditionally
+// clears `action_error` (app.rs:345), erasing a save-failure status though
+// nothing actually changed. Fix: only attach `.on_press` when the option is
+// NOT already selected, so a re-click produces zero messages.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Re-clicking the already-selected family tab must not clear a stale
+/// `action_error` — nothing changed, so nothing should recompute.
+#[test]
+fn family_tab_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(
+        app.family,
+        Family::Compression,
+        "default family is Compression"
+    );
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Compression");
+    assert_eq!(app.family, Family::Compression);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected family tab must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected units option must not clear a stale
+/// `action_error`.
+#[test]
+fn units_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    assert_eq!(app.unit_system, UnitSystem::Metric, "default is Metric");
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Metric (mm, N)");
+    assert_eq!(app.unit_system, UnitSystem::Metric);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected units option must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected hook-mode option must not clear a stale
+/// `action_error`.
+#[test]
+fn hook_mode_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    app.update(Message::SelectFamily(Family::Extension));
+    probe_solve_extension(&mut app);
+    assert_eq!(
+        app.extension.hook_mode,
+        HookMode::Default,
+        "default hook mode is Default"
+    );
+    app.action_error = Some("sentinel".into());
+    click(&mut app, "Default (machine loops)");
+    assert_eq!(app.extension.hook_mode, HookMode::Default);
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected hook mode must not recompute"
+    );
+}
+
+/// Re-clicking the already-selected settings correction option must not clear
+/// a stale `action_error`, nor touch `settings_error` — the settings screen's
+/// own prose-button loop (not the shared `segmented` widget) needs the same
+/// guard.
+#[test]
+fn settings_correction_reclick_already_selected_preserves_action_error() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser,
+        "test_app's fixed default correction is Bergstrasser"
+    );
+    app.action_error = Some("sentinel".into());
+    app.settings_error = Some("stale settings error".into());
+    click(&mut app, "Bergsträsser (EN 13906-1 / Shigley default)");
+    assert_eq!(
+        app.correction,
+        springcore::CurvatureCorrection::Bergstrasser
+    );
+    assert_eq!(
+        app.action_error.as_deref(),
+        Some("sentinel"),
+        "re-clicking the already-selected correction option must not recompute"
+    );
+    assert_eq!(
+        app.settings_error.as_deref(),
+        Some("stale settings error"),
+        "re-clicking the already-selected correction option must not re-run the save path"
+    );
+}

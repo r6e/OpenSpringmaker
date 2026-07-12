@@ -53,11 +53,18 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
 
     for (value, label, selected) in option_data {
         let label_text = text(label).size(SZ_BODY);
-        let btn = button(label_text)
-            .on_press(Message::SetCorrection(value))
+        let mut btn = button(label_text)
             .style(segmented_style(pal, selected))
             .width(Length::Fill)
             .padding([SP_SM, SP_MD]);
+        // The already-selected option gets no `.on_press`: re-clicking it would
+        // still dispatch `SetCorrection` with the same value, and its handler
+        // unconditionally returns `true`, triggering a `recompute()` that would
+        // clear a pending `action_error` though nothing changed (same no-op
+        // guard as `widgets::segmented`).
+        if !selected {
+            btn = btn.on_press(Message::SetCorrection(value));
+        }
         options_col = options_col.push(btn);
     }
 

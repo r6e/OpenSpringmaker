@@ -543,6 +543,15 @@ pub(crate) fn segmented_style(
 /// built-in single-select widget draws its label directly with no child
 /// `Text` widget, so it never feeds a `Candidate::Text` and is structurally
 /// invisible to `Simulator::find`).
+///
+/// The already-selected option gets no `.on_press`: clicking it would still
+/// dispatch the same-valued message, and every consumer's handler
+/// unconditionally returns `true` from `App::update`, which triggers
+/// `recompute()` — clearing any pending `action_error` though nothing
+/// actually changed (the documented no-op invariant at app.rs:621-622). A
+/// button without `.on_press` renders with `Status::Disabled`, but
+/// `segmented_style` only branches on `Hovered`, so the selected option's
+/// look is unaffected.
 pub(crate) fn segmented<'a, T: PartialEq + Copy + 'a>(
     pal: &'static Palette,
     options: &[(&'static str, T)],
@@ -551,12 +560,14 @@ pub(crate) fn segmented<'a, T: PartialEq + Copy + 'a>(
 ) -> Element<'a, Message> {
     let mut r = row![].spacing(SP_XS);
     for (label, value) in options {
-        r = r.push(
-            button(text(*label).size(SZ_LABEL))
-                .on_press(on_pick(*value))
-                .style(segmented_style(pal, *value == selected))
-                .padding([SP_XS, SP_MD]),
-        );
+        let is_selected = *value == selected;
+        let mut btn = button(text(*label).size(SZ_LABEL))
+            .style(segmented_style(pal, is_selected))
+            .padding([SP_XS, SP_MD]);
+        if !is_selected {
+            btn = btn.on_press(on_pick(*value));
+        }
+        r = r.push(btn);
     }
     r.into()
 }
