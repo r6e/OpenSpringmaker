@@ -811,22 +811,15 @@ impl App {
                 true
             }
             Message::ThemePref(p) => {
-                // Persist on a real change, same as every other preference —
-                // but ALSO when a prior save is still failing: the settings
-                // view keeps the selected theme option clickable exactly in
-                // that case (a one-click retry), so a same-value retry click
-                // must still attempt the write. `set_if_changed` must run
-                // first regardless: it's what actually updates `theme_pref`
-                // on a real change, and its `bool` return still distinguishes
-                // "changed" from "no-op retry" for anyone reading the value.
-                let changed = set_if_changed(&mut self.theme_pref, p);
-                if changed || self.settings_error.is_some() {
-                    self.persist_settings();
-                }
+                // Deliberate parity with SetCorrection: the VM's `clickable`
+                // flag is the single owner of when a same-value click can
+                // happen (the retry case), so this arm always writes and saves.
+                self.theme_pref = p;
+                self.persist_settings();
                 false
             }
             Message::SystemTheme(mode) => {
-                let _ = set_if_changed(&mut self.system_mode, mode);
+                self.system_mode = mode;
                 false
             }
 
