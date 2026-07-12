@@ -33,6 +33,12 @@ pub struct Palette {
     pub muted: Color,
     /// Accent — active controls, focus, governing result.
     pub accent: Color,
+    /// Selected-option background tint. Palette-owned: a ×0.15 dark-tint is a
+    /// dark-theme assumption; LIGHT defines its own pale tint.
+    pub accent_tint: Color,
+    /// Hovered-option background. Palette-owned: +0.05 lightens on dark; LIGHT
+    /// darkens instead.
+    pub hover: Color,
     /// Caution / warning indicator.
     pub warn: Color,
     /// Danger / error indicator.
@@ -83,6 +89,18 @@ pub const DARK: Palette = Palette {
         r: 0.298,
         g: 0.761,
         b: 1.0,
+        a: 1.0,
+    },
+    accent_tint: Color {
+        r: 0.298 * 0.15,
+        g: 0.761 * 0.15,
+        b: 1.0 * 0.15,
+        a: 1.0,
+    },
+    hover: Color {
+        r: 0.122 + 0.05,
+        g: 0.149 + 0.05,
+        b: 0.188 + 0.05,
         a: 1.0,
     },
     warn: Color {
@@ -2333,6 +2351,28 @@ mod tests {
         assert!(
             app.asm_outcome.is_none(),
             "switching away from Assembly must clear asm_outcome"
+        );
+    }
+
+    #[test]
+    fn palette_dark_derived_fields_match_the_legacy_runtime_math() {
+        assert_eq!(
+            DARK.accent_tint,
+            Color {
+                r: DARK.accent.r * 0.15,
+                g: DARK.accent.g * 0.15,
+                b: DARK.accent.b * 0.15,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.hover,
+            Color {
+                r: DARK.raised.r + 0.05,
+                g: DARK.raised.g + 0.05,
+                b: DARK.raised.b + 0.05,
+                a: 1.0
+            }
         );
     }
 }
