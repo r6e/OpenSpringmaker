@@ -2746,4 +2746,14 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn subscription_wires_at_least_one_recipe() {
+        let app = test_app();
+        assert_ne!(
+            app.subscription().units(),
+            0,
+            "App::subscription must wire the OS theme_changes recipe"
+        );
+    }
 }
