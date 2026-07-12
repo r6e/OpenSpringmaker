@@ -337,6 +337,17 @@ impl Default for App {
     }
 }
 
+/// Assign `value` to `slot` only if it differs; returns whether it changed.
+/// Mirrors the update contract: `false` ⇒ no mutation ⇒ no recompute ⇒
+/// `action_error` preserved (the pick_list no-op guard).
+fn set_if_changed<T: PartialEq>(slot: &mut T, value: T) -> bool {
+    let changed = *slot != value;
+    if changed {
+        *slot = value;
+    }
+    changed
+}
+
 impl App {
     /// Re-solve from the current form, storing either an outcome or an error string.
     pub fn recompute(&mut self) {
@@ -529,95 +540,31 @@ impl App {
                 self.extension.hook_mode = m;
                 true
             }
-            Message::ExtScenario(s) => {
-                // Same no-op-is-side-effect-free contract as `AsmField`
-                // (app.rs:580 comment): a pick_list dispatches `on_select`
-                // unconditionally even when re-selecting the current value
-                // (iced's pick_list.rs), so this must not blindly recompute —
-                // that would clear a pending `action_error` though nothing
-                // changed.
-                if s == self.extension.scenario {
-                    false
-                } else {
-                    self.extension.scenario = s;
-                    true
-                }
-            }
+            // A pick_list dispatches `on_select` unconditionally even when
+            // re-selecting the current value (iced's pick_list.rs), so this
+            // must not blindly recompute — that would clear a pending
+            // `action_error` though nothing changed. `set_if_changed` is the
+            // shared no-op guard for every pick_list-backed handler below.
+            Message::ExtScenario(s) => set_if_changed(&mut self.extension.scenario, s),
             Message::TorField(f, v) => {
                 self.set_tor_field(f, v);
                 true
             }
             // Same pick_list no-op contract as `ExtScenario` above for the
             // remaining torsion pick_list handlers.
-            Message::TorFriction(m) => {
-                if m == self.torsion.friction_model {
-                    false
-                } else {
-                    self.torsion.friction_model = m;
-                    true
-                }
-            }
-            Message::TorScenario(s) => {
-                if s == self.torsion.scenario {
-                    false
-                } else {
-                    self.torsion.scenario = s;
-                    true
-                }
-            }
-            Message::TorMomentEntry(m) => {
-                if m == self.torsion.moment_entry {
-                    false
-                } else {
-                    self.torsion.moment_entry = m;
-                    true
-                }
-            }
-            Message::TorDiaPolicy(p) => {
-                if p == self.torsion.dia_policy {
-                    false
-                } else {
-                    self.torsion.dia_policy = p;
-                    true
-                }
-            }
-            Message::TorCycleLife(l) => {
-                if l == self.torsion.cycle_life {
-                    false
-                } else {
-                    self.torsion.cycle_life = l;
-                    true
-                }
-            }
+            Message::TorFriction(m) => set_if_changed(&mut self.torsion.friction_model, m),
+            Message::TorScenario(s) => set_if_changed(&mut self.torsion.scenario, s),
+            Message::TorMomentEntry(m) => set_if_changed(&mut self.torsion.moment_entry, m),
+            Message::TorDiaPolicy(p) => set_if_changed(&mut self.torsion.dia_policy, p),
+            Message::TorCycleLife(l) => set_if_changed(&mut self.torsion.cycle_life, l),
             Message::ConField(f, v) => {
                 self.set_con_field(f, v);
                 true
             }
             // Same pick_list no-op contract as `ExtScenario` above.
-            Message::ConEndType(e) => {
-                if e == self.conical.end_type {
-                    false
-                } else {
-                    self.conical.end_type = e;
-                    true
-                }
-            }
-            Message::AsmTopology(t) => {
-                if t == self.assembly.topology {
-                    false
-                } else {
-                    self.assembly.topology = t;
-                    true
-                }
-            }
-            Message::AsmFixity(f) => {
-                if f == self.assembly.fixity {
-                    false
-                } else {
-                    self.assembly.fixity = f;
-                    true
-                }
-            }
+            Message::ConEndType(e) => set_if_changed(&mut self.conical.end_type, e),
+            Message::AsmTopology(t) => set_if_changed(&mut self.assembly.topology, t),
+            Message::AsmFixity(f) => set_if_changed(&mut self.assembly.fixity, f),
             Message::AsmLoads(v) => {
                 self.assembly.loads = v;
                 true
@@ -643,20 +590,16 @@ impl App {
             // Bounds-checked per the `AsmField` precedent above, AND value-checked
             // per the pick_list no-op contract (`ExtScenario` above): re-selecting
             // a member's CURRENT material/end type is also a no-op.
-            Message::AsmMemberMaterial(i, mat) => match self.assembly.members.get_mut(i) {
-                Some(m) if m.material != mat => {
-                    m.material = mat;
-                    true
-                }
-                _ => false,
-            },
-            Message::AsmMemberEndType(i, et) => match self.assembly.members.get_mut(i) {
-                Some(m) if m.end_type != et => {
-                    m.end_type = et;
-                    true
-                }
-                _ => false,
-            },
+            Message::AsmMemberMaterial(i, mat) => self
+                .assembly
+                .members
+                .get_mut(i)
+                .is_some_and(|m| set_if_changed(&mut m.material, mat)),
+            Message::AsmMemberEndType(i, et) => self
+                .assembly
+                .members
+                .get_mut(i)
+                .is_some_and(|m| set_if_changed(&mut m.end_type, et)),
             Message::AsmMemberAdd => {
                 self.assembly
                     .members
@@ -675,42 +618,14 @@ impl App {
                 }
             }
             // Same pick_list no-op contract as `ExtScenario` above.
-            Message::Material(m) => {
-                if m == self.material {
-                    false
-                } else {
-                    self.material = m;
-                    true
-                }
-            }
-            Message::Scenario(s) => {
-                if s == self.form.scenario {
-                    false
-                } else {
-                    self.form.scenario = s;
-                    true
-                }
-            }
+            Message::Material(m) => set_if_changed(&mut self.material, m),
+            Message::Scenario(s) => set_if_changed(&mut self.form.scenario, s),
             Message::Units(u) => {
                 self.unit_system = u;
                 true
             }
-            Message::EndType(e) => {
-                if e == self.form.end_type {
-                    false
-                } else {
-                    self.form.end_type = e;
-                    true
-                }
-            }
-            Message::Fixity(f) => {
-                if f == self.form.fixity {
-                    false
-                } else {
-                    self.form.fixity = f;
-                    true
-                }
-            }
+            Message::EndType(e) => set_if_changed(&mut self.form.end_type, e),
+            Message::Fixity(f) => set_if_changed(&mut self.form.fixity, f),
             // Save never mutates the form, so it must not recompute — that would
             // clear the `action_error` a failed save just set.
             Message::Save => {
@@ -772,14 +687,21 @@ impl App {
                 self.mat_error = None;
                 false
             }
+            // Same pick_list no-op contract as `ExtScenario` above, applied to
+            // `mat_error` rather than `action_error`: re-selecting the
+            // materials-editor pick_list's CURRENT value must not clear a
+            // pending error, but a genuine change still must (deliberate
+            // policy for real edits, unchanged).
             Message::MatFormKind(k) => {
-                self.mat_form.mts_form = k;
-                self.mat_error = None;
+                if set_if_changed(&mut self.mat_form.mts_form, k) {
+                    self.mat_error = None;
+                }
                 false
             }
             Message::MatUnits(u) => {
-                self.mat_form.mts_units = u;
-                self.mat_error = None;
+                if set_if_changed(&mut self.mat_form.mts_units, u) {
+                    self.mat_error = None;
+                }
                 false
             }
             Message::MatToggleEndurance(b) => {
@@ -2316,6 +2238,55 @@ mod tests {
                 "re-selecting {name}'s current value must be a no-op and must not clear action_error"
             );
         }
+    }
+
+    /// Panel R3 item 1 (adversary, reproduced): `MatFormKind`/`MatUnits` were
+    /// missed by the R2 sweep above — both unconditionally cleared
+    /// `mat_error`, so re-selecting the materials-editor pick_list's CURRENT
+    /// value wiped a pending error banner though nothing changed. Same no-op
+    /// contract as `pick_list_reselect_current_value_preserves_action_error`
+    /// above, but for `mat_error` on these two handlers — AND a genuine
+    /// change must still clear `mat_error` (the deliberate policy for real
+    /// edits, unchanged).
+    /// Revert-probe: drop either guard back to an unconditional `self.mat_error
+    /// = None` → that handler's same-value assertion fails → restore → green.
+    #[test]
+    fn mat_form_pick_lists_guard_mat_error_on_same_value_only() {
+        let mut app = test_app();
+
+        // Same-value dispatch must NOT clear a pending mat_error.
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatFormKind(app.mat_form.mts_form));
+        assert_eq!(
+            app.mat_error.as_deref(),
+            Some("sentinel"),
+            "re-selecting MatFormKind's current value must not clear mat_error"
+        );
+
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatUnits(app.mat_form.mts_units));
+        assert_eq!(
+            app.mat_error.as_deref(),
+            Some("sentinel"),
+            "re-selecting MatUnits's current value must not clear mat_error"
+        );
+
+        // A REAL change must still clear mat_error (deliberate policy preserved).
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatFormKind(MtsForm::Constant));
+        assert!(
+            app.mat_error.is_none(),
+            "a genuine MatFormKind change must still clear mat_error"
+        );
+        assert_eq!(app.mat_form.mts_form, MtsForm::Constant);
+
+        app.mat_error = Some("sentinel".to_string());
+        app.update(Message::MatUnits(StrengthUnits::UsKpsiInch));
+        assert!(
+            app.mat_error.is_none(),
+            "a genuine MatUnits change must still clear mat_error"
+        );
+        assert_eq!(app.mat_form.mts_units, StrengthUnits::UsKpsiInch);
     }
 
     /// Switching away from Assembly must clear the asm_outcome so the results
