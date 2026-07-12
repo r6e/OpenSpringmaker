@@ -1520,11 +1520,7 @@ fn orbit_message_rerenders_without_disturbing_results() {
 #[test]
 fn compression_renders_3d_after_solve() {
     let mut app = test_app();
-    type_into(&mut app, Field::WireDia, "2.0");
-    type_into(&mut app, Field::MeanDia, "20.0");
-    type_into(&mut app, Field::Active, "10");
-    type_into(&mut app, Field::FreeLength, "60");
-    type_into(&mut app, Field::Loads, "10, 30");
+    probe_solve_compression(&mut app);
     app.update(Message::Visual(VisualMode::Spring3d));
     assert!(shows(&app, "Spring rate"), "results must be Populated");
     assert!(
@@ -1536,7 +1532,7 @@ fn compression_renders_3d_after_solve() {
 /// Extension must render a real 3D scene (not the placeholder) once its
 /// design solves and the user switches to the Spring3d visual — the same
 /// non-vacuous double pin (populated-proof label + placeholder absence) as
-/// the `extension_chart_renders_after_solve` test, reusing the drive
+/// the `ext_chart_renders_after_solve` test, reusing the drive
 /// sequence verbatim.
 #[test]
 fn extension_renders_3d_after_solve() {
