@@ -530,48 +530,93 @@ impl App {
                 true
             }
             Message::ExtScenario(s) => {
-                self.extension.scenario = s;
-                true
+                // Same no-op-is-side-effect-free contract as `AsmField`
+                // (app.rs:580 comment): a pick_list dispatches `on_select`
+                // unconditionally even when re-selecting the current value
+                // (iced's pick_list.rs), so this must not blindly recompute —
+                // that would clear a pending `action_error` though nothing
+                // changed.
+                if s == self.extension.scenario {
+                    false
+                } else {
+                    self.extension.scenario = s;
+                    true
+                }
             }
             Message::TorField(f, v) => {
                 self.set_tor_field(f, v);
                 true
             }
+            // Same pick_list no-op contract as `ExtScenario` above for the
+            // remaining torsion pick_list handlers.
             Message::TorFriction(m) => {
-                self.torsion.friction_model = m;
-                true
+                if m == self.torsion.friction_model {
+                    false
+                } else {
+                    self.torsion.friction_model = m;
+                    true
+                }
             }
             Message::TorScenario(s) => {
-                self.torsion.scenario = s;
-                true
+                if s == self.torsion.scenario {
+                    false
+                } else {
+                    self.torsion.scenario = s;
+                    true
+                }
             }
             Message::TorMomentEntry(m) => {
-                self.torsion.moment_entry = m;
-                true
+                if m == self.torsion.moment_entry {
+                    false
+                } else {
+                    self.torsion.moment_entry = m;
+                    true
+                }
             }
             Message::TorDiaPolicy(p) => {
-                self.torsion.dia_policy = p;
-                true
+                if p == self.torsion.dia_policy {
+                    false
+                } else {
+                    self.torsion.dia_policy = p;
+                    true
+                }
             }
             Message::TorCycleLife(l) => {
-                self.torsion.cycle_life = l;
-                true
+                if l == self.torsion.cycle_life {
+                    false
+                } else {
+                    self.torsion.cycle_life = l;
+                    true
+                }
             }
             Message::ConField(f, v) => {
                 self.set_con_field(f, v);
                 true
             }
+            // Same pick_list no-op contract as `ExtScenario` above.
             Message::ConEndType(e) => {
-                self.conical.end_type = e;
-                true
+                if e == self.conical.end_type {
+                    false
+                } else {
+                    self.conical.end_type = e;
+                    true
+                }
             }
             Message::AsmTopology(t) => {
-                self.assembly.topology = t;
-                true
+                if t == self.assembly.topology {
+                    false
+                } else {
+                    self.assembly.topology = t;
+                    true
+                }
             }
             Message::AsmFixity(f) => {
-                self.assembly.fixity = f;
-                true
+                if f == self.assembly.fixity {
+                    false
+                } else {
+                    self.assembly.fixity = f;
+                    true
+                }
             }
             Message::AsmLoads(v) => {
                 self.assembly.loads = v;
@@ -595,22 +640,23 @@ impl App {
                     false
                 }
             }
-            Message::AsmMemberMaterial(i, mat) => {
-                if let Some(m) = self.assembly.members.get_mut(i) {
+            // Bounds-checked per the `AsmField` precedent above, AND value-checked
+            // per the pick_list no-op contract (`ExtScenario` above): re-selecting
+            // a member's CURRENT material/end type is also a no-op.
+            Message::AsmMemberMaterial(i, mat) => match self.assembly.members.get_mut(i) {
+                Some(m) if m.material != mat => {
                     m.material = mat;
                     true
-                } else {
-                    false
                 }
-            }
-            Message::AsmMemberEndType(i, et) => {
-                if let Some(m) = self.assembly.members.get_mut(i) {
+                _ => false,
+            },
+            Message::AsmMemberEndType(i, et) => match self.assembly.members.get_mut(i) {
+                Some(m) if m.end_type != et => {
                     m.end_type = et;
                     true
-                } else {
-                    false
                 }
-            }
+                _ => false,
+            },
             Message::AsmMemberAdd => {
                 self.assembly
                     .members
@@ -628,25 +674,42 @@ impl App {
                     false
                 }
             }
+            // Same pick_list no-op contract as `ExtScenario` above.
             Message::Material(m) => {
-                self.material = m;
-                true
+                if m == self.material {
+                    false
+                } else {
+                    self.material = m;
+                    true
+                }
             }
             Message::Scenario(s) => {
-                self.form.scenario = s;
-                true
+                if s == self.form.scenario {
+                    false
+                } else {
+                    self.form.scenario = s;
+                    true
+                }
             }
             Message::Units(u) => {
                 self.unit_system = u;
                 true
             }
             Message::EndType(e) => {
-                self.form.end_type = e;
-                true
+                if e == self.form.end_type {
+                    false
+                } else {
+                    self.form.end_type = e;
+                    true
+                }
             }
             Message::Fixity(f) => {
-                self.form.fixity = f;
-                true
+                if f == self.form.fixity {
+                    false
+                } else {
+                    self.form.fixity = f;
+                    true
+                }
             }
             // Save never mutates the form, so it must not recompute — that would
             // clear the `action_error` a failed save just set.
@@ -2150,6 +2213,108 @@ mod tests {
             Some("prior status"),
             "OOB member-attribute writes are no-ops and must not clear action_error"
         );
+    }
+
+    /// Panel R2 item 1: iced's `pick_list` dispatches `on_select`
+    /// unconditionally, even when re-selecting the value that's ALREADY
+    /// selected (vendored `pick_list.rs`) — so every pick_list-backed handler
+    /// must guard at the UPDATE boundary (this file's own `AsmField`/
+    /// `AsmMemberRemove` precedent above), not rely on the view-level
+    /// (`segmented`) guard alone. Exercises all 15 affected handlers: firing
+    /// each with its OWN current value must be a no-op, so a pending
+    /// `action_error` must survive every one of them.
+    /// Revert-probe: revert any ONE handler to its old unconditional-`true`
+    /// shape (e.g. `Message::Material(m) => { self.material = m; true }`) →
+    /// that handler's iteration clears `action_error` → the assert for that
+    /// name fails → restore → green.
+    #[test]
+    fn pick_list_reselect_current_value_preserves_action_error() {
+        let mut app = test_app();
+        // A valid (non-OOB) member index for AsmMemberMaterial/AsmMemberEndType.
+        assert_eq!(app.assembly.members.len(), 1);
+
+        let dispatchers: Vec<(&str, Box<dyn Fn(&mut App)>)> = vec![
+            (
+                "Material",
+                Box::new(|a: &mut App| a.update(Message::Material(a.material.clone()))),
+            ),
+            (
+                "Scenario",
+                Box::new(|a: &mut App| a.update(Message::Scenario(a.form.scenario))),
+            ),
+            (
+                "EndType",
+                Box::new(|a: &mut App| a.update(Message::EndType(a.form.end_type.clone()))),
+            ),
+            (
+                "Fixity",
+                Box::new(|a: &mut App| a.update(Message::Fixity(a.form.fixity.clone()))),
+            ),
+            (
+                "ExtScenario",
+                Box::new(|a: &mut App| a.update(Message::ExtScenario(a.extension.scenario))),
+            ),
+            (
+                "TorFriction",
+                Box::new(|a: &mut App| a.update(Message::TorFriction(a.torsion.friction_model))),
+            ),
+            (
+                "TorScenario",
+                Box::new(|a: &mut App| a.update(Message::TorScenario(a.torsion.scenario))),
+            ),
+            (
+                "TorMomentEntry",
+                Box::new(|a: &mut App| {
+                    a.update(Message::TorMomentEntry(a.torsion.moment_entry))
+                }),
+            ),
+            (
+                "TorDiaPolicy",
+                Box::new(|a: &mut App| a.update(Message::TorDiaPolicy(a.torsion.dia_policy))),
+            ),
+            (
+                "TorCycleLife",
+                Box::new(|a: &mut App| a.update(Message::TorCycleLife(a.torsion.cycle_life))),
+            ),
+            (
+                "ConEndType",
+                Box::new(|a: &mut App| a.update(Message::ConEndType(a.conical.end_type.clone()))),
+            ),
+            (
+                "AsmTopology",
+                Box::new(|a: &mut App| {
+                    a.update(Message::AsmTopology(a.assembly.topology.clone()))
+                }),
+            ),
+            (
+                "AsmFixity",
+                Box::new(|a: &mut App| a.update(Message::AsmFixity(a.assembly.fixity.clone()))),
+            ),
+            (
+                "AsmMemberMaterial",
+                Box::new(|a: &mut App| {
+                    let mat = a.assembly.members[0].material.clone();
+                    a.update(Message::AsmMemberMaterial(0, mat));
+                }),
+            ),
+            (
+                "AsmMemberEndType",
+                Box::new(|a: &mut App| {
+                    let et = a.assembly.members[0].end_type.clone();
+                    a.update(Message::AsmMemberEndType(0, et));
+                }),
+            ),
+        ];
+
+        for (name, dispatch) in dispatchers {
+            app.action_error = Some("sentinel".to_string());
+            dispatch(&mut app);
+            assert_eq!(
+                app.action_error.as_deref(),
+                Some("sentinel"),
+                "re-selecting {name}'s current value must be a no-op and must not clear action_error"
+            );
+        }
     }
 
     /// Switching away from Assembly must clear the asm_outcome so the results
