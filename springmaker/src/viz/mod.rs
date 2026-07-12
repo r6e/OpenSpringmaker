@@ -13,6 +13,7 @@ use std::f64::consts::TAU;
 
 pub mod canvas3d;
 pub mod render3d;
+pub mod sdf;
 
 pub use canvas3d::scene_element;
 #[cfg(test)]
