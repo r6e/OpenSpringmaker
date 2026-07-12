@@ -2586,3 +2586,125 @@ fn screen_shell_caps_content_not_padding_on_wide_windows() {
          (Results heading at x=652), not the padded box (which would land at x=628)"
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 4: Settings theme picker (System/Light/Dark), ViewModel-owned
+// clickability. The clickable rule (`!selected || settings_error.is_some()`)
+// lives in `SettingsViewModel` (see `settings_view_model.rs` tests); these
+// exercise the actual rendered widget tree end to end.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Clicking the "Light" theme option switches the resolved palette and the
+/// Settings screen still shows its "Theme" heading afterward.
+/// Revert-probe (a): make the VM mark every theme option `clickable = false`
+/// → the "Light" button gets no `.on_press` → the click below emits no
+/// message → `app.pal()` stays `DARK` (test_app's default `System` pref
+/// resolves to `DARK`) → this assertion FAILS → restore → green.
+#[test]
+fn theme_picker_switches_to_light_by_clicking_the_label() {
+    let mut app = test_app();
+    app.update(Message::NavigateTo(Screen::Settings));
+    click(&mut app, "Light");
+    assert!(std::ptr::eq(app.pal(), &crate::app::LIGHT));
+    assert!(shows(&app, "Theme"));
+}
+
+/// No-op reclick sentinel: clicking the already-selected theme option while
+/// no save is failing must emit zero messages (mirrors
+/// `settings_correction_reclick_already_selected_preserves_action_error`).
+/// `Message::ThemePref` only recomputes state through `persist_settings`
+/// when the dispatched value differs from the current one (or a save is
+/// already failing), so the discriminating signal here is the message
+/// count itself rather than `action_error`/`settings_error`.
+#[test]
+fn settings_theme_reclick_already_selected_emits_no_message() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::System,
+        "test_app's default theme pref is System"
+    );
+    assert!(
+        app.settings_error.is_none(),
+        "pre-condition: no save is currently failing"
+    );
+
+    let mut sim = ui(&app);
+    sim.click("System")
+        .unwrap_or_else(|_| panic!("no clickable widget matching \"System\""));
+    let messages: Vec<_> = sim.into_messages().collect();
+    assert!(
+        messages.is_empty(),
+        "re-clicking the already-selected theme option while no save is failing \
+         must emit no message"
+    );
+}
+
+/// Panel-carried item: `ThemePref` performs a real file write via
+/// `persist_settings`, just like `SetCorrection`, so a FAILED save must
+/// remain retryable from this screen — mirrors
+/// `settings_correction_reclick_retries_after_a_failed_save`. Seeding the
+/// failure requires an actual value CHANGE (`ThemePref`'s handler only calls
+/// `persist_settings` when the value changes, or a save is already failing —
+/// unlike `SetCorrection`, which always persists), so the setup dispatches
+/// `Light` (a change from the default `System`) before retrying with the
+/// SAME value through the Simulator.
+/// Revert-probe (b): drop the `|| self.settings_error.is_some()` clause from
+/// app.rs's `Message::ThemePref` arm → the retry click dispatches `ThemePref`
+/// with the SAME (already-current) value → `set_if_changed` returns `false`
+/// → `persist_settings` never runs → `settings_error` stays `Some` → this
+/// test FAILS → restore → green.
+#[test]
+fn settings_theme_reclick_retries_after_a_failed_save() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::System,
+        "test_app's default theme pref is System"
+    );
+
+    // Point settings_path at a location whose PARENT is a FILE (not a
+    // directory), so `save_to`'s `create_dir_all` fails deterministically.
+    let bogus_parent = env::temp_dir().join(format!(
+        "osm-theme-retry-parent-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
+    app.settings_path = Some(bogus_parent.join("settings.toml"));
+
+    // Setup half: dispatch directly to seed the failure with a real value
+    // change (only the RETRY below needs to be view-driven).
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    assert!(
+        app.settings_error.is_some(),
+        "pre-condition: saving to an unwritable path must fail"
+    );
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::Light,
+        "the in-memory preference still applies even though the save failed"
+    );
+
+    // Repoint at a writable temp directory, then click the SELECTED option
+    // (now "Light") through the Simulator.
+    let good_dir = env::temp_dir().join(format!(
+        "osm-theme-retry-good-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::create_dir_all(&good_dir).expect("create a writable temp dir");
+    app.settings_path = Some(good_dir.join("settings.toml"));
+
+    click(&mut app, "Light");
+
+    assert!(
+        app.settings_error.is_none(),
+        "re-clicking the selected theme option after a failed save must retry and succeed"
+    );
+
+    fs::remove_file(&bogus_parent).ok();
+    fs::remove_dir_all(&good_dir).ok();
+}

@@ -325,9 +325,7 @@ pub enum Message {
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Settings screen: theme preference (System/Light/Dark) picker.
-    // Constructed by settings_view's theme options (Task 4) — remove this
-    // allow once that lands.
-    #[allow(dead_code)]
+    // Constructed by settings_view's theme options (Task 4).
     ThemePref(ThemePref),
     // Emitted when the OS reports (or changes) its light/dark preference;
     // only affects rendering when `theme_pref` is `System`. Constructed by
@@ -814,7 +812,16 @@ impl App {
                 true
             }
             Message::ThemePref(p) => {
-                if set_if_changed(&mut self.theme_pref, p) {
+                // Persist on a real change, same as every other preference —
+                // but ALSO when a prior save is still failing: the settings
+                // view keeps the selected theme option clickable exactly in
+                // that case (a one-click retry), so a same-value retry click
+                // must still attempt the write. `set_if_changed` must run
+                // first regardless: it's what actually updates `theme_pref`
+                // on a real change, and its `bool` return still distinguishes
+                // "changed" from "no-op retry" for anyone reading the value.
+                let changed = set_if_changed(&mut self.theme_pref, p);
+                if changed || self.settings_error.is_some() {
                     self.persist_settings();
                 }
                 false
