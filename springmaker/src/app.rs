@@ -123,6 +123,84 @@ pub const DARK: Palette = Palette {
     },
 };
 
+/// The paper-white light palette — the dark theme's mirror, not an inversion.
+// consumed by resolved_palette (Task 3) — remove this allow once that lands.
+#[allow(dead_code)]
+pub const LIGHT: Palette = Palette {
+    ink: Color {
+        r: 0.965,
+        g: 0.960,
+        b: 0.950,
+        a: 1.0,
+    },
+    panel: Color {
+        r: 0.925,
+        g: 0.920,
+        b: 0.908,
+        a: 1.0,
+    },
+    raised: Color {
+        r: 0.885,
+        g: 0.880,
+        b: 0.868,
+        a: 1.0,
+    },
+    line: Color {
+        r: 0.780,
+        g: 0.775,
+        b: 0.760,
+        a: 1.0,
+    },
+    text: Color {
+        r: 0.100,
+        g: 0.110,
+        b: 0.130,
+        a: 1.0,
+    },
+    muted: Color {
+        r: 0.320,
+        g: 0.340,
+        b: 0.380,
+        a: 1.0,
+    },
+    accent: Color {
+        r: 0.000,
+        g: 0.350,
+        b: 0.620,
+        a: 1.0,
+    },
+    warn: Color {
+        r: 0.520,
+        g: 0.340,
+        b: 0.000,
+        a: 1.0,
+    },
+    danger: Color {
+        r: 0.760,
+        g: 0.100,
+        b: 0.100,
+        a: 1.0,
+    },
+    success: Color {
+        r: 0.050,
+        g: 0.450,
+        b: 0.220,
+        a: 1.0,
+    },
+    accent_tint: Color {
+        r: 0.850,
+        g: 0.910,
+        b: 0.970,
+        a: 1.0,
+    },
+    hover: Color {
+        r: 0.885 - 0.05,
+        g: 0.880 - 0.05,
+        b: 0.868 - 0.05,
+        a: 1.0,
+    },
+};
+
 // --------------------------------------------------------------------------
 // Screen routing
 // --------------------------------------------------------------------------
@@ -2374,5 +2452,83 @@ mod tests {
                 a: 1.0
             }
         );
+    }
+
+    // ----------------------------------------------------------------------
+    // WCAG 2.x contrast gate — machine-checked, not eyeballed.
+    // ----------------------------------------------------------------------
+
+    fn srgb_lin(c: f32) -> f64 {
+        let c = c as f64;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    fn luminance(c: Color) -> f64 {
+        0.2126 * srgb_lin(c.r) + 0.7152 * srgb_lin(c.g) + 0.0722 * srgb_lin(c.b)
+    }
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (l1, l2) = (
+            luminance(a).max(luminance(b)),
+            luminance(a).min(luminance(b)),
+        );
+        (l1 + 0.05) / (l2 + 0.05)
+    }
+
+    #[test]
+    fn light_palette_meets_wcag_aa_on_both_surfaces() {
+        // Body text sizes here are 11-14px — AA small-text threshold 4.5:1.
+        for bg in [LIGHT.ink, LIGHT.panel, LIGHT.raised] {
+            for fg in [
+                LIGHT.text,
+                LIGHT.muted,
+                LIGHT.accent,
+                LIGHT.danger,
+                LIGHT.warn,
+                LIGHT.success,
+            ] {
+                assert!(
+                    contrast(fg, bg) >= 4.5,
+                    "LIGHT fg {fg:?} on bg {bg:?} = {:.2}, needs 4.5",
+                    contrast(fg, bg)
+                );
+            }
+        }
+        // Selected-option text is accent-on-accent_tint (segmented_style).
+        assert!(contrast(LIGHT.accent, LIGHT.accent_tint) >= 4.5);
+        // Structural sanity: light surfaces order light→dark as ink ≥ panel ≥ raised > hover.
+        assert!(luminance(LIGHT.ink) > luminance(LIGHT.panel));
+        assert!(luminance(LIGHT.panel) > luminance(LIGHT.raised));
+        assert!(luminance(LIGHT.raised) > luminance(LIGHT.hover));
+        // The hairline must remain visible but not text-strong.
+        assert!(contrast(LIGHT.line, LIGHT.panel) >= 1.2);
+    }
+
+    #[test]
+    fn dark_palette_meets_the_same_bar() {
+        // Measured: every DARK fg/bg pairing already clears AA 4.5 — worst is
+        // DARK.muted on DARK.raised at 5.12:1 (see task-2-report.md for the
+        // full matrix). DARK is the shipped, frozen identity; this test pins
+        // the bar to 4.5 (not the measured floor) so a future regression that
+        // erodes the margin is still caught.
+        const DARK_FLOOR: f64 = 4.5;
+        for bg in [DARK.ink, DARK.panel, DARK.raised] {
+            for fg in [
+                DARK.text,
+                DARK.muted,
+                DARK.accent,
+                DARK.danger,
+                DARK.warn,
+                DARK.success,
+            ] {
+                assert!(
+                    contrast(fg, bg) >= DARK_FLOOR,
+                    "DARK fg {fg:?} on {bg:?} = {:.2}",
+                    contrast(fg, bg)
+                );
+            }
+        }
     }
 }
