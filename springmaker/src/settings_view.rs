@@ -64,9 +64,12 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         // and a FAILED write leaves the selected option as the one the user needs
         // to retry — with no `.on_press`, a failed save could never be retried
         // from this screen. So the no-op guard is relaxed specifically when a
-        // save is currently failing (`app.settings_error.is_some()`), keeping the
-        // selected button live for a one-click retry.
-        if !selected || app.settings_error.is_some() {
+        // save is currently failing, keeping the selected button live for a
+        // one-click retry. Read via `save_feedback` (the ViewModel's own
+        // rendering of `app.settings_error`) rather than `app` directly — this
+        // is a humble view (ADR 0008): it may branch on presenter output, not
+        // reach past it into model state it's meant to be insulated from.
+        if !selected || save_feedback.is_some() {
             btn = btn.on_press(Message::SetCorrection(value));
         }
         options_col = options_col.push(btn);
