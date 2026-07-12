@@ -208,6 +208,7 @@ pub(crate) fn text_input_style(
             icon: pal.muted,
             placeholder: pal.muted,
             value: pal.text,
+            // Selection alpha 0.3: direction-safe (works on both dark and light themes).
             selection: Color {
                 a: 0.3,
                 ..pal.accent
@@ -336,6 +337,7 @@ pub(crate) fn accent_button_style(
     move |_theme, status| {
         use iced::widget::button::Status;
         let bg = if matches!(status, Status::Hovered) {
+            // Darken by ×0.85 on hover: direction-safe (works on both dark and light themes).
             Color {
                 r: pal.accent.r * 0.85,
                 g: pal.accent.g * 0.85,
@@ -508,19 +510,9 @@ pub(crate) fn segmented_style(
     move |_theme, status| {
         let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
         let bg = if selected {
-            Color {
-                r: pal.accent.r * 0.15,
-                g: pal.accent.g * 0.15,
-                b: pal.accent.b * 0.15,
-                a: 1.0,
-            }
+            pal.accent_tint
         } else if is_hovered {
-            Color {
-                r: pal.raised.r + 0.05,
-                g: pal.raised.g + 0.05,
-                b: pal.raised.b + 0.05,
-                a: 1.0,
-            }
+            pal.hover
         } else {
             Color::TRANSPARENT
         };

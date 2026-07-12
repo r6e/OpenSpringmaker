@@ -128,7 +128,7 @@ pub fn render_chart(pal: &Palette, data: &ChartData) -> Option<(Vec<u8>, ChartMa
 mod tests {
     use super::super::{AxisMeta, Line, Marker};
     use super::*;
-    use crate::app::{Palette, DARK};
+    use crate::app::{Palette, DARK, LIGHT};
     use approx::assert_relative_eq;
     use iced::Color;
 
@@ -275,5 +275,18 @@ mod tests {
             alt_px[0..3],
             "corner pixel must follow pal.panel"
         );
+    }
+
+    /// End-to-end companion to `render_chart_background_follows_the_palette`:
+    /// that test proves the renderer reads its `pal` parameter generically via
+    /// a synthetic palette; this one pins the REAL production statics —
+    /// switching a chart from `DARK` to `LIGHT` (Task 5's OS-theme wiring)
+    /// must change the rendered bitmap, not just be theoretically possible to
+    /// change.
+    #[test]
+    fn render_chart_backgrounds_differ_between_dark_and_light() {
+        let (d, _) = render_chart(&DARK, &simple_data(false)).unwrap();
+        let (l, _) = render_chart(&LIGHT, &simple_data(false)).unwrap();
+        assert_ne!(d[0..3], l[0..3]);
     }
 }

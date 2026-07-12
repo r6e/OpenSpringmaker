@@ -282,6 +282,18 @@ fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &s
     fs::read_to_string(hash_file.path()).expect("read hash file")
 }
 
+/// A temp-dir path unique to this process AND thread: `tag` distinguishes
+/// call sites, and process id + thread id keep parallel test runs —
+/// including cargo's own test threads — from colliding on the same path.
+/// Callers create (and typically remove) the directory themselves.
+fn unique_temp_dir(tag: &str) -> std::path::PathBuf {
+    env::temp_dir().join(format!(
+        "{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ))
+}
+
 /// Differential snapshot pin for `widgets::segmented_style`'s selection
 /// highlight. The Settings screen with the default Bergsträsser correction
 /// selected vs. after `Message::SetCorrection(Wahl)` differs ONLY in which
@@ -301,11 +313,7 @@ fn segmented_selection_highlight_renders_differently() {
         springcore::CurvatureCorrection::Bergstrasser
     );
 
-    let dir = env::temp_dir().join(format!(
-        "openspringmaker-segmented-selection-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let dir = unique_temp_dir("openspringmaker-segmented-selection");
     fs::remove_dir_all(&dir).ok();
     fs::create_dir_all(&dir).expect("create temp snapshot dir");
 
@@ -2513,11 +2521,7 @@ fn settings_correction_reclick_retries_after_a_failed_save() {
     // Point settings_path at a location whose PARENT is a FILE (not a
     // directory), so `save_to`'s `create_dir_all` fails deterministically —
     // no reliance on filesystem permissions.
-    let bogus_parent = env::temp_dir().join(format!(
-        "osm-settings-retry-parent-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let bogus_parent = unique_temp_dir("osm-settings-retry-parent");
     fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
     app.settings_path = Some(bogus_parent.join("settings.toml"));
 
@@ -2538,11 +2542,7 @@ fn settings_correction_reclick_retries_after_a_failed_save() {
 
     // Repoint at a writable temp directory, then click the SELECTED option
     // through the Simulator.
-    let good_dir = env::temp_dir().join(format!(
-        "osm-settings-retry-good-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let good_dir = unique_temp_dir("osm-settings-retry-good");
     fs::create_dir_all(&good_dir).expect("create a writable temp dir");
     app.settings_path = Some(good_dir.join("settings.toml"));
 
@@ -2584,5 +2584,186 @@ fn screen_shell_caps_content_not_padding_on_wide_windows() {
         652.0,
         "at a 1600px viewport the nested screen_shell must cap CONTENT at 1200px \
          (Results heading at x=652), not the padded box (which would land at x=628)"
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 4: Settings theme picker (System/Light/Dark), ViewModel-owned
+// clickability. The clickable rule (`!selected || settings_error.is_some()`)
+// lives in `SettingsViewModel` (see `settings_view_model.rs` tests); these
+// exercise the actual rendered widget tree end to end.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Clicking the "Light" theme option switches the resolved palette and the
+/// Settings screen still shows its "Theme" heading afterward.
+/// Revert-probe (a): make the VM mark every theme option `clickable = false`
+/// → the "Light" button gets no `.on_press` → the click below emits no
+/// message → `app.pal()` stays `DARK` (test_app's default `System` pref
+/// resolves to `DARK`) → this assertion FAILS → restore → green.
+#[test]
+fn theme_picker_switches_to_light_by_clicking_the_label() {
+    let mut app = test_app();
+    app.update(Message::NavigateTo(Screen::Settings));
+    click(&mut app, "Light");
+    assert!(std::ptr::eq(app.pal(), &crate::app::LIGHT));
+    assert!(shows(&app, "Theme"));
+}
+
+/// No-op reclick sentinel: clicking the already-selected theme option while
+/// no save is failing must emit zero messages (mirrors
+/// `settings_correction_reclick_already_selected_preserves_action_error`).
+/// The `Message::ThemePref` arm ALWAYS persists (parity with `SetCorrection`),
+/// so the no-op guarantee this test pins lives entirely in the ViewModel's
+/// `clickable` flag — the selected option loses its `.on_press` while no save
+/// is failing, so the click never reaches `update` at all. The discriminating
+/// signal here is the message count itself.
+#[test]
+fn settings_theme_reclick_already_selected_emits_no_message() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::System,
+        "test_app's default theme pref is System"
+    );
+    assert!(
+        app.settings_error.is_none(),
+        "pre-condition: no save is currently failing"
+    );
+
+    let mut sim = ui(&app);
+    sim.click("System")
+        .unwrap_or_else(|_| panic!("no clickable widget matching \"System\""));
+    let messages: Vec<_> = sim.into_messages().collect();
+    assert!(
+        messages.is_empty(),
+        "re-clicking the already-selected theme option while no save is failing \
+         must emit no message"
+    );
+}
+
+/// Panel-carried item: `ThemePref` performs a real file write via
+/// `persist_settings`, just like `SetCorrection` — both always persist. A
+/// FAILED save must remain retryable from this screen — mirrors
+/// `settings_correction_reclick_retries_after_a_failed_save`. The setup
+/// dispatches `Light` (a change from the default `System`) to seed the
+/// failure, then retries with the SAME value through the Simulator. The
+/// retry click succeeds because the ViewModel re-enables the selected
+/// option's click handler when a save is failing (retry affordance).
+/// Revert-probe (b): remove the `|| save_feedback_pending` clause from
+/// `clickable()` in settings_view_model.rs → the selected option loses its
+/// `.on_press` even while a save is failing → the retry click can't reach
+/// `update` → `settings_error` stays `Some` → this test FAILS → restore →
+/// green.
+#[test]
+fn settings_theme_reclick_retries_after_a_failed_save() {
+    let mut app = test_app();
+    click(&mut app, "Settings \u{2192}");
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::System,
+        "test_app's default theme pref is System"
+    );
+
+    // Point settings_path at a location whose PARENT is a FILE (not a
+    // directory), so `save_to`'s `create_dir_all` fails deterministically.
+    let bogus_parent = unique_temp_dir("osm-theme-retry-parent");
+    fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
+    app.settings_path = Some(bogus_parent.join("settings.toml"));
+
+    // Setup half: dispatch directly to seed the failure with a real value
+    // change (only the RETRY below needs to be view-driven).
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    assert!(
+        app.settings_error.is_some(),
+        "pre-condition: saving to an unwritable path must fail"
+    );
+    assert_eq!(
+        app.theme_pref,
+        crate::settings::ThemePref::Light,
+        "the in-memory preference still applies even though the save failed"
+    );
+
+    // Repoint at a writable temp directory, then click the SELECTED option
+    // (now "Light") through the Simulator.
+    let good_dir = unique_temp_dir("osm-theme-retry-good");
+    fs::create_dir_all(&good_dir).expect("create a writable temp dir");
+    app.settings_path = Some(good_dir.join("settings.toml"));
+
+    click(&mut app, "Light");
+
+    assert!(
+        app.settings_error.is_none(),
+        "re-clicking the selected theme option after a failed save must retry and succeed"
+    );
+
+    fs::remove_file(&bogus_parent).ok();
+    fs::remove_dir_all(&good_dir).ok();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Task 5: OS-theme integration — differential rendering pins. `App::subscription`
+// itself is a thin humble shell over `iced::system::theme_changes()` (OrbitCanvas
+// discipline: the Simulator can't drive a real OS subscription), so these pins
+// dispatch `Message::SystemTheme`/`Message::ThemePref` directly and verify the
+// downstream rendering effect instead.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Differential snapshot pin (see `snapshot_hash`'s doc comment): the Settings
+/// screen, unchanged apart from the active theme, must render different pixels
+/// for Dark vs Light. Mirrors `segmented_selection_highlight_renders_differently`,
+/// except here the THEME itself (not just the selection highlight) is the
+/// varying input, so each snapshot call re-resolves `app.theme()` after the
+/// preference changes.
+#[test]
+fn theme_switch_changes_the_rendered_settings_screen() {
+    let mut app = test_app();
+    app.update(Message::NavigateTo(Screen::Settings));
+
+    let dir = unique_temp_dir("openspringmaker-theme-switch");
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let dark_theme = app.theme();
+    let dark = snapshot_hash(&app, &dark_theme, &dir, "theme-dark");
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    let light_theme = app.theme();
+    let light = snapshot_hash(&app, &light_theme, &dir, "theme-light");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        dark, light,
+        "switching the palette must change rendered pixels"
+    );
+}
+
+/// End-to-end smoke test: a solved calculator screen must keep rendering its
+/// results (not fall back to the placeholder) after the theme preference
+/// flips to Light — the light palette works through the full results-render
+/// path, not just the isolated Settings screen pinned above.
+#[test]
+fn calculator_results_still_render_after_switching_to_light_theme() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(
+        shows(&app, "Spring rate"),
+        "precondition: the design solves under the default theme"
+    );
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+
+    assert!(
+        shows(&app, "Spring rate"),
+        "results must still render after switching to the light theme"
+    );
+    assert!(
+        !shows(&app, "Enter design parameters to see results."),
+        "the light-theme render must not fall back to the empty-state placeholder"
     );
 }

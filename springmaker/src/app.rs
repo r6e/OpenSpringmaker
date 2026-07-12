@@ -5,6 +5,7 @@ use crate::conical::form::{ConFormOutcome, ConFormState};
 use crate::extension::form::{ExtFormOutcome, ExtFormState};
 use crate::form_helpers::format_error;
 use crate::materials_form::{build_draft, populate_from_material, MaterialsFormState};
+use crate::settings::ThemePref;
 use iced::{Color, Theme};
 use springcore::{
     CurvatureCorrection, Family, LoadWarning, MaterialStore, MtsForm, SavedDesign, StrengthUnits,
@@ -33,6 +34,12 @@ pub struct Palette {
     pub muted: Color,
     /// Accent — active controls, focus, governing result.
     pub accent: Color,
+    /// Selected-option background tint. Palette-owned: a ×0.15 dark-tint is a
+    /// dark-theme assumption; LIGHT defines its own pale tint.
+    pub accent_tint: Color,
+    /// Hovered-option background. Palette-owned: +0.05 lightens on dark; LIGHT
+    /// darkens instead.
+    pub hover: Color,
     /// Caution / warning indicator.
     pub warn: Color,
     /// Danger / error indicator.
@@ -42,7 +49,13 @@ pub struct Palette {
 }
 
 /// The engineering-instrument dark palette (the shipped identity).
-pub const DARK: Palette = Palette {
+///
+/// `static`, not `const`: `resolved_palette`/`pal`/`theme` identify the active
+/// palette by `std::ptr::eq` against `&DARK`/`&LIGHT`. A `const`'s value is
+/// copied at each use site, so two `&DARK` expressions in different places
+/// are not guaranteed to share an address; a `static` has exactly one
+/// program-wide location, which `ptr::eq` can rely on.
+pub static DARK: Palette = Palette {
     ink: Color {
         r: 0.055,
         g: 0.067,
@@ -85,6 +98,18 @@ pub const DARK: Palette = Palette {
         b: 1.0,
         a: 1.0,
     },
+    accent_tint: Color {
+        r: 0.298 * 0.15,
+        g: 0.761 * 0.15,
+        b: 1.0 * 0.15,
+        a: 1.0,
+    },
+    hover: Color {
+        r: 0.122 + 0.05,
+        g: 0.149 + 0.05,
+        b: 0.188 + 0.05,
+        a: 1.0,
+    },
     warn: Color {
         r: 0.949,
         g: 0.710,
@@ -105,6 +130,96 @@ pub const DARK: Palette = Palette {
     },
 };
 
+/// The paper-white light palette — the dark theme's mirror, not an inversion.
+/// `static` for the same address-identity reason as [`DARK`].
+pub static LIGHT: Palette = Palette {
+    ink: Color {
+        r: 0.965,
+        g: 0.960,
+        b: 0.950,
+        a: 1.0,
+    },
+    panel: Color {
+        r: 0.925,
+        g: 0.920,
+        b: 0.908,
+        a: 1.0,
+    },
+    raised: Color {
+        r: 0.885,
+        g: 0.880,
+        b: 0.868,
+        a: 1.0,
+    },
+    line: Color {
+        r: 0.780,
+        g: 0.775,
+        b: 0.760,
+        a: 1.0,
+    },
+    text: Color {
+        r: 0.100,
+        g: 0.110,
+        b: 0.130,
+        a: 1.0,
+    },
+    muted: Color {
+        r: 0.320,
+        g: 0.340,
+        b: 0.380,
+        a: 1.0,
+    },
+    accent: Color {
+        r: 0.000,
+        g: 0.350,
+        b: 0.620,
+        a: 1.0,
+    },
+    warn: Color {
+        r: 0.520,
+        g: 0.340,
+        b: 0.000,
+        a: 1.0,
+    },
+    danger: Color {
+        r: 0.760,
+        g: 0.100,
+        b: 0.100,
+        a: 1.0,
+    },
+    success: Color {
+        r: 0.050,
+        g: 0.450,
+        b: 0.220,
+        a: 1.0,
+    },
+    accent_tint: Color {
+        r: 0.850,
+        g: 0.910,
+        b: 0.970,
+        a: 1.0,
+    },
+    hover: Color {
+        r: 0.885 - 0.05,
+        g: 0.880 - 0.05,
+        b: 0.868 - 0.05,
+        a: 1.0,
+    },
+};
+
+/// The palette for a pref × OS-mode pair. `Mode::None` (OS reported nothing)
+/// resolves to DARK — the shipped identity.
+fn resolved_palette(pref: ThemePref, system: iced::theme::Mode) -> &'static Palette {
+    match pref {
+        ThemePref::Dark => &DARK,
+        ThemePref::Light => &LIGHT,
+        ThemePref::System => match system {
+            iced::theme::Mode::Light => &LIGHT,
+            iced::theme::Mode::Dark | iced::theme::Mode::None => &DARK,
+        },
+    }
+}
+
 // --------------------------------------------------------------------------
 // Screen routing
 // --------------------------------------------------------------------------
@@ -114,7 +229,7 @@ pub const DARK: Palette = Palette {
 pub enum Screen {
     Calculator,
     Materials,
-    /// Settings screen — curvature-correction preference.
+    /// Settings screen — curvature-correction and theme preferences.
     Settings,
 }
 
@@ -209,6 +324,13 @@ pub enum Message {
     Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
+    // Settings screen: theme preference (System/Light/Dark) picker.
+    // Constructed by settings_view's theme options (Task 4).
+    ThemePref(ThemePref),
+    // Emitted when the OS reports (or changes) its light/dark preference;
+    // only affects rendering when `theme_pref` is `System`. Constructed by
+    // the OS-theme subscription (`App::subscription`, Task 5).
+    SystemTheme(iced::theme::Mode),
     // Navigation and materials-editor variants.
     NavigateTo(Screen),
     MatField(MatField, String),
@@ -285,6 +407,14 @@ pub struct App {
     /// Last settings-save error, if any. Separate from `action_error` because
     /// `recompute()` clears `action_error` but must not clobber this status.
     pub settings_error: Option<String>,
+    /// Theme preference (System/Light/Dark); persisted via
+    /// [`crate::settings::AppSettings`]. `from_store` always defaults this to
+    /// [`ThemePref::default`] — `main.rs`'s `initial_app` assigns the loaded
+    /// value afterward, mirroring how `settings_path` is wired post-construction.
+    pub theme_pref: ThemePref,
+    /// The OS-reported light/dark mode, as last observed. `Mode::None` (no
+    /// report yet) resolves to DARK — see [`resolved_palette`].
+    pub system_mode: iced::theme::Mode,
 }
 
 impl App {
@@ -326,6 +456,8 @@ impl App {
             correction,
             settings_path: None,
             settings_error: None,
+            theme_pref: ThemePref::default(),
+            system_mode: iced::theme::Mode::default(),
         }
     }
 }
@@ -521,6 +653,28 @@ impl App {
         self.mat_error = None;
     }
 
+    /// Persist the current preferences (`correction` + `theme_pref`) to
+    /// `settings_path`, surfacing any write failure via `settings_error`.
+    /// Shared by every preference message so there is exactly one save path —
+    /// a save attempted from one preference's message always carries the
+    /// other's current value along with it.
+    fn persist_settings(&mut self) {
+        // Persist only when a real settings path is configured (None in all
+        // test-constructed apps, so tests never touch the real filesystem).
+        let save_result = self.settings_path.as_ref().map(|p| {
+            crate::settings::AppSettings {
+                curvature_correction: self.correction,
+                theme_pref: self.theme_pref,
+            }
+            .save_to(p)
+        });
+        match save_result {
+            Some(Err(e)) => self.settings_error = Some(format!("could not save settings: {e}")),
+            // Ok(()) or no path configured: clear any stale error.
+            _ => self.settings_error = None,
+        }
+    }
+
     /// Process a UI event, updating state and re-solving the design where needed.
     pub fn update(&mut self, message: Message) {
         let should_recompute = match message {
@@ -653,22 +807,20 @@ impl App {
             // ── Settings ────────────────────────────────────────────────────
             Message::SetCorrection(c) => {
                 self.correction = c;
-                // Persist only when a real settings path is configured (None in all
-                // test-constructed apps, so tests never touch the real filesystem).
-                let save_result = self.settings_path.as_ref().map(|p| {
-                    crate::settings::AppSettings {
-                        curvature_correction: c,
-                    }
-                    .save_to(p)
-                });
-                match save_result {
-                    Some(Err(e)) => {
-                        self.settings_error = Some(format!("could not save settings: {e}"))
-                    }
-                    // Ok(()) or no path configured: clear any stale error.
-                    _ => self.settings_error = None,
-                }
+                self.persist_settings();
                 true
+            }
+            Message::ThemePref(p) => {
+                // Deliberate parity with SetCorrection: the VM's `clickable`
+                // flag is the single owner of when a same-value click can
+                // happen (the retry case), so this arm always writes and saves.
+                self.theme_pref = p;
+                self.persist_settings();
+                false
+            }
+            Message::SystemTheme(mode) => {
+                self.system_mode = mode;
+                false
             }
 
             // ── Navigation ──────────────────────────────────────────────────
@@ -844,25 +996,43 @@ impl App {
         }
     }
 
-    /// Supply the custom dark theme to the iced application builder.
+    /// Supply the custom theme (dark or light, per `resolved_palette`) to the
+    /// iced application builder.
     pub fn theme(&self) -> Theme {
+        let pal = self.pal();
+        let name = if std::ptr::eq(pal, &LIGHT) {
+            "OpenSpringmaker Light"
+        } else {
+            "OpenSpringmaker Dark"
+        };
         Theme::custom(
-            "OpenSpringmaker".to_string(),
+            name.to_string(),
             iced::theme::Palette {
-                background: DARK.ink,
-                text: DARK.text,
-                primary: DARK.accent,
-                success: DARK.success,
-                warning: DARK.warn,
-                danger: DARK.danger,
+                background: pal.ink,
+                text: pal.text,
+                primary: pal.accent,
+                success: pal.success,
+                warning: pal.warn,
+                danger: pal.danger,
             },
         )
     }
 
-    /// The active palette. PR 2 resolves Light/Dark/System here; today it is
-    /// always the dark identity.
+    /// The active palette, resolved from `theme_pref` × `system_mode`.
     pub(crate) fn pal(&self) -> &'static Palette {
-        &DARK
+        resolved_palette(self.theme_pref, self.system_mode)
+    }
+
+    /// Supply the OS-theme subscription to the iced application builder.
+    /// Live theme-change events flow in as `Message::SystemTheme`; `update`'s
+    /// `SystemTheme` arm only affects rendering when `theme_pref` is `System`
+    /// (see `resolved_palette`). A thin humble shell over
+    /// `iced::system::theme_changes()` — the Simulator can't drive a real OS
+    /// subscription, so `ui_tests` pins the downstream rendering effect by
+    /// dispatching `Message::SystemTheme` directly instead (OrbitCanvas
+    /// discipline).
+    pub fn subscription(&self) -> iced::Subscription<Message> {
+        iced::system::theme_changes().map(Message::SystemTheme)
     }
 
     fn set_field(&mut self, field: Field, value: String) {
@@ -1225,6 +1395,132 @@ mod tests {
         assert_eq!(app.correction, springcore::CurvatureCorrection::Wahl);
         // No save attempted → no error surfaced.
         assert!(app.settings_error.is_none());
+    }
+
+    /// An `App` with a writable temp-dir settings path — unlike `test_app`
+    /// (non-persisting: `settings_path` is always `None`), this variant is for
+    /// tests that assert on the actual persisted file. Follows the temp-dir
+    /// idiom of `settings_correction_reclick_retries_after_a_failed_save` in
+    /// ui_tests.rs: process id + thread id keep the directory unique across
+    /// parallel test threads.
+    fn test_app_with_writable_settings() -> App {
+        let mut app = test_app();
+        let dir = std::env::temp_dir().join(format!(
+            "osm-app-theme-pref-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create a writable temp dir");
+        app.settings_path = Some(dir.join("settings.toml"));
+        app
+    }
+
+    #[test]
+    fn resolved_palette_covers_the_pref_by_mode_matrix() {
+        use iced::theme::Mode::*;
+        let cases: [(ThemePref, iced::theme::Mode, &Palette); 9] = [
+            (ThemePref::Dark, None, &DARK),
+            (ThemePref::Dark, Light, &DARK),
+            (ThemePref::Dark, Dark, &DARK),
+            (ThemePref::Light, None, &LIGHT),
+            (ThemePref::Light, Light, &LIGHT),
+            (ThemePref::Light, Dark, &LIGHT),
+            (ThemePref::System, None, &DARK),
+            (ThemePref::System, Light, &LIGHT),
+            (ThemePref::System, Dark, &DARK),
+        ];
+        for (pref, mode, want) in cases {
+            assert!(
+                std::ptr::eq(resolved_palette(pref, mode), want),
+                "{pref:?} × {mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_pref_message_persists_and_switches_the_palette() {
+        let mut app = test_app_with_writable_settings();
+        app.update(Message::ThemePref(ThemePref::Light));
+        assert!(std::ptr::eq(app.pal(), &LIGHT));
+        let path = app.settings_path.clone().unwrap();
+        let (saved, _) = crate::settings::load_from(&path);
+        assert_eq!(saved.theme_pref, ThemePref::Light);
+        assert_eq!(
+            saved.curvature_correction, app.correction,
+            "one save path carries BOTH prefs"
+        );
+        // Clean up the temp dir `test_app_with_writable_settings` created.
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// `Message::SystemTheme` actually applies the reported mode to
+    /// `system_mode` (and so, under the default `System` pref, to the
+    /// resolved palette) — not just that it leaves other channels alone
+    /// (`theme_messages_do_not_recompute_or_touch_error_channels`, below,
+    /// only makes negative assertions and would stay green even if the
+    /// handler dropped the mode on the floor).
+    #[test]
+    fn system_theme_message_switches_the_palette_under_system_pref() {
+        let mut app = test_app();
+        assert_eq!(app.theme_pref, ThemePref::System);
+        assert!(std::ptr::eq(app.pal(), &DARK), "no OS report yet ⇒ DARK");
+
+        app.update(Message::SystemTheme(iced::theme::Mode::Light));
+
+        assert!(
+            std::ptr::eq(app.pal(), &LIGHT),
+            "System pref must follow a reported OS-Light switch"
+        );
+    }
+
+    /// API-contract: `Message::ThemePref` and `Message::SystemTheme` are pure
+    /// preference flips — neither recomputes (no `action_error` clear) nor
+    /// disturbs a solve error, mirroring `probe_visual_message_preserves_error_channels`
+    /// in ui_tests.rs (same shape, applied to the theme messages).
+    #[test]
+    fn theme_messages_do_not_recompute_or_touch_error_channels() {
+        // A solved outcome plus a sentinel action_error, exactly like
+        // `probe_visual_message_preserves_error_channels`'s first half: both
+        // channels must survive a non-recomputing message untouched.
+        let mut app = solved_app();
+        let rate_before = app.outcome.as_ref().unwrap().design.rate;
+        app.action_error = Some("sentinel".into());
+        app.update(Message::ThemePref(ThemePref::Light));
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("sentinel"),
+            "ThemePref must not recompute (recompute clears action_error)"
+        );
+        assert_eq!(
+            app.outcome.as_ref().map(|o| o.design.rate),
+            Some(rate_before),
+            "ThemePref must not disturb a solved outcome"
+        );
+        app.update(Message::SystemTheme(iced::theme::Mode::Dark));
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("sentinel"),
+            "SystemTheme must not recompute (recompute clears action_error)"
+        );
+        assert_eq!(
+            app.outcome.as_ref().map(|o| o.design.rate),
+            Some(rate_before),
+            "SystemTheme must not disturb a solved outcome"
+        );
+
+        // A solve error survives both messages, in both directions.
+        let mut bad = test_app();
+        bad.form.scenario = crate::compression::form::ScenarioKind::RateBased;
+        bad.form.wire_dia = "oops".into();
+        bad.recompute();
+        assert!(bad.error.is_some(), "fixture must have a solve error");
+        let err = bad.error.clone();
+        bad.update(Message::ThemePref(ThemePref::Dark));
+        assert_eq!(bad.error, err, "solve error survives a ThemePref flip");
+        bad.update(Message::SystemTheme(iced::theme::Mode::Light));
+        assert_eq!(bad.error, err, "solve error survives a SystemTheme flip");
     }
 
     #[test]
@@ -2333,6 +2629,130 @@ mod tests {
         assert!(
             app.asm_outcome.is_none(),
             "switching away from Assembly must clear asm_outcome"
+        );
+    }
+
+    #[test]
+    fn palette_dark_derived_fields_match_the_legacy_runtime_math() {
+        assert_eq!(
+            DARK.accent_tint,
+            Color {
+                r: DARK.accent.r * 0.15,
+                g: DARK.accent.g * 0.15,
+                b: DARK.accent.b * 0.15,
+                a: 1.0
+            }
+        );
+        assert_eq!(
+            DARK.hover,
+            Color {
+                r: DARK.raised.r + 0.05,
+                g: DARK.raised.g + 0.05,
+                b: DARK.raised.b + 0.05,
+                a: 1.0
+            }
+        );
+    }
+
+    // ----------------------------------------------------------------------
+    // WCAG 2.x contrast gate — machine-checked, not eyeballed.
+    // ----------------------------------------------------------------------
+
+    fn srgb_lin(c: f32) -> f64 {
+        let c = c as f64;
+        if c <= 0.040_45 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    fn luminance(c: Color) -> f64 {
+        0.2126 * srgb_lin(c.r) + 0.7152 * srgb_lin(c.g) + 0.0722 * srgb_lin(c.b)
+    }
+    fn contrast(a: Color, b: Color) -> f64 {
+        let (l1, l2) = (
+            luminance(a).max(luminance(b)),
+            luminance(a).min(luminance(b)),
+        );
+        (l1 + 0.05) / (l2 + 0.05)
+    }
+
+    /// Adjudication (carried from the Task 2 review): `danger`/`warn`/`success`
+    /// are not checked against `LIGHT.hover` here because that pairing never
+    /// occurs in the UI — `pal.hover` is used exactly once, as the segmented
+    /// control's unselected-option *hover* background (`widgets.rs`'s
+    /// `segmented_style`), whose text color in that branch is always
+    /// `pal.text`, never a status color. So the fg×bg matrix below (which
+    /// deliberately omits `hover` as a background) covers every real
+    /// status-color-on-background pairing that actually renders.
+    #[test]
+    fn light_palette_meets_wcag_aa_on_both_surfaces() {
+        // Body text sizes here are 11-14px — AA small-text threshold 4.5:1.
+        for bg in [LIGHT.ink, LIGHT.panel, LIGHT.raised] {
+            for fg in [
+                LIGHT.text,
+                LIGHT.muted,
+                LIGHT.accent,
+                LIGHT.danger,
+                LIGHT.warn,
+                LIGHT.success,
+            ] {
+                assert!(
+                    contrast(fg, bg) >= 4.5,
+                    "LIGHT fg {fg:?} on bg {bg:?} = {:.2}, needs 4.5",
+                    contrast(fg, bg)
+                );
+            }
+        }
+        // Selected-option text is accent-on-accent_tint (segmented_style).
+        assert!(contrast(LIGHT.accent, LIGHT.accent_tint) >= 4.5);
+        // Hovered-unselected-option text is text-on-hover (segmented_style).
+        assert!(contrast(LIGHT.text, LIGHT.hover) >= 4.5);
+        // Structural sanity: light surfaces order light→dark as ink ≥ panel ≥ raised > hover.
+        assert!(luminance(LIGHT.ink) > luminance(LIGHT.panel));
+        assert!(luminance(LIGHT.panel) > luminance(LIGHT.raised));
+        assert!(luminance(LIGHT.raised) > luminance(LIGHT.hover));
+        // The hairline must remain visible but not text-strong.
+        assert!(contrast(LIGHT.line, LIGHT.panel) >= 1.2);
+    }
+
+    #[test]
+    fn dark_palette_meets_the_same_bar() {
+        // Measured: every DARK fg/bg pairing already clears AA 4.5 — worst is
+        // DARK.muted on DARK.raised at 5.12:1 (see task-2-report.md for the
+        // full matrix). DARK is the shipped, frozen identity; this test pins
+        // the bar to 4.5 (not the measured floor) so a future regression that
+        // erodes the margin is still caught.
+        const DARK_FLOOR: f64 = 4.5;
+        for bg in [DARK.ink, DARK.panel, DARK.raised] {
+            for fg in [
+                DARK.text,
+                DARK.muted,
+                DARK.accent,
+                DARK.danger,
+                DARK.warn,
+                DARK.success,
+            ] {
+                assert!(
+                    contrast(fg, bg) >= DARK_FLOOR,
+                    "DARK fg {fg:?} on {bg:?} = {:.2}",
+                    contrast(fg, bg)
+                );
+            }
+        }
+        // Selected-option text is accent-on-accent_tint (segmented_style).
+        assert!(contrast(DARK.accent, DARK.accent_tint) >= 4.5);
+        // Hovered-unselected-option text is text-on-hover (segmented_style).
+        assert!(contrast(DARK.text, DARK.hover) >= 4.5);
+    }
+
+    #[test]
+    fn subscription_wires_at_least_one_recipe() {
+        let app = test_app();
+        assert_ne!(
+            app.subscription().units(),
+            0,
+            "App::subscription must wire the OS theme_changes recipe"
         );
     }
 }
