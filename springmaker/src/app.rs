@@ -209,7 +209,7 @@ pub static LIGHT: Palette = Palette {
 
 /// The palette for a pref × OS-mode pair. `Mode::None` (OS reported nothing)
 /// resolves to DARK — the shipped identity.
-pub(crate) fn resolved_palette(pref: ThemePref, system: iced::theme::Mode) -> &'static Palette {
+fn resolved_palette(pref: ThemePref, system: iced::theme::Mode) -> &'static Palette {
     match pref {
         ThemePref::Dark => &DARK,
         ThemePref::Light => &LIGHT,

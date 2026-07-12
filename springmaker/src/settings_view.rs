@@ -8,7 +8,7 @@ use iced::widget::{button, column, container, row, space, text};
 use iced::{Element, Font, Length};
 
 use crate::app::{App, Message, Palette, Screen};
-use crate::settings_view_model::{SettingsFeedbackKind, SettingsViewModel};
+use crate::settings_view_model::{SettingOption, SettingsFeedbackKind, SettingsViewModel};
 use crate::widgets::{
     nav_button_style, panel_container, screen_shell, section_divider, section_heading,
     segmented_style, SP_LG, SP_MD, SP_SM, SZ_BODY, SZ_LABEL, SZ_TITLE,
@@ -38,6 +38,34 @@ fn option_button<'a>(
     btn.into()
 }
 
+/// Build one settings panel: a heading, a divider, and one `option_button`
+/// row per option, each emitting `to_msg(option.value)` on press. Generic
+/// over the option's value type so the correction group and the theme group
+/// — structurally identical prose-button panels differing only in which
+/// `Message` variant a click emits — share this single builder (Task 4/panel
+/// item 5). `to_msg` is a tuple-variant constructor (`Message::SetCorrection`,
+/// `Message::ThemePref`) coerced to a plain `fn` pointer.
+fn option_panel<'a, T: Copy>(
+    pal: &'static Palette,
+    heading: &str,
+    options: Vec<SettingOption<T>>,
+    to_msg: fn(T) -> Message,
+) -> Element<'a, Message> {
+    let mut col = column![section_heading(pal, heading), section_divider(pal)].spacing(SP_SM);
+    for o in options {
+        col = col.push(option_button(
+            pal,
+            o.label,
+            o.selected,
+            o.clickable,
+            to_msg(o.value),
+        ));
+    }
+    container(panel_container(pal, col))
+        .width(Length::Fill)
+        .into()
+}
+
 /// Build the Settings screen.
 pub(crate) fn view(app: &App) -> Element<'_, Message> {
     let pal = app.pal();
@@ -56,55 +84,31 @@ pub(crate) fn view(app: &App) -> Element<'_, Message> {
         .spacing(SP_LG)
         .align_y(iced::Alignment::Center);
 
-    // Extract save_feedback before consuming vm.options/theme_options.
-    let save_feedback = vm.save_feedback;
-
-    // Build correction-option buttons. Each option emits SetCorrection on
-    // press; the presenter's `selected`/`clickable` flags drive visual
-    // differentiation and click-handling via the shared `option_button`
-    // (Task 4). Full-width rows (rather than the shared `segmented` row
-    // widget) because option labels are long prose ("Bergsträsser (EN
-    // 13906-1 / Shigley default)"), not short chips.
-    let mut options_col = column![
-        section_heading(pal, "Curvature-correction factor"),
-        section_divider(pal),
-    ]
-    .spacing(SP_SM);
-    for o in vm.options {
-        options_col = options_col.push(option_button(
-            pal,
-            o.label,
-            o.selected,
-            o.clickable,
-            Message::SetCorrection(o.value),
-        ));
-    }
-    let correction_panel: Element<'_, Message> = container(panel_container(pal, options_col))
-        .width(Length::Fill)
-        .into();
+    // Correction-option panel: each option emits SetCorrection on press; the
+    // presenter's `selected`/`clickable` flags drive visual differentiation
+    // and click-handling via the shared `option_button`/`option_panel`
+    // (Task 4/panel item 5). Full-width rows (rather than the shared
+    // `segmented` row widget) because option labels are long prose
+    // ("Bergsträsser (EN 13906-1 / Shigley default)"), not short chips.
+    let correction_panel = option_panel(
+        pal,
+        "Curvature-correction factor",
+        vm.options,
+        Message::SetCorrection,
+    );
 
     // Theme-preference picker (System/Light/Dark): same prose-button pattern
-    // and the same shared `option_button` as the correction group above.
-    let mut theme_col = column![section_heading(pal, "Theme"), section_divider(pal)].spacing(SP_SM);
-    for o in vm.theme_options {
-        theme_col = theme_col.push(option_button(
-            pal,
-            o.label,
-            o.selected,
-            o.clickable,
-            Message::ThemePref(o.value),
-        ));
-    }
-    let theme_panel: Element<'_, Message> = container(panel_container(pal, theme_col))
-        .width(Length::Fill)
-        .into();
+    // and the same shared `option_panel` as the correction group above.
+    let theme_panel = option_panel(pal, "Theme", vm.theme_options, Message::ThemePref);
 
     let mut content =
         column![header, section_divider(pal), correction_panel, theme_panel].spacing(SP_LG);
 
     // Surface a settings-save error below the panels (spec §5). The
     // in-memory preference still applies regardless of this status.
-    if let Some(fb) = save_feedback {
+    // `vm.save_feedback` is a disjoint field from `vm.options`/`vm.theme_options`
+    // above, so this partial move needs no pre-extraction.
+    if let Some(fb) = vm.save_feedback {
         let color = match fb.kind {
             SettingsFeedbackKind::Error => pal.danger,
         };

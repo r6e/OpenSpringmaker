@@ -282,6 +282,18 @@ fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &s
     fs::read_to_string(hash_file.path()).expect("read hash file")
 }
 
+/// A temp-dir path unique to this process AND thread: `tag` distinguishes
+/// call sites, and process id + thread id keep parallel test runs —
+/// including cargo's own test threads — from colliding on the same path.
+/// Callers create (and typically remove) the directory themselves.
+fn unique_temp_dir(tag: &str) -> std::path::PathBuf {
+    env::temp_dir().join(format!(
+        "{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ))
+}
+
 /// Differential snapshot pin for `widgets::segmented_style`'s selection
 /// highlight. The Settings screen with the default Bergsträsser correction
 /// selected vs. after `Message::SetCorrection(Wahl)` differs ONLY in which
@@ -301,11 +313,7 @@ fn segmented_selection_highlight_renders_differently() {
         springcore::CurvatureCorrection::Bergstrasser
     );
 
-    let dir = env::temp_dir().join(format!(
-        "openspringmaker-segmented-selection-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let dir = unique_temp_dir("openspringmaker-segmented-selection");
     fs::remove_dir_all(&dir).ok();
     fs::create_dir_all(&dir).expect("create temp snapshot dir");
 
@@ -2513,11 +2521,7 @@ fn settings_correction_reclick_retries_after_a_failed_save() {
     // Point settings_path at a location whose PARENT is a FILE (not a
     // directory), so `save_to`'s `create_dir_all` fails deterministically —
     // no reliance on filesystem permissions.
-    let bogus_parent = env::temp_dir().join(format!(
-        "osm-settings-retry-parent-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let bogus_parent = unique_temp_dir("osm-settings-retry-parent");
     fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
     app.settings_path = Some(bogus_parent.join("settings.toml"));
 
@@ -2538,11 +2542,7 @@ fn settings_correction_reclick_retries_after_a_failed_save() {
 
     // Repoint at a writable temp directory, then click the SELECTED option
     // through the Simulator.
-    let good_dir = env::temp_dir().join(format!(
-        "osm-settings-retry-good-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let good_dir = unique_temp_dir("osm-settings-retry-good");
     fs::create_dir_all(&good_dir).expect("create a writable temp dir");
     app.settings_path = Some(good_dir.join("settings.toml"));
 
@@ -2667,11 +2667,7 @@ fn settings_theme_reclick_retries_after_a_failed_save() {
 
     // Point settings_path at a location whose PARENT is a FILE (not a
     // directory), so `save_to`'s `create_dir_all` fails deterministically.
-    let bogus_parent = env::temp_dir().join(format!(
-        "osm-theme-retry-parent-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let bogus_parent = unique_temp_dir("osm-theme-retry-parent");
     fs::write(&bogus_parent, b"not a directory").expect("seed a file to block as a parent dir");
     app.settings_path = Some(bogus_parent.join("settings.toml"));
 
@@ -2690,11 +2686,7 @@ fn settings_theme_reclick_retries_after_a_failed_save() {
 
     // Repoint at a writable temp directory, then click the SELECTED option
     // (now "Light") through the Simulator.
-    let good_dir = env::temp_dir().join(format!(
-        "osm-theme-retry-good-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let good_dir = unique_temp_dir("osm-theme-retry-good");
     fs::create_dir_all(&good_dir).expect("create a writable temp dir");
     app.settings_path = Some(good_dir.join("settings.toml"));
 
@@ -2728,11 +2720,7 @@ fn theme_switch_changes_the_rendered_settings_screen() {
     let mut app = test_app();
     app.update(Message::NavigateTo(Screen::Settings));
 
-    let dir = env::temp_dir().join(format!(
-        "openspringmaker-theme-switch-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let dir = unique_temp_dir("openspringmaker-theme-switch");
     fs::remove_dir_all(&dir).ok();
     fs::create_dir_all(&dir).expect("create temp snapshot dir");
 

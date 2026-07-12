@@ -5,18 +5,12 @@ use crate::app::App;
 use crate::settings::ThemePref;
 use springcore::CurvatureCorrection;
 
-/// One selectable correction option as the view should render it.
-pub struct CorrectionOption {
-    pub value: CurvatureCorrection,
-    pub label: String,
-    pub selected: bool,
-    /// Whether the view should attach a click handler — see [`clickable`].
-    pub clickable: bool,
-}
-
-/// One selectable theme-preference option as the view should render it.
-pub struct ThemeOption {
-    pub value: ThemePref,
+/// One selectable option as the view should render it — generic over the
+/// underlying preference type (curvature-correction factor, theme
+/// preference, …) since both render as identical prose-button rows and
+/// differ only in which `Message` variant a click emits.
+pub struct SettingOption<T> {
+    pub value: T,
     pub label: String,
     pub selected: bool,
     /// Whether the view should attach a click handler — see [`clickable`].
@@ -38,8 +32,8 @@ pub struct SettingsFeedback {
 
 /// Rendering decisions for the Settings screen.
 pub struct SettingsViewModel {
-    pub options: Vec<CorrectionOption>,
-    pub theme_options: Vec<ThemeOption>,
+    pub options: Vec<SettingOption<CurvatureCorrection>>,
+    pub theme_options: Vec<SettingOption<ThemePref>>,
     /// Non-`None` when the last settings-save attempt failed.
     pub save_feedback: Option<SettingsFeedback>,
 }
@@ -55,6 +49,25 @@ fn clickable(selected: bool, save_feedback_pending: bool) -> bool {
     !selected || save_feedback_pending
 }
 
+/// Build one [`SettingOption`]: `selected` is whether `value` is the active
+/// preference; `clickable` follows the shared [`clickable`] rule. Generic so
+/// both the correction group and the theme group build their options through
+/// this single constructor.
+fn mk<T: PartialEq>(
+    value: T,
+    label: &str,
+    active: T,
+    save_feedback_pending: bool,
+) -> SettingOption<T> {
+    let selected = value == active;
+    SettingOption {
+        value,
+        label: label.to_string(),
+        selected,
+        clickable: clickable(selected, save_feedback_pending),
+    }
+}
+
 impl SettingsViewModel {
     /// Build the view model from the currently-active correction and theme
     /// preference.
@@ -62,24 +75,6 @@ impl SettingsViewModel {
         let active = app.correction;
         let active_theme = app.theme_pref;
         let save_feedback_pending = app.settings_error.is_some();
-        let mk = |value, label: &str| {
-            let selected = value == active;
-            CorrectionOption {
-                value,
-                label: label.to_string(),
-                selected,
-                clickable: clickable(selected, save_feedback_pending),
-            }
-        };
-        let mk_theme = |value, label: &str| {
-            let selected = value == active_theme;
-            ThemeOption {
-                value,
-                label: label.to_string(),
-                selected,
-                clickable: clickable(selected, save_feedback_pending),
-            }
-        };
         let save_feedback = app.settings_error.as_ref().map(|text| SettingsFeedback {
             kind: SettingsFeedbackKind::Error,
             text: text.clone(),
@@ -89,13 +84,30 @@ impl SettingsViewModel {
                 mk(
                     CurvatureCorrection::Bergstrasser,
                     "Bergsträsser (EN 13906-1 / Shigley default)",
+                    active,
+                    save_feedback_pending,
                 ),
-                mk(CurvatureCorrection::Wahl, "Wahl"),
+                mk(
+                    CurvatureCorrection::Wahl,
+                    "Wahl",
+                    active,
+                    save_feedback_pending,
+                ),
             ],
             theme_options: vec![
-                mk_theme(ThemePref::System, "System"),
-                mk_theme(ThemePref::Light, "Light"),
-                mk_theme(ThemePref::Dark, "Dark"),
+                mk(
+                    ThemePref::System,
+                    "System",
+                    active_theme,
+                    save_feedback_pending,
+                ),
+                mk(
+                    ThemePref::Light,
+                    "Light",
+                    active_theme,
+                    save_feedback_pending,
+                ),
+                mk(ThemePref::Dark, "Dark", active_theme, save_feedback_pending),
             ],
             save_feedback,
         }
@@ -196,47 +208,61 @@ mod tests {
 
     /// Clickable rule table (shared by both option kinds — panel Task 4):
     /// selected + no error ⇒ false; selected + error ⇒ true (retry
-    /// affordance); unselected ⇒ true (always).
-    #[test]
-    fn clickable_rule_table_for_correction_options() {
-        let app = test_app_with_correction(CurvatureCorrection::Bergstrasser);
-        let vm = SettingsViewModel::from_app(&app);
-        let selected = vm
-            .options
+    /// affordance); unselected ⇒ true (always). Shared by both option-kind
+    /// rule-table tests below, generic over the option's value type.
+    fn assert_clickable_rule_table<T: PartialEq + std::fmt::Debug + Copy>(
+        options: &[SettingOption<T>],
+        selected_value: T,
+        unselected_value: T,
+    ) {
+        let selected = options.iter().find(|o| o.value == selected_value).unwrap();
+        let unselected = options
             .iter()
-            .find(|o| o.value == CurvatureCorrection::Bergstrasser)
-            .unwrap();
-        let unselected = vm
-            .options
-            .iter()
-            .find(|o| o.value == CurvatureCorrection::Wahl)
+            .find(|o| o.value == unselected_value)
             .unwrap();
         assert!(
             !selected.clickable,
             "selected + no error must not be clickable"
         );
         assert!(unselected.clickable, "unselected must always be clickable");
+    }
+
+    /// Same rule table, but for the "a save is failing" branch: the selected
+    /// option becomes clickable (retry affordance); unselected stays clickable.
+    fn assert_clickable_rule_table_with_error<T: PartialEq + std::fmt::Debug + Copy>(
+        options: &[SettingOption<T>],
+        selected_value: T,
+        unselected_value: T,
+    ) {
+        let selected = options.iter().find(|o| o.value == selected_value).unwrap();
+        let unselected = options
+            .iter()
+            .find(|o| o.value == unselected_value)
+            .unwrap();
+        assert!(
+            selected.clickable,
+            "selected + error must become clickable (retry)"
+        );
+        assert!(unselected.clickable, "unselected must always be clickable");
+    }
+
+    #[test]
+    fn clickable_rule_table_for_correction_options() {
+        let app = test_app_with_correction(CurvatureCorrection::Bergstrasser);
+        let vm = SettingsViewModel::from_app(&app);
+        assert_clickable_rule_table(
+            &vm.options,
+            CurvatureCorrection::Bergstrasser,
+            CurvatureCorrection::Wahl,
+        );
 
         let mut app_err = test_app_with_correction(CurvatureCorrection::Bergstrasser);
         app_err.settings_error = Some("disk full".into());
         let vm_err = SettingsViewModel::from_app(&app_err);
-        let selected_err = vm_err
-            .options
-            .iter()
-            .find(|o| o.value == CurvatureCorrection::Bergstrasser)
-            .unwrap();
-        let unselected_err = vm_err
-            .options
-            .iter()
-            .find(|o| o.value == CurvatureCorrection::Wahl)
-            .unwrap();
-        assert!(
-            selected_err.clickable,
-            "selected + error must become clickable (retry)"
-        );
-        assert!(
-            unselected_err.clickable,
-            "unselected must always be clickable"
+        assert_clickable_rule_table_with_error(
+            &vm_err.options,
+            CurvatureCorrection::Bergstrasser,
+            CurvatureCorrection::Wahl,
         );
     }
 
@@ -246,41 +272,14 @@ mod tests {
         let mut app = test_app_with_correction(CurvatureCorrection::Bergstrasser);
         app.theme_pref = ThemePref::System;
         let vm = SettingsViewModel::from_app(&app);
-        let selected = vm
-            .theme_options
-            .iter()
-            .find(|o| o.value == ThemePref::System)
-            .unwrap();
-        let unselected = vm
-            .theme_options
-            .iter()
-            .find(|o| o.value == ThemePref::Light)
-            .unwrap();
-        assert!(
-            !selected.clickable,
-            "selected + no error must not be clickable"
-        );
-        assert!(unselected.clickable, "unselected must always be clickable");
+        assert_clickable_rule_table(&vm.theme_options, ThemePref::System, ThemePref::Light);
 
         app.settings_error = Some("disk full".into());
         let vm_err = SettingsViewModel::from_app(&app);
-        let selected_err = vm_err
-            .theme_options
-            .iter()
-            .find(|o| o.value == ThemePref::System)
-            .unwrap();
-        let unselected_err = vm_err
-            .theme_options
-            .iter()
-            .find(|o| o.value == ThemePref::Light)
-            .unwrap();
-        assert!(
-            selected_err.clickable,
-            "selected + error must become clickable (retry)"
-        );
-        assert!(
-            unselected_err.clickable,
-            "unselected must always be clickable"
+        assert_clickable_rule_table_with_error(
+            &vm_err.theme_options,
+            ThemePref::System,
+            ThemePref::Light,
         );
     }
 }
