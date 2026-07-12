@@ -2612,10 +2612,11 @@ fn theme_picker_switches_to_light_by_clicking_the_label() {
 /// No-op reclick sentinel: clicking the already-selected theme option while
 /// no save is failing must emit zero messages (mirrors
 /// `settings_correction_reclick_already_selected_preserves_action_error`).
-/// `Message::ThemePref` only recomputes state through `persist_settings`
-/// when the dispatched value differs from the current one (or a save is
-/// already failing), so the discriminating signal here is the message
-/// count itself rather than `action_error`/`settings_error`.
+/// The `Message::ThemePref` arm ALWAYS persists (parity with `SetCorrection`),
+/// so the no-op guarantee this test pins lives entirely in the ViewModel's
+/// `clickable` flag — the selected option loses its `.on_press` while no save
+/// is failing, so the click never reaches `update` at all. The discriminating
+/// signal here is the message count itself.
 #[test]
 fn settings_theme_reclick_already_selected_emits_no_message() {
     let mut app = test_app();
@@ -2642,19 +2643,18 @@ fn settings_theme_reclick_already_selected_emits_no_message() {
 }
 
 /// Panel-carried item: `ThemePref` performs a real file write via
-/// `persist_settings`, just like `SetCorrection`, so a FAILED save must
-/// remain retryable from this screen — mirrors
-/// `settings_correction_reclick_retries_after_a_failed_save`. Seeding the
-/// failure requires an actual value CHANGE (`ThemePref`'s handler only calls
-/// `persist_settings` when the value changes, or a save is already failing —
-/// unlike `SetCorrection`, which always persists), so the setup dispatches
-/// `Light` (a change from the default `System`) before retrying with the
-/// SAME value through the Simulator.
-/// Revert-probe (b): drop the `|| self.settings_error.is_some()` clause from
-/// app.rs's `Message::ThemePref` arm → the retry click dispatches `ThemePref`
-/// with the SAME (already-current) value → `set_if_changed` returns `false`
-/// → `persist_settings` never runs → `settings_error` stays `Some` → this
-/// test FAILS → restore → green.
+/// `persist_settings`, just like `SetCorrection` — both always persist. A
+/// FAILED save must remain retryable from this screen — mirrors
+/// `settings_correction_reclick_retries_after_a_failed_save`. The setup
+/// dispatches `Light` (a change from the default `System`) to seed the
+/// failure, then retries with the SAME value through the Simulator. The
+/// retry click succeeds because the ViewModel re-enables the selected
+/// option's click handler when a save is failing (retry affordance).
+/// Revert-probe (b): remove the `|| save_feedback_pending` clause from
+/// `clickable()` in settings_view_model.rs → the selected option loses its
+/// `.on_press` even while a save is failing → the retry click can't reach
+/// `update` → `settings_error` stays `Some` → this test FAILS → restore →
+/// green.
 #[test]
 fn settings_theme_reclick_retries_after_a_failed_save() {
     let mut app = test_app();
