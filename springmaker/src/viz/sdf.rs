@@ -1127,11 +1127,47 @@ fn hook_torus_part(
     }
 }
 
-/// Extension family SDF scene: a close-wound `Helix` body (no dead coils —
-/// `active_coils` IS the full turn count, matching
-/// `extension::scene_model::extension_scene`'s `close_wound_coil` call)
-/// plus the two hook `TorusArc`s, each attached exactly at its body
-/// endpoint.
+/// Body pitch (mm) that renders an extension spring AT its specified free
+/// length (wave-2 V5, user directive): the free length's stretch over the
+/// engine's own close-wound inside-hooks length
+/// ([`springcore::extension::free_length_from_geometry`], Shigley
+/// Eq. 10-39 / Fig. 10-7b — both end loops modeled by `d_loop = 2·r1`)
+/// spreads evenly across the active coils:
+/// `pitch = wire + max(0, L0 − L0_close_wound) / active`.
+///
+/// The `max(0)` is the close-wound clamp (decision point e, defense in
+/// depth): the ENGINE hard-rejects free lengths below its physical minimum
+/// (`min_free_length`, which un-folds the Eq. 10-40 hook-compliance turns
+/// `G/E` from `active`), so a below-minimum value can only reach a builder
+/// through post-solve mutation — but the builders must never
+/// inter-penetrate coils regardless of upstream validation. Because the
+/// engine minimum sits `(G/E)·wire` BELOW this function's `active`-based
+/// close-wound length (the render draws `active` body turns — its only
+/// coil count — not the physical `Nb = active − G/E`), a free length
+/// inside that narrow band also clamps here: the rendered spring is then
+/// close-wound and up to `(G/E)·wire ≈ 0.4·wire` longer than the specified
+/// free length, the closest representable shape. Shared by BOTH geometry
+/// paths (`extension_sdf` here, `extension::scene_model::extension_scene`)
+/// so the wireframe and shaded views cannot drift.
+///
+/// Hostile inputs degrade instead of poisoning: a NaN free length yields
+/// `pitch = wire` (`f64::max` drops the NaN operand); a NaN wire/radius
+/// propagates into the builders' existing `geometry_hostile` gates.
+pub(crate) fn extension_body_pitch_mm(d: &springcore::extension::ExtensionDesign) -> f64 {
+    let wire = d.wire_dia.millimeters();
+    let close_wound =
+        springcore::extension::free_length_from_geometry(d.wire_dia, d.active_coils, d.hooks)
+            .millimeters();
+    wire + (d.free_length.millimeters() - close_wound).max(0.0) / d.active_coils
+}
+
+/// Extension family SDF scene: a `Helix` body at the free-length pitch
+/// ([`extension_body_pitch_mm`] — no dead coils, `active_coils` IS the full
+/// turn count, matching `extension::scene_model::extension_scene`) plus the
+/// two hook `TorusArc`s, each attached exactly at its body endpoint. BOTH
+/// loops use `r1` — the loop's mean bend radius, the one the engine's
+/// free-length relation models; `r2` is the hook's side-bend torsion
+/// radius, not a loop radius.
 pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfScene {
     let turns = d.active_coils;
     let r = d.mean_dia.millimeters() / 2.0;
@@ -1139,9 +1175,14 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
     if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
         return SdfScene::default();
     }
+    let pitch = extension_body_pitch_mm(d);
+    if geometry_hostile(&[pitch]) {
+        return SdfScene::default();
+    }
     let wire_r = wire / 2.0;
-    let body_h = turns * wire;
+    let body_h = turns * pitch;
     let end_angle = turns * TAU;
+    let hook_r = d.hooks.r1.millimeters();
     let appearance = steel();
     SdfScene {
         parts: vec![
@@ -1149,7 +1190,7 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
                 shape: SdfPart::Helix(HelixParams {
                     radius_mm: r,
                     taper_small_r: None,
-                    pitch_mm: wire,
+                    pitch_mm: pitch,
                     turns,
                     profile: Profile::Circle { radius_mm: wire_r },
                     axial_offset_mm: 0.0,
@@ -1157,24 +1198,8 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
                 }),
                 appearance,
             },
-            hook_torus_part(
-                0.0,
-                0.0,
-                r,
-                d.hooks.r1.millimeters(),
-                -1.0,
-                wire_r,
-                appearance,
-            ),
-            hook_torus_part(
-                end_angle,
-                body_h,
-                r,
-                d.hooks.r2.millimeters(),
-                1.0,
-                wire_r,
-                appearance,
-            ),
+            hook_torus_part(0.0, 0.0, r, hook_r, -1.0, wire_r, appearance),
+            hook_torus_part(end_angle, body_h, r, hook_r, 1.0, wire_r, appearance),
         ],
         cuts: Vec::new(),
     }
@@ -3126,8 +3151,10 @@ mod tests {
         let d = extension_fixture();
         let scene = extension_sdf(&d);
         let r = d.mean_dia.millimeters() / 2.0;
+        // BOTH loops use r1 — the loop's mean bend radius; r2 is the hook's
+        // side-bend torsion radius, not a loop radius (wave-2 V5, matching
+        // the engine's `free_length_from_geometry` loop model).
         let r1 = d.hooks.r1.millimeters();
-        let r2 = d.hooks.r2.millimeters();
         let wire_r = d.wire_dia.millimeters() / 2.0;
         let body_h = match &scene.parts[0].shape {
             SdfPart::Helix(h) => h.pitch_mm * h.turns,
@@ -3135,7 +3162,7 @@ mod tests {
         };
         // Old tail points (loop centered on the attach) — must be OUTSIDE.
         let old_bottom_tail = [r - r1, r1, 0.0];
-        let old_top_tail = [r - r2, body_h - r2, 0.0];
+        let old_top_tail = [r - r1, body_h - r1, 0.0];
         assert!(
             part_distance(&scene.parts[1].shape, old_bottom_tail) > wire_r,
             "bottom hook still curls into the body"
@@ -3146,7 +3173,7 @@ mod tests {
         );
         // New hanging extremes — must be ON each hook's centerline.
         let bottom_extreme = [r, -2.0 * r1, 0.0];
-        let top_extreme = [r, body_h + 2.0 * r2, 0.0];
+        let top_extreme = [r, body_h + 2.0 * r1, 0.0];
         assert_relative_eq!(
             part_distance(&scene.parts[1].shape, bottom_extreme),
             -wire_r,
@@ -3181,7 +3208,7 @@ mod tests {
         let end_angle = d.active_coils * TAU;
         let cases = [
             (1usize, 0.0, 0.0, d.hooks.r1.millimeters(), -1.0),
-            (2usize, end_angle, body_h, d.hooks.r2.millimeters(), 1.0),
+            (2usize, end_angle, body_h, d.hooks.r1.millimeters(), 1.0),
         ];
         for (part_index, attach_angle, attach_h, hook_r, sign) in cases {
             let margin = 0.35; // rad clear of each endpoint's cap sphere
@@ -3206,6 +3233,47 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Wave-2 V5 (render at the specified length): the SDF body helix runs
+    /// at the SOLVED-length pitch — `wire + stretch/active` where `stretch`
+    /// is the free length's excess over the engine's close-wound
+    /// inside-hooks length (`free_length_from_geometry`) — and both hooks
+    /// attach at the stretched body's ends. Fixture: free 100, close-wound
+    /// 58 → pitch 6.2, body 62.
+    #[test]
+    fn extension_sdf_body_pitch_renders_the_specified_free_length() {
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let SdfPart::Helix(h) = &scene.parts[0].shape else {
+            panic!("expected the body helix first");
+        };
+        assert_relative_eq!(h.pitch_mm, 6.2, max_relative = 1e-9);
+        assert_relative_eq!(h.pitch_mm * h.turns, 62.0, max_relative = 1e-9);
+        // Top hook center sits one loop radius above the stretched body top.
+        let SdfPart::TorusArc { center, .. } = &scene.parts[2].shape else {
+            panic!("expected the top hook torus");
+        };
+        assert_relative_eq!(
+            center[1],
+            62.0 + d.hooks.r1.millimeters(),
+            max_relative = 1e-9
+        );
+    }
+
+    /// Defense in depth (wave-2 V5 decision point e): a post-solve-mutated
+    /// free length below the close-wound minimum (unreachable through a
+    /// real solve — the engine rejects it) clamps the body to close-wound,
+    /// never inter-penetrating.
+    #[test]
+    fn extension_sdf_free_length_below_minimum_clamps_to_close_wound() {
+        let mut d = extension_fixture();
+        d.free_length = springcore::units::Length::from_millimeters(10.0);
+        let scene = extension_sdf(&d);
+        let SdfPart::Helix(h) = &scene.parts[0].shape else {
+            panic!("expected the body helix first");
+        };
+        assert_relative_eq!(h.pitch_mm, d.wire_dia.millimeters(), max_relative = 1e-9);
     }
 
     #[test]

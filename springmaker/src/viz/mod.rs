@@ -169,11 +169,13 @@ pub fn scene_from_radius(
     }
 }
 
-/// Close-wound coil body shared by extension and torsion: pitch = wire
-/// diameter collapses `coil_height_fn` to a linear close-wound ramp (no dead
-/// coils, since active == total for a close-wound body). A thin wrapper over
-/// `scene_from_radius` with a constant radius and active == total == `turns`,
-/// hosting the explanation once instead of at each call site.
+/// Close-wound coil body (torsion's body; extension moved to the
+/// free-length pitch via `viz::sdf::extension_body_pitch_mm` in wave-2 V5):
+/// pitch = wire diameter collapses `coil_height_fn` to a linear close-wound
+/// ramp (no dead coils, since active == total for a close-wound body). A
+/// thin wrapper over `scene_from_radius` with a constant radius and active
+/// == total == `turns`, hosting the explanation once instead of at each
+/// call site.
 pub fn close_wound_coil(radius_mm: f64, turns: f64, wire_mm: f64) -> SceneData {
     scene_from_radius(|_| radius_mm, radius_mm, turns, turns, wire_mm, wire_mm)
 }

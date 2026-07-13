@@ -5,6 +5,29 @@ use crate::extension::ends::HookEnds;
 use crate::units::{Force, Length, SpringRate, Stress};
 use std::f64::consts::PI;
 
+/// Close-wound minimum free length: the shortest inside-hooks free length
+/// the spring can physically be wound to — the close-wound BODY plus both
+/// hook allowances. Composed from the two cited Shigley relations rather
+/// than a new formula: the solver's `active` is the RATE-equivalent count
+/// `Na = Nb + G/E` (Eq. 10-40 — ordinary twisted end loops add ~G/E
+/// equivalent turns of hook compliance), so the physical body coils are
+/// `Nb = active − G/E`, and the close-wound inside-hooks length of that
+/// body is [`free_length_from_geometry`] at `Nb` (Eq. 10-39 generalized to
+/// the loop diameter). Using `active` directly would OVER-state the
+/// minimum by `(G/E)·d` and falsely reject textbook designs — Shigley's
+/// own Example 10-6 (`Na = 12.574`, `L0 = 0.817 in` computed from
+/// `Nb = 12.17`) sits inside that band.
+pub fn min_free_length(
+    wire_dia: Length,
+    active: f64,
+    hooks: HookEnds,
+    shear_modulus: Stress,
+    youngs_modulus: Stress,
+) -> Length {
+    let body_coils = active - shear_modulus.pascals() / youngs_modulus.pascals();
+    free_length_from_geometry(wire_dia, body_coils, hooks)
+}
+
 /// Hook bending curvature factor at point A (Shigley, extension springs):
 /// (K)_A = (4·C1² − C1 − 1) / (4·C1·(C1 − 1)), with C1 = 2·r1/d.
 ///
@@ -151,5 +174,25 @@ mod tests {
         };
         let l0 = free_length_from_geometry(Length::from_millimeters(2.0), 10.0, hooks);
         assert_relative_eq!(l0.millimeters(), 42.0, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn min_free_length_subtracts_hook_compliance_turns() {
+        // d=2mm, r1=10mm, Na=10, G=80 GPa, E=203.4 GPa (Music Wire values):
+        // Nb = 10 − 80/203.4 = 9.60668633235005 body coils (Eq. 10-40), so
+        // L0_min = 2·(20 − 2) + (Nb + 1)·2 = 57.2133726647001 mm — hand
+        // literal, NOT recomputed through the function under test.
+        let hooks = HookEnds {
+            r1: Length::from_millimeters(10.0),
+            r2: Length::from_millimeters(5.0),
+        };
+        let min = min_free_length(
+            Length::from_millimeters(2.0),
+            10.0,
+            hooks,
+            crate::units::Stress::from_pascals(80.0e9),
+            crate::units::Stress::from_pascals(203.4e9),
+        );
+        assert_relative_eq!(min.millimeters(), 57.2133726647001, max_relative = 1e-12);
     }
 }

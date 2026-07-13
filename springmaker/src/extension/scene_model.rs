@@ -1,9 +1,12 @@
-//! Pure 3D scene presenter for the extension family: close-wound body
-//! (built via the shared `close_wound_coil` helper) plus two representative
-//! hook arcs (spec-documented simplification — arcs, not exact hook
-//! developments), each attached exactly at its body endpoint.
+//! Pure 3D scene presenter for the extension family: a coil body rendered
+//! AT the design's specified free length (wave-2 V5 — body pitch from the
+//! shared `viz::sdf::extension_body_pitch_mm`, clamped close-wound from
+//! below) plus two representative hook arcs (spec-documented
+//! simplification — arcs, not exact hook developments), each attached
+//! exactly at its body endpoint.
 
-use crate::viz::{close_wound_coil, coil_body_is_empty, Polyline3, SceneData, SceneRole};
+use crate::viz::sdf::extension_body_pitch_mm;
+use crate::viz::{coil_body_is_empty, scene_from_radius, Polyline3, SceneData, SceneRole};
 use springcore::extension::ExtensionDesign;
 use std::f64::consts::{PI, TAU};
 
@@ -54,7 +57,11 @@ pub fn extension_scene(design: &ExtensionDesign) -> SceneData {
     let r = design.mean_dia.millimeters() / 2.0;
     let wire = design.wire_dia.millimeters();
     let turns = design.active_coils;
-    let mut scene = close_wound_coil(r, turns, wire);
+    // Body pitch renders the SPECIFIED free length (wave-2 V5) — shared
+    // with `extension_sdf` so the two geometry paths cannot drift; clamped
+    // close-wound from below (defense in depth, decision point e).
+    let pitch = extension_body_pitch_mm(design);
+    let mut scene = scene_from_radius(|_| r, r, turns, turns, pitch, wire);
     // Capped/hostile coil count → empty body: the hooks are positioned from
     // radius and coil count alone, so building them anyway would render two
     // floating arcs around a missing body (finite extent — the placeholder
@@ -66,15 +73,19 @@ pub fn extension_scene(design: &ExtensionDesign) -> SceneData {
     // recomputing against the full body+hooks extent (see task report) —
     // the difference is cosmetic and stroke_for clamps to [1, 8] px anyway.
     let stroke = scene.polylines[0].stroke_px;
-    let body_h = turns * wire;
+    let body_h = turns * pitch;
     let end_angle = turns * TAU;
+    // BOTH loops use r1 — the loop's mean bend radius, the one the engine's
+    // free-length relation (`free_length_from_geometry`) models; r2 is the
+    // hook's side-bend torsion radius, not a loop radius (wave-2 V5).
+    let hook_r = design.hooks.r1.millimeters();
     scene.polylines.push(Polyline3 {
-        points: hook_arc(0.0, 0.0, r, design.hooks.r1.millimeters(), -1.0),
+        points: hook_arc(0.0, 0.0, r, hook_r, -1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
     });
     scene.polylines.push(Polyline3 {
-        points: hook_arc(end_angle, body_h, r, design.hooks.r2.millimeters(), 1.0),
+        points: hook_arc(end_angle, body_h, r, hook_r, 1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
     });
@@ -118,20 +129,23 @@ mod tests {
     }
 
     #[test]
-    fn extension_scene_is_close_wound_with_continuous_hooks() {
+    fn extension_scene_spans_the_free_length_with_continuous_hooks() {
         let d = design(); // the plot_model fixture: wire 2, mean 20, active 10, Fi 5
         let s = extension_scene(&d);
         // Body + two hooks.
         assert_eq!(s.polylines.len(), 3);
         let body = &s.polylines[0];
         assert_eq!(body.role, SceneRole::Wire);
-        // Close-wound: body height = active × wire dia (engine-field pin).
+        // Wave-2 V5: the body renders AT the specified free length, not
+        // close-wound. Body centerline height = L0 − 2·(2·r1 − d) − d
+        // (the engine's inside-hooks relation, `free_length_from_geometry`,
+        // solved for the stretched body): 100 − 2·18 − 2 = 62 mm.
         let last = *body.points.last().unwrap();
-        assert_relative_eq!(
-            last.1,
-            d.active_coils * d.wire_dia.millimeters(),
-            max_relative = 1e-9
-        );
+        let wire = d.wire_dia.millimeters();
+        let r1 = d.hooks.r1.millimeters();
+        let expected_body_h = d.free_length.millimeters() - 2.0 * (2.0 * r1 - wire) - wire;
+        assert_relative_eq!(last.1, expected_body_h, max_relative = 1e-9);
+        assert_relative_eq!(last.1, 62.0, max_relative = 1e-9);
         // Hook continuity: each hook's first point == its body endpoint (1e-9).
         let bottom = &s.polylines[1];
         let top = &s.polylines[2];
@@ -161,8 +175,11 @@ mod tests {
         let d = design();
         let s = extension_scene(&d);
         let body_top = s.polylines[0].points.last().unwrap().1;
+        // BOTH loops use r1 — the loop's mean bend radius. r2 is the hook's
+        // side-bend radius (torsion at point B), not a loop radius; the
+        // engine's free-length relation (`free_length_from_geometry`)
+        // models both end loops by `d_loop = 2·r1` (wave-2 V5).
         let r1 = d.hooks.r1.millimeters();
-        let r2 = d.hooks.r2.millimeters();
         let bottom = &s.polylines[1];
         let top = &s.polylines[2];
         for p in &bottom.points {
@@ -186,7 +203,54 @@ mod tests {
             .map(|p| p.1)
             .fold(f64::NEG_INFINITY, f64::max);
         assert_relative_eq!(bottom_min, -2.0 * r1, max_relative = 1e-9);
-        assert_relative_eq!(top_max, body_top + 2.0 * r2, max_relative = 1e-9);
+        assert_relative_eq!(top_max, body_top + 2.0 * r1, max_relative = 1e-9);
+    }
+
+    /// Wave-2 V5 (user directive: render at the specified length): the
+    /// rendered INSIDE-HOOKS span — from the bottom loop's inner surface to
+    /// the top loop's inner surface — must equal the design's free length,
+    /// matching the engine's own inside-hooks definition
+    /// (`free_length_from_geometry`, Shigley Eq. 10-39 / Fig. 10-7b).
+    #[test]
+    fn rendered_inside_hook_span_equals_the_specified_free_length() {
+        let d = design();
+        let s = extension_scene(&d);
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let bottom_min = s.polylines[1]
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::INFINITY, f64::min);
+        let top_max = s.polylines[2]
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let inside_span = (top_max - wire_r) - (bottom_min + wire_r);
+        assert_relative_eq!(
+            inside_span,
+            d.free_length.millimeters(),
+            max_relative = 1e-9
+        );
+    }
+
+    /// Defense in depth (wave-2 V5 decision point e): the engine rejects a
+    /// free length below the close-wound minimum, so this is unreachable
+    /// through a real solve — but the BUILDER must never inter-penetrate
+    /// coils regardless of upstream validation. A post-solve-mutated free
+    /// length below the minimum clamps the body to close-wound (pitch =
+    /// wire), never tighter.
+    #[test]
+    fn free_length_below_minimum_clamps_the_body_to_close_wound() {
+        let mut d = design();
+        d.free_length = springcore::units::Length::from_millimeters(10.0); // far below minimum
+        let s = extension_scene(&d);
+        let last = *s.polylines[0].points.last().unwrap();
+        assert_relative_eq!(
+            last.1,
+            d.active_coils * d.wire_dia.millimeters(), // close-wound floor
+            max_relative = 1e-9
+        );
     }
 
     /// An active-coil count past the helix render cap (`MAX_RENDER_TURNS`)
