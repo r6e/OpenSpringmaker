@@ -178,9 +178,10 @@ impl shader::Primitive for SpringPrimitive {
         _bounds: &Rectangle,
         _viewport: &shader::Viewport,
     ) {
-        let mut camera_floats = Vec::with_capacity(CAMERA_UNIFORM_FLOATS);
-        camera_floats.extend_from_slice(&self.camera);
-        camera_floats.extend_from_slice(&self.bg);
+        // The sRGB-encode flag rides in the camera uniform (wave-2 V1/V2):
+        // the PIPELINE learned the real target format in `Pipeline::new`;
+        // the primitive itself carries no format knowledge.
+        let camera_floats = camera_buffer_floats(&self.camera, self.bg, pipeline.needs_encode);
         queue.write_buffer(
             &pipeline.camera_buffer,
             0,
@@ -201,9 +202,41 @@ impl shader::Primitive for SpringPrimitive {
     }
 }
 
-/// `camera`(32) + `bg`(4) floats, in that order — the layout `Camera`'s WGSL
-/// struct (`view_proj: mat4x4, inv_view_proj: mat4x4, bg: vec4`) expects.
-const CAMERA_UNIFORM_FLOATS: usize = 32 + 4;
+/// `camera`(32) + `bg`(4) + `flags`(4) floats, in that order — the layout
+/// `Camera`'s WGSL struct (`view_proj: mat4x4, inv_view_proj: mat4x4,
+/// bg: vec4, flags: vec4`) expects. `flags.x` carries the runtime
+/// sRGB-encode flag ([`needs_srgb_encode`], wave-2 V1/V2); `.yzw` pad the
+/// slot to a full `vec4` (WGSL uniform structs align vector members to 16
+/// bytes, and a lone trailing `f32` would leave the CPU/GPU sizes
+/// disagreeing).
+const CAMERA_UNIFORM_FLOATS: usize = 32 + 4 + 4;
+
+/// Whether the fragment shader must apply the sRGB OETF itself (wave-2
+/// V1/V2 fix): TRUE for a non-sRGB render-target format, whose hardware
+/// stores shader output RAW — without the encode, the linear-light values
+/// this pipeline composes in display ~2.2x too dark (the user-reported
+/// black spring on a black background: `iced_wgpu`'s compositor PREFERS an
+/// sRGB swapchain format under gamma correction, but falls back to
+/// whatever the surface offers first, and the user's Metal surface handed
+/// the pipeline a non-sRGB format). FALSE for an sRGB-format target, which
+/// encodes in hardware on store — encoding in the shader too would
+/// double-encode and wash the image out. With the flag, BOTH format
+/// classes render identically.
+fn needs_srgb_encode(format: wgpu::TextureFormat) -> bool {
+    !format.is_srgb()
+}
+
+/// Assemble the camera uniform buffer's exact float layout
+/// ([`CAMERA_UNIFORM_FLOATS`]): `camera`(32) + `bg`(4) + `flags`(4), with
+/// `flags.x` the [`needs_srgb_encode`] verdict as `1.0`/`0.0`. Pure — the
+/// headless-pinnable half of `SpringPrimitive::prepare`'s buffer write.
+fn camera_buffer_floats(camera: &[f32; 32], bg: [f32; 4], needs_encode: bool) -> Vec<f32> {
+    let mut floats = Vec::with_capacity(CAMERA_UNIFORM_FLOATS);
+    floats.extend_from_slice(camera);
+    floats.extend_from_slice(&bg);
+    floats.extend_from_slice(&[f32::from(needs_encode), 0.0, 0.0, 0.0]);
+    floats
+}
 
 /// The exact float count `sdf::scene_uniforms` always returns (see its
 /// doc) — aliased from `sdf.rs`'s own hoisted `SCENE_UNIFORM_FLOATS`
@@ -228,6 +261,11 @@ pub(crate) struct SpringPipeline {
     camera_buffer: wgpu::Buffer,
     scene_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    /// Whether the fragment shader must apply the sRGB OETF itself —
+    /// derived once from the REAL target format `Pipeline::new` receives
+    /// ([`needs_srgb_encode`], wave-2 V1/V2) and forwarded to the shader
+    /// through the camera uniform's `flags.x` on every `prepare`.
+    needs_encode: bool,
 }
 
 impl shader::Pipeline for SpringPipeline {
@@ -327,6 +365,7 @@ impl shader::Pipeline for SpringPipeline {
             camera_buffer,
             scene_buffer,
             bind_group,
+            needs_encode: needs_srgb_encode(format),
         }
     }
 }
@@ -689,6 +728,53 @@ mod tests {
             !src.contains("{{"),
             "unsubstituted {{PLACEHOLDER}} remains in:\n{src}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Wave-2 V1/V2: runtime sRGB-encode flag — the pipeline learns the real
+    // target format in `Pipeline::new` and the shader applies the sRGB OETF
+    // at its exit iff the target is NOT an sRGB-format texture. These pin
+    // everything pinnable headless: the flag derivation, the packed camera
+    // buffer layout, and the WGSL's OETF presence (the naga test validates
+    // the shader itself). What they CANNOT pin: actual on-screen pixels —
+    // that verification is human-only, on a real GPU.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn needs_srgb_encode_matches_the_target_format_class() {
+        // Non-sRGB targets store shader output raw — the shader must encode.
+        assert!(needs_srgb_encode(wgpu::TextureFormat::Bgra8Unorm));
+        assert!(needs_srgb_encode(wgpu::TextureFormat::Rgba8Unorm));
+        // sRGB targets encode in hardware on store — the shader must NOT
+        // (double-encoding would wash the image out).
+        assert!(!needs_srgb_encode(wgpu::TextureFormat::Bgra8UnormSrgb));
+        assert!(!needs_srgb_encode(wgpu::TextureFormat::Rgba8UnormSrgb));
+    }
+
+    #[test]
+    fn camera_buffer_floats_packs_camera_bg_then_encode_flag() {
+        let camera: [f32; 32] = std::array::from_fn(|i| i as f32);
+        let bg = [0.1, 0.2, 0.3, 1.0];
+        let floats = camera_buffer_floats(&camera, bg, true);
+        assert_eq!(floats.len(), CAMERA_UNIFORM_FLOATS);
+        assert_eq!(&floats[0..32], &camera);
+        assert_eq!(&floats[32..36], &bg);
+        assert_eq!(floats[36], 1.0, "flags.x must carry needs_encode");
+        assert_eq!(&floats[37..40], &[0.0, 0.0, 0.0], "flags.yzw are padding");
+        let floats_srgb = camera_buffer_floats(&camera, bg, false);
+        assert_eq!(floats_srgb[36], 0.0);
+        assert_eq!(floats_srgb.len(), CAMERA_UNIFORM_FLOATS);
+    }
+
+    #[test]
+    fn instantiate_wgsl_carries_the_srgb_oetf() {
+        let src = instantiate_wgsl();
+        for needle in ["0.0031308", "12.92", "1.055", "flags"] {
+            assert!(
+                src.contains(needle),
+                "instantiated WGSL is missing the sRGB-OETF marker {needle:?}"
+            );
+        }
     }
 
     #[test]

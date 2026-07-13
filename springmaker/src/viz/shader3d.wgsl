@@ -379,6 +379,13 @@ struct Camera {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
     bg: vec4<f32>,
+    // flags.x: the runtime sRGB-encode verdict (wave-2 V1/V2) —
+    // `needs_srgb_encode(format)` from SpringPipeline::new, 1.0 when the
+    // render target is NOT an sRGB-format texture (its hardware stores
+    // shader output raw, so fs_main must apply the OETF itself), 0.0 when
+    // it IS (hardware encodes on store; encoding here too would
+    // double-encode). flags.yzw: padding to a full vec4.
+    flags: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -480,6 +487,35 @@ fn shade(p: vec3<f32>, n: vec3<f32>, hit: PartHit, ray_dir: vec3<f32>) -> vec3<f
     return color;
 }
 
+// Inverse sRGB EOTF (linear -> encoded) — mirrors sdf.rs's
+// `linear_to_srgb` token-for-token (threshold 0.0031308, the linear-side
+// value of the decode's 0.04045). Applied by `encode_output` at fs_main's
+// exits iff `camera.flags.x` says the render target is NOT an sRGB-format
+// texture (wave-2 V1/V2: on such a target the hardware stores shader
+// output raw, and un-encoded linear light displays ~2.2x too dark — the
+// user-reported black spring on a black background).
+fn linear_to_srgb(u: f32) -> f32 {
+    if (u <= 0.0031308) {
+        return u * 12.92;
+    }
+    return 1.055 * pow(u, 1.0 / 2.4) - 0.055;
+}
+
+// The pipeline's single output-encode gate: every fs_main return value
+// funnels through here so no exit path can forget the format-dependent
+// encode. Alpha is coverage, not light — never gamma-encoded.
+fn encode_output(color: vec4<f32>) -> vec4<f32> {
+    if (camera.flags.x > 0.5) {
+        return vec4<f32>(
+            linear_to_srgb(color.r),
+            linear_to_srgb(color.g),
+            linear_to_srgb(color.b),
+            color.a,
+        );
+    }
+    return color;
+}
+
 @fragment
 fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     let inv_vp = camera.inv_view_proj;
@@ -505,10 +541,10 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     }
 
     if (!hit) {
-        return camera.bg;
+        return encode_output(camera.bg);
     }
 
     let part_hit = scene_eval_part(p);
     let normal = estimate_normal(p);
-    return vec4<f32>(shade(p, normal, part_hit, ray_dir), 1.0);
+    return encode_output(vec4<f32>(shade(p, normal, part_hit, ray_dir), 1.0));
 }
