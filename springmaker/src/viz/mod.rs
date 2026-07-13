@@ -688,16 +688,21 @@ pub(crate) fn camera_uniforms(
 }
 
 /// A known-safe, always-finite camera for `shader3d::SpringShader::draw`'s
-/// per-frame [`camera_uniforms`] call to fall back to on the (extremely
-/// unlikely, since `spring3d_element`'s representability probe already
-/// rejected any persistently-hostile extent/y_mid/zoom/orbit before the
-/// shaded widget is ever built) chance that a single frame's LIVE aspect
-/// ratio is degenerate — e.g. a transient zero-height layout mid-resize,
-/// which would divide-by-zero into a non-finite `aspect`. A nominal
-/// unit-scene camera (extent 1mm, default orbit/zoom, square aspect) is
-/// guaranteed finite by [`camera_uniforms`]'s own contract for sane inputs,
-/// so this is built by calling it rather than hand-writing a raw array that
-/// could drift from that contract.
+/// per-frame [`camera_uniforms`] call to fall back to when that call returns
+/// `None`. A degenerate live aspect is NOT the trigger — [`camera_uniforms`]
+/// substitutes `1.0` for any non-finite/non-positive aspect and still returns
+/// `Some`. The real residual trigger is the extreme-magnitude corner
+/// [`camera_representable`]'s doc describes: an extent in the roughly
+/// `2.5e37..7.5e37` mm band passes the view-build probe at aspect `1.0` yet
+/// overflows `as f32` at draw time on a TALL live layout (whose `1/aspect`
+/// projection scaling inflates the packed matrix ~3x) — plus pure defense in
+/// depth against any future draw-time input the view-build probe did not see.
+/// A nominal unit-scene camera (extent 1mm, default orbit/zoom, square
+/// aspect) is guaranteed finite by [`camera_uniforms`]'s own contract for
+/// sane inputs, so this is built by calling it rather than hand-writing a raw
+/// array that could drift from that contract. The fallback renders the
+/// background against the real scene uniforms — safe-wrong (a unit-scene
+/// framing), never garbage.
 fn fallback_camera() -> [f32; 32] {
     camera_uniforms(1.0, 0.5, Orbit::default(), 1.0, 1.0)
         .expect("nominal unit-scene inputs are always finite")
@@ -722,11 +727,21 @@ pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) ->
 ///
 /// Probed at a fixed representative `aspect` of `1.0`: aspect is always a
 /// positive, finite ratio the widget derives from its own live `Rectangle`
-/// at draw time (`shader3d::SpringShader::draw`), and — per
-/// [`camera_uniforms`]'s own math — cannot itself flip a finite result to
-/// non-finite or vice versa; only `extent_mm`/`y_mid_mm`/`zoom`/`orbit`'s
-/// own magnitude does that. So this ONE check at view-build time is a valid
-/// gate for every later per-frame aspect `draw` will actually use.
+/// at draw time (`shader3d::SpringShader::draw`). Aspect scales the packed
+/// magnitude but for all NORMAL layout ratios (down to a tall ~9:16) cannot
+/// flip a finite aspect-1.0 result to non-finite — with one bounded caveat:
+/// a tall aspect scales the projection x-row by `1/aspect` AND `eye_position`
+/// by the fit distance, so the dominant `view_proj` entry at aspect 0.5625 is
+/// ~3x its aspect-1.0 value. An extent in roughly the `2.5e37..7.5e37` mm
+/// band therefore passes THIS aspect-1.0 probe (and `scene_uniforms`' own f32
+/// sweep — the radius still packs finite) yet overflows `as f32` at draw time
+/// in a narrow widget. That residual is the belt `draw`'s
+/// [`fallback_camera`] provides (safe background-only render, never garbage),
+/// so this ONE view-build check gates every realistic per-frame aspect while
+/// the fallback catches the extreme-magnitude corner. (The `scene_uniforms`
+/// 1e38-radius representability test is thus NOT an end-to-end shaded
+/// guarantee: at that magnitude the camera overflows first and the widget
+/// safely takes the wireframe/fallback path.)
 fn camera_representable(extent_mm: f64, y_mid_mm: f64, orbit: Orbit, zoom: f32) -> bool {
     camera_uniforms(extent_mm, y_mid_mm, orbit, zoom, 1.0).is_some()
 }
@@ -735,20 +750,22 @@ fn camera_representable(extent_mm: f64, y_mid_mm: f64, orbit: Orbit, zoom: f32) 
 /// bitmap fills, as the LINEAR RGBA floats the WGSL `Camera.bg` slot
 /// expects.
 ///
-/// **Linear, not raw sRGB (review F1 fix).** `Palette`'s tokens (like every
-/// other color authored in this app) are ordinary sRGB display values, but
-/// this app's `iced` compositor picks an sRGB-FORMAT swapchain texture
-/// whenever gamma correction is enabled (the default: `iced_wgpu`'s
-/// `Compositor::new` calls `formats.find(TextureFormat::is_srgb)` under
-/// `color::GAMMA_CORRECTION`, which is `true` unless the `web-colors`
-/// feature is on — not enabled here) — writing to such a target, the
-/// hardware itself re-encodes whatever the fragment shader returns from
-/// linear to sRGB on store. `into_linear` (the same conversion every other
-/// `iced` rendering pipeline applies before handing a `Color` to the GPU)
-/// undoes the authoring convention so the shader's `ambient = luminance(bg)`
-/// term operates on genuinely linear light, and the raw clear color the GPU
-/// eventually stores back matches the authored panel color instead of being
-/// double-encoded.
+/// **Linear, not raw sRGB (review F1 / wave-2 V1+V2 fix).** `Palette`'s tokens
+/// (like every other color authored in this app) are ordinary sRGB display
+/// values. The pipeline's contract is encode-exactly-once: linearize every
+/// input at PACK time, compose in linear light, then apply the display
+/// (sRGB) encode exactly ONCE at output — in HARDWARE on an sRGB-format
+/// render target, or in the fragment shader's `encode_output` on a non-sRGB
+/// target. Which one is decided at runtime from the real target format by
+/// `shader3d::needs_srgb_encode`, the authority for this contract (the
+/// wave-2 fix: `iced_wgpu`'s compositor only PREFERS an sRGB swapchain and
+/// falls back to whatever the surface offers, so the target format is not
+/// guaranteed sRGB — the earlier "the hardware always re-encodes" assumption
+/// was exactly the V1/V2 black-render bug). `into_linear` (the same
+/// conversion every other `iced` pipeline applies before handing a `Color`
+/// to the GPU) is the pack-time linearize for the background, so the shader's
+/// `ambient = luminance(bg)` term operates on genuinely linear light and the
+/// single output encode restores the authored panel color.
 fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
     pal.panel.into_linear()
 }
@@ -1097,9 +1114,11 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Review F1 fix: gamma — the shaded background must be LINEAR, not raw
-    // sRGB, since the shader writes to an sRGB-format compositor target
-    // (hardware re-encodes linear -> sRGB on store).
+    // Review F1 / wave-2 V1+V2 fix: gamma — the shaded background must be
+    // LINEAR, not raw sRGB. The pipeline composes in linear light and encodes
+    // exactly once at output (hardware on an sRGB target, else the shader per
+    // `shader3d::needs_srgb_encode`), so every input — background included —
+    // is linearized at pack time. See `bg_rgba`'s doc for the full contract.
     // ------------------------------------------------------------------
 
     #[test]

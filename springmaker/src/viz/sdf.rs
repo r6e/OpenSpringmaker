@@ -151,10 +151,13 @@ pub(crate) enum Profile {
 /// colors, not measured radiometric values. [`pack_appearance`] linearizes
 /// it at PACK TIME, right before it reaches the shaded shader's per-part
 /// slot, for the same reason `viz::bg_rgba` linearizes the background: the
-/// fragment shader writes to an sRGB-format target, so every color the
-/// shader consumes for its (linear-space) shading math must already be
-/// linear. `metallic`/`roughness` are plain material scalars, not colors —
-/// they pack and unpack unchanged.
+/// pipeline's encode-exactly-once contract composes all shading math in
+/// linear light, so every color the shader consumes must already be linear;
+/// the single display (sRGB) encode is applied once at OUTPUT — in hardware
+/// on an sRGB target, or in the shader per `viz::shader3d::needs_srgb_encode`
+/// on a non-sRGB one (see `viz::bg_rgba`'s doc for the full contract).
+/// `metallic`/`roughness` are plain material scalars, not colors — they pack
+/// and unpack unchanged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Appearance {
     pub base_color: [f32; 3],

@@ -96,8 +96,20 @@ pub fn deflection(force: Force, initial_tension: Force, rate: SpringRate) -> Len
 /// Extension-spring free length from geometry (Shigley extension free-length
 /// relation, generalized to the hook-loop diameter). The end loop is modeled
 /// by its mean diameter `d_loop = 2·r1` (default hook `r1 = D/2` ⇒ `d_loop = D`),
-/// so `L₀ = 2·(d_loop − d) + (Na + 1)·d`. Body coils are taken equal to the
-/// active coils (close-wound body); `r2` governs torsion only and is not used.
+/// so `L₀ = 2·(d_loop − d) + (N + 1)·d`. `r2` governs torsion only and is not
+/// used.
+///
+/// The `active` parameter is the coil count `N` in the `(N + 1)·d` body term;
+/// which count to pass depends on the purpose (Shigley Eq. 10-39/10-40):
+/// - pass the solver's rate-equivalent active turns `Na` for the
+///   RATE-EQUIVALENT close-wound length (the renderer's
+///   `viz::sdf::extension_body_pitch_mm` does this: it draws `Na` body turns);
+/// - pass the PHYSICAL body turns `Nb = Na − G/E` for the physical close-wound
+///   MINIMUM (`min_free_length` does this — un-folding Eq. 10-40's
+///   hook-compliance turns, so the minimum is not over-stated by `(G/E)·d` and
+///   Shigley's own Example 10-6 is not falsely rejected).
+///
+/// So this fn does NOT itself assume `Nb = Na`; the caller chooses.
 pub fn free_length_from_geometry(wire_dia: Length, active: f64, hooks: HookEnds) -> Length {
     let d = wire_dia.meters();
     let d_loop = 2.0 * hooks.r1.meters();
