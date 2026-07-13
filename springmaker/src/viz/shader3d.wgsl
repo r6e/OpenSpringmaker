@@ -480,6 +480,8 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     var hit = false;
     var p = ray_origin;
     var t: f32 = 0.0;
+    // Compute far-clip distance to prevent f32 overflow on miss rays.
+    let t_max = length(ray_far - ray_origin);
     for (var i: u32 = 0u; i < MARCH_MAX_STEPS; i = i + 1u) {
         p = ray_origin + ray_dir * t;
         let d = scene_eval(p);
@@ -488,6 +490,8 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
             break;
         }
         t = t + d * MARCH_SAFETY;
+        // Bail if marched past far-clip boundary.
+        if (t > t_max) { break; }
     }
 
     if (!hit) {
