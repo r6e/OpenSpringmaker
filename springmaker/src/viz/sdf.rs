@@ -61,6 +61,22 @@ pub(crate) const MARCH_EPS: f32 = 1e-3;
 pub(crate) const FLOATS_PER_PART: usize = 16;
 /// Fixed per-cut float stride — see [`scene_uniforms`]'s doc.
 pub(crate) const FLOATS_PER_CUT: usize = 8;
+/// Sentinel packed into a Helix slot's `taper_small_r` float to mean
+/// `None` (no taper) — see [`scene_uniforms`]'s doc for the decode
+/// contract. **Negative, not `NaN`.** `taper_small_r` is a physical
+/// radius (always `>= 0.0` when `Some`), so any negative value is
+/// unambiguously "absent"; unpacking it is then the ORDINARY comparison
+/// `< 0.0`, not a NaN-testing predicate. This matters because WGSL (the
+/// WebGPU Shading Language Task 5's fragment shader is written in) permits
+/// implementations to compile under a finite-math-only assumption — no
+/// NaN exists — under which `isNan()` and NaN-involving comparisons may
+/// legally fold to a constant `false` at compile time
+/// (<https://www.w3.org/TR/WGSL/#floating-point-evaluation>). A `NaN`
+/// sentinel would therefore risk silently misdecoding every tapered vs.
+/// untapered helix on a conforming implementation that takes that
+/// license; an ordinary negative-vs-nonnegative comparison carries no such
+/// risk in either Rust or WGSL.
+const NO_TAPER_SENTINEL: f32 = -1.0;
 
 /// A point or vector in millimetres, in whatever local frame the caller
 /// established (world frame for scene composition; a part's own local
@@ -1155,8 +1171,8 @@ fn pack_part(slot: &mut [f32], part: &ScenePart) {
         SdfPart::Helix(h) => {
             slot[0] = 0.0;
             slot[1] = h.radius_mm as f32;
-            // NaN sentinel for `None` — see scene_uniforms's doc.
-            slot[2] = h.taper_small_r.map_or(f32::NAN, |v| v as f32);
+            // Negative sentinel for `None` — see `NO_TAPER_SENTINEL`'s doc.
+            slot[2] = h.taper_small_r.map_or(NO_TAPER_SENTINEL, |v| v as f32);
             slot[3] = h.pitch_mm as f32;
             slot[4] = h.turns as f32;
             let (profile_kind, dim0, dim1) = match h.profile {
@@ -1237,9 +1253,14 @@ fn pack_cut(slot: &mut [f32], cut: &GroundPlane) {
 ///   block per part SLOT. Slot layout, `kind = block[0]` (`0.0` Helix,
 ///   `1.0` TorusArc, `2.0` Capsule):
 ///   - **Helix** (15 of 16 floats used, 1 pad): `[1]` radius_mm, `[2]`
-///     taper_small_r (`NaN` sentinel encodes `None` — no separate presence
-///     flag needed since a real radius can never be `NaN`; see the note
-///     below), `[3]` pitch_mm, `[4]` turns, `[5]` profile_kind (`0.0`
+///     taper_small_r (negative [`NO_TAPER_SENTINEL`] encodes `None` — no
+///     separate presence flag needed since a real radius can never be
+///     negative; **WGSL-side decode contract: `taper < 0.0` means no
+///     taper** — an ordinary numeric comparison, not `isNan()`/a NaN
+///     comparison, which WGSL implementations may legally constant-fold
+///     under a finite-math assumption; see the note below and
+///     [`NO_TAPER_SENTINEL`]'s doc), `[3]` pitch_mm, `[4]` turns, `[5]`
+///     profile_kind (`0.0`
 ///     Circle / `1.0` Rectangle), `[6]` profile_dim0 (Circle: radius_mm;
 ///     Rectangle: half_w_mm), `[7]` profile_dim1 (Circle: unused `0.0`;
 ///     Rectangle: half_h_mm), `[8]` axial_offset_mm, `[9]` phase_rad,
@@ -1255,15 +1276,27 @@ fn pack_cut(slot: &mut [f32], cut: &GroundPlane) {
 /// - `[4 + MAX_PARTS·FLOATS_PER_PART ..)`: one `FLOATS_PER_CUT`-float
 ///   (`GroundPlane`) block per cut SLOT — see [`pack_cut`].
 ///
-/// **`taper_small_r`'s `NaN` sentinel is a documented, deliberate
-/// ambiguity.** A (never legitimately constructed) `Some(f64::NAN)` would
-/// round-trip through `unpack_scene` (the test-only inverse, `#[cfg(test)]`
-/// below — not doc-linked since it doesn't exist outside test builds) as
-/// `None` — every family builder
-/// rejects non-finite geometry via `geometry_hostile` before any
-/// `HelixParams` is built, so that state cannot reach this function through
-/// the real builders; pinned by a test rather than silently assumed
-/// unreachable.
+/// **A (never legitimately constructed) `Some(f64::NAN)` taper is a
+/// documented non-goal, not silently assumed unreachable.** Every family
+/// builder rejects non-finite geometry via `geometry_hostile` before any
+/// `HelixParams` is built, so `Some(NaN)` cannot reach this function
+/// through the real builders — the choice below only matters for a
+/// directly-constructed test fixture. Decision (pinned by a test rather
+/// than left to whatever the encoding happens to do): `pack_part` does
+/// NOT special-case a `NaN` payload — it packs `NaN as f32` like any other
+/// value — and `unpack_scene` (the test-only inverse, `#[cfg(test)]`
+/// below — not doc-linked since it doesn't exist outside test builds)
+/// decodes it as `Some(NaN)`, not `None`: the decode's `< 0.0` comparison
+/// is false for `NaN` under ordinary IEEE-754 rules (the same rule the
+/// `NO_TAPER_SENTINEL` decode elsewhere in this table relies on being
+/// well-defined), so the value passes through rather than being coerced
+/// to the "absent" state. This was a deliberate choice over the
+/// alternative (clamping/rejecting non-finite input at pack time): letting
+/// `Some(NaN)` round-trip as `Some(NaN)` means a violation of the
+/// finite-geometry invariant stays visibly poisoned (`NaN` propagates and
+/// corrupts the render) rather than silently laundering into a valid
+/// untapered helix, which would hide the upstream bug instead of
+/// surfacing it.
 ///
 /// Every geometry value packs `as f32` (mm-scale doubles lose ~1e-7
 /// relative precision, well under any rendering-visible threshold);
@@ -1309,7 +1342,7 @@ fn unpack_part(slot: &[f32]) -> Option<ScenePart> {
         0 => (
             SdfPart::Helix(HelixParams {
                 radius_mm: f64::from(slot[1]),
-                taper_small_r: if slot[2].is_nan() {
+                taper_small_r: if slot[2] < 0.0 {
                     None
                 } else {
                     Some(f64::from(slot[2]))
@@ -3004,13 +3037,51 @@ mod tests {
         }
     }
 
+    /// F1 (review fix): the common, real-world case — a `None`-taper
+    /// Helix scene must round-trip to EXACTLY `None`, not merely "some
+    /// falsy-ish value". Pins the negative-sentinel decode
+    /// (`NO_TAPER_SENTINEL` packed for `None`, `< 0.0` unpacked back to
+    /// `None`) directly, independent of the mixed-scene round-trip test
+    /// above. A mutated pack default of `0.0` instead of `-1.0` fails this
+    /// test: `0.0 < 0.0` is false, so it would unpack as `Some(0.0)`
+    /// instead of `None` (verified by inspection — `0.0` is not negative,
+    /// so the `unpack_part` decode branch is not taken).
     #[test]
-    fn scene_uniforms_some_nan_taper_collapses_to_none_on_unpack_documented_ambiguity() {
-        // f32::NAN is the `None` sentinel (see scene_uniforms's doc); a
-        // directly-constructed `Some(f64::NAN)` — never produced by any
-        // real family builder, which rejects non-finite geometry via
-        // `geometry_hostile` upstream — is indistinguishable from `None`
-        // after packing. Documented, not silently assumed unreachable.
+    fn scene_uniforms_round_trips_none_taper_to_none_exactly() {
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: 10.0,
+                    taper_small_r: None,
+                    pitch_mm: 2.0,
+                    turns: 4.0,
+                    profile: Profile::Circle { radius_mm: 1.0 },
+                    axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
+                }),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let packed = scene_uniforms(&scene).unwrap();
+        let round_tripped = unpack_scene(&packed).unwrap();
+        match &round_tripped.parts[0].shape {
+            SdfPart::Helix(h) => assert_eq!(h.taper_small_r, None),
+            _ => panic!("expected a Helix part"),
+        }
+    }
+
+    #[test]
+    fn scene_uniforms_some_nan_taper_round_trips_as_some_nan_not_none() {
+        // Negative sentinel, not NaN (F2 review fix): a directly-
+        // constructed `Some(f64::NAN)` — never produced by any real family
+        // builder, which rejects non-finite geometry via `geometry_hostile`
+        // upstream — packs as plain `NaN as f32` (no special-casing) and
+        // decodes via the ordinary `< 0.0` comparison, which is false for
+        // `NaN`, so it passes through as `Some(NaN)` rather than collapsing
+        // to `None`. See `scene_uniforms`'s doc for why this is the chosen
+        // behavior over silently laundering it into a valid untapered
+        // helix. Documented, not silently assumed unreachable.
         let scene = SdfScene {
             parts: vec![ScenePart {
                 shape: SdfPart::Helix(HelixParams {
@@ -3029,7 +3100,7 @@ mod tests {
         let packed = scene_uniforms(&scene).unwrap();
         let round_tripped = unpack_scene(&packed).unwrap();
         match &round_tripped.parts[0].shape {
-            SdfPart::Helix(h) => assert_eq!(h.taper_small_r, None),
+            SdfPart::Helix(h) => assert!(h.taper_small_r.is_some_and(|v| v.is_nan())),
             _ => panic!("expected a Helix part"),
         }
     }
