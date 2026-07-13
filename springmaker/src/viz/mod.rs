@@ -1304,6 +1304,305 @@ mod tests {
     }
 
     #[test]
+    fn mat4_invert_is_a_true_inverse_both_orders() {
+        // Mutation bucket-1 pin: `M·M⁻¹ == M⁻¹·M == I` element-wise. The camera
+        // matrices (view, projection, composed view_proj) are STRUCTURED —
+        // a perspective is ~80% zeros with m[15] = 0, a view has m[3] = m[7] =
+        // m[11] = 0 and an orthonormal 3x3 — so any cofactor term that happens
+        // to multiply one of those zeros is unaffected by an operator mutation.
+        // The two DENSE generic matrices below (all 16 entries distinct and
+        // nonzero, well-conditioned) leave no cofactor term dormant: every
+        // MESA-inverse product-of-three is a product of three distinct nonzero
+        // O(1) values, so a single operator flip moves the product off the
+        // identity by O(1) ≫ the 1e-9 tolerance. (The camera matrices are
+        // ill-conditioned — a perspective's near/far ratio — so they keep the
+        // looser 1e-4 that absorbs their rounding; the dense ones carry the
+        // teeth.)
+        let view = mat4_look_at([10.0, 5.0, 3.0], [0.0, 2.0, 0.0], [0.0, 1.0, 0.0]);
+        let proj = mat4_perspective(FOV_Y_RAD, 1.6, 0.7, 250.0);
+        let camera = camera_uniforms(
+            140.0,
+            40.0,
+            Orbit {
+                yaw: 0.8,
+                pitch: -0.3,
+            },
+            1.2,
+            1.777,
+        )
+        .expect("finite inputs always produce a camera");
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(camera[i]));
+        let dense_a: Mat4 = [
+            2.0, 0.5, -1.3, 0.7, //
+            1.1, 3.2, 0.9, -0.4, //
+            -0.6, 1.4, 2.7, 1.8, //
+            0.3, -1.1, 0.8, 2.2,
+        ];
+        let dense_b: Mat4 = [
+            -1.5, 2.1, 0.4, -0.9, //
+            0.8, -0.7, 3.3, 1.2, //
+            2.4, 1.6, -0.5, 0.6, //
+            -1.1, 0.9, 1.7, -2.3,
+        ];
+        let id = mat4_identity();
+        for (m, tol) in [
+            (view, 1e-4),
+            (proj, 1e-4),
+            (view_proj, 1e-4),
+            (dense_a, 1e-9),
+            (dense_b, 1e-9),
+        ] {
+            let inv = mat4_invert(&m);
+            for (label, product) in [("M*inv", mat4_mul(&m, &inv)), ("inv*M", mat4_mul(&inv, &m))] {
+                for i in 0..16 {
+                    assert!(
+                        (product[i] - id[i]).abs() < tol,
+                        "{label} index {i}: {} vs identity {}",
+                        product[i],
+                        id[i]
+                    );
+                }
+            }
+        }
+
+        // Degenerate fallback: a rank-deficient matrix (rows 0 and 1 equal ⇒
+        // det = 0) returns the identity rather than dividing by ~zero. Pins the
+        // det-guard's branch SELECTION — an `==` mutation on `det.abs() <
+        // 1e-12` would skip the guard on this near-zero det and blow up.
+        let singular: Mat4 = [
+            1.0, 2.0, 3.0, 4.0, //
+            1.0, 2.0, 3.0, 4.0, //
+            0.5, 1.0, 0.0, 2.0, //
+            3.0, 1.0, 4.0, 1.0,
+        ];
+        assert_eq!(mat4_invert(&singular), id);
+    }
+
+    #[test]
+    fn mat4_perspective_maps_reference_points_to_expected_ndc() {
+        // Bucket-1 pin: RH projection, wgpu z ∈ [0, 1]. fov = π/3 (NOT π/2 —
+        // there tan(fov/2) = 1, making both `1.0 / tan(..)` and the inner
+        // `fov/2` division degenerate: a `/`→`*` flip on `fov/2` is invisible
+        // when the operand halves to π/4). At π/3, f_cot = 1/tan(π/6) = √3.
+        // aspect = 2, near = 1, far = 100. Near-plane center → NDC (0, 0, 0);
+        // far-plane center → z = 1; edge points pin the x/y scaling
+        // (f_cot/aspect = √3/2, f_cot = √3). Independent of the fn's own
+        // formula (points transformed, not matrix entries read back).
+        let f_cot = 3.0_f64.sqrt();
+        let m = mat4_perspective(std::f64::consts::FRAC_PI_3, 2.0, 1.0, 100.0);
+        let ndc = |v: [f64; 4]| {
+            let c = mat4_mul_vec4(&m, v);
+            [c[0] / c[3], c[1] / c[3], c[2] / c[3]]
+        };
+        let near_c = ndc([0.0, 0.0, -1.0, 1.0]);
+        assert_relative_eq!(near_c[0], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(near_c[1], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(near_c[2], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([0.0, 0.0, -100.0, 1.0])[2], 1.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([1.0, 0.0, -1.0, 1.0])[0], f_cot / 2.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([0.0, 1.0, -1.0, 1.0])[1], f_cot, epsilon = 1e-9);
+    }
+
+    /// Packed `camera_uniforms(140, 35, {yaw 0.9, pitch −0.4}, zoom 1.15,
+    /// aspect 1.6)` captured from the (reviewed-correct) implementation — the
+    /// reference for the composition pin below. `view_proj` in `[0..16]`,
+    /// `inv_view_proj` in `[16..32]`.
+    const CAMERA_REFERENCE_PACK: [f32; 32] = [
+        0.937937,
+        0.7364362,
+        -0.72152793,
+        -0.7214919, //
+        0.0,
+        2.2236378,
+        0.38943782,
+        0.38941833, //
+        -1.181949,
+        0.5843998,
+        -0.5725693,
+        -0.5725407, //
+        -2.1442524e-14,
+        -77.82733,
+        215.68462,
+        215.81384, //
+        0.41196686,
+        -0.0,
+        -0.5191434,
+        5.4421324e-17, //
+        0.12635247,
+        0.38151595,
+        0.10026716,
+        -0.0, //
+        -1182.3809,
+        388.1913,
+        -938.2797,
+        -7.1425, //
+        1181.7185,
+        -387.8213,
+        937.7541,
+        7.142857,
+    ];
+
+    #[test]
+    fn camera_uniforms_applies_each_input_fallback() {
+        // Bucket-1 discrimination pins for the input-sanitizing guards. A bad
+        // value must produce the SAME camera as its canonical fallback — the
+        // only way to observe a guard whose mutation would either let the bad
+        // value through or stop falling back on a good one.
+        let orbit = Orbit {
+            yaw: 0.7,
+            pitch: -0.35,
+        };
+        let (z, a) = (1.3f32, 1.6f32);
+
+        // 698: a single non-finite zoom/yaw/pitch → None. An `||`→`&&` between
+        // the three checks would let a lone NaN through.
+        assert!(camera_uniforms(120.0, 0.0, orbit, f32::NAN, a).is_none());
+        assert!(camera_uniforms(
+            120.0,
+            0.0,
+            Orbit {
+                yaw: f32::NAN,
+                pitch: -0.35,
+            },
+            z,
+            a,
+        )
+        .is_none());
+        assert!(camera_uniforms(
+            120.0,
+            0.0,
+            Orbit {
+                yaw: 0.7,
+                pitch: f32::NAN,
+            },
+            z,
+            a,
+        )
+        .is_none());
+
+        // 701: a non-finite / non-positive extent falls back to 1.0. `&&`→`||`
+        // would use a negative extent; `>`→`>=` would use a zero one.
+        let extent_ref = camera_uniforms(1.0, 0.0, orbit, z, a);
+        assert!(extent_ref.is_some());
+        assert_eq!(camera_uniforms(-5.0, 0.0, orbit, z, a), extent_ref);
+        assert_eq!(camera_uniforms(0.0, 0.0, orbit, z, a), extent_ref);
+
+        // 709: a non-finite y_mid falls back to extent/2. A `/`→`*` (would give
+        // 2·extent) or `/`→`%` flip on that half shifts the target off-center.
+        assert_eq!(
+            camera_uniforms(8.0, f64::NAN, orbit, z, a),
+            camera_uniforms(8.0, 4.0, orbit, z, a),
+        );
+
+        // 711: a non-finite / non-positive aspect falls back to 1.0.
+        let aspect_ref = camera_uniforms(120.0, 0.0, orbit, z, 1.0);
+        assert!(aspect_ref.is_some());
+        assert_eq!(camera_uniforms(120.0, 0.0, orbit, z, -2.0), aspect_ref);
+        assert_eq!(camera_uniforms(120.0, 0.0, orbit, z, 0.0), aspect_ref);
+    }
+
+    #[test]
+    fn camera_uniforms_packs_the_reference_view_proj_and_its_inverse() {
+        // Bucket-1 composition pin (the triage's "packed 32 floats for one
+        // fixed input"). A fixed, fully-general camera — every input distinct
+        // and nonzero — is packed and every one of the 32 floats is checked
+        // against a captured reference. This is what kills the near/far plane
+        // arithmetic (`extent * NEAR_FRACTION`, `extent * FAR_FRACTION`): those
+        // feed the projection's z-row, which the looser "sphere stays inside
+        // the frustum" containment test cannot observe. The second half is
+        // independently pinned as the true inverse of the first (view_proj ·
+        // inv_view_proj ≈ I), so the snapshot is not a bare tautology.
+        let packed = camera_uniforms(
+            140.0,
+            35.0,
+            Orbit {
+                yaw: 0.9,
+                pitch: -0.4,
+            },
+            1.15,
+            1.6,
+        )
+        .expect("finite generic inputs pack a camera");
+        let expected: [f32; 32] = CAMERA_REFERENCE_PACK;
+        for (i, (&got, &want)) in packed.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - want).abs() <= 2e-4 * want.abs().max(1.0),
+                "packed float {i}: {got} vs reference {want}",
+            );
+        }
+        // The two halves are a mutual inverse (independent of the snapshot):
+        // any adjugate mutation that slips past the 2e-4 snapshot on the
+        // inverse half still breaks this identity.
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(packed[i]));
+        let inv: Mat4 = std::array::from_fn(|i| f64::from(packed[16 + i]));
+        let product = mat4_mul(&view_proj, &inv);
+        let id = mat4_identity();
+        for i in 0..16 {
+            assert!((product[i] - id[i]).abs() < 2e-3, "vp·inv index {i}");
+        }
+    }
+
+    #[test]
+    fn mat4_look_at_builds_an_orthonormal_right_handed_view() {
+        // Bucket-1 pin. A symmetric config (target at the origin, up = +Y)
+        // leaves two arithmetic terms unobserved: `dot(right, eye)` is 0 (so
+        // dropping the `-` on m[12] is invisible) and `up[0]` is 0 (so the
+        // sign of the cross-product z-term p[0]*q[1] - p[1]*q[0] never shows).
+        // Fully asymmetric geometry — every eye/target/up component distinct
+        // and nonzero — exercises both, plus the whole basis construction.
+        let eye = [4.0, 1.0, 3.0];
+        let target = [-1.0, 2.0, -2.0];
+        let up = [0.3, 1.0, -0.2];
+        let m = mat4_look_at(eye, target, up);
+
+        // Rows 0..2 of the upper-left 3x3 are the view basis: right, true_up,
+        // and -forward (m is column-major, so a "row" of the rotation reads
+        // m[col*4 + row]).
+        let r0 = [m[0], m[4], m[8]];
+        let r1 = [m[1], m[5], m[9]];
+        let r2 = [m[2], m[6], m[10]];
+        let dot3 = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+        // Orthonormal basis: unit rows, mutually perpendicular. A flipped sign
+        // anywhere in the cross product breaks perpendicularity (`right` stops
+        // being orthogonal to `forward`). Epsilon 1e-9: mutation deltas here are
+        // ~1e-2, so every tooth survives while f64 noise on correct code does not.
+        for row in [r0, r1, r2] {
+            assert_relative_eq!(dot3(row, row).sqrt(), 1.0, epsilon = 1e-9);
+        }
+        assert_relative_eq!(dot3(r0, r1), 0.0, epsilon = 1e-9);
+        assert_relative_eq!(dot3(r0, r2), 0.0, epsilon = 1e-9);
+        assert_relative_eq!(dot3(r1, r2), 0.0, epsilon = 1e-9);
+
+        // Right-handed: right x true_up = -forward = r2.
+        let cross_r0_r1 = [
+            r0[1] * r1[2] - r0[2] * r1[1],
+            r0[2] * r1[0] - r0[0] * r1[2],
+            r0[0] * r1[1] - r0[1] * r1[0],
+        ];
+        for k in 0..3 {
+            assert_relative_eq!(cross_r0_r1[k], r2[k], epsilon = 1e-9);
+        }
+
+        let apply = |p: [f64; 3]| mat4_mul_vec4(&m, [p[0], p[1], p[2], 1.0]);
+
+        // Eye maps to the view-space origin. dot(right, eye) ~= 0.106 here, so
+        // dropping the `-` on m[12] shifts this off origin — the mutation shows.
+        let at_eye = apply(eye);
+        for &component in &at_eye[..3] {
+            assert_relative_eq!(component, 0.0, epsilon = 1e-9);
+        }
+        assert_relative_eq!(at_eye[3], 1.0, epsilon = 1e-9);
+
+        // Target lies straight down the view -Z axis (x = y = 0, z < 0),
+        // pinning the handedness and the forward mapping together.
+        let at_target = apply(target);
+        assert_relative_eq!(at_target[0], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(at_target[1], 0.0, epsilon = 1e-9);
+        assert!(at_target[2] < 0.0);
+    }
+
+    #[test]
     fn camera_uniforms_keeps_the_extent_sphere_inside_the_frustum_at_two_aspects() {
         // Project the fit-to-extent bounding sphere's 6 world-axis poles
         // (the TRUE, unpadded sphere the scene actually needs contained —

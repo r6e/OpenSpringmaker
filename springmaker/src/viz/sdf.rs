@@ -2407,6 +2407,275 @@ mod tests {
         );
     }
 
+    #[test]
+    fn member_appearance_applies_the_exact_hue_shift_and_wraps() {
+        // Mutation bucket-4 pin: exact base_color per index — steel
+        // [0.62, 0.64, 0.67] plus each MEMBER_HUE_SHIFTS row, then the modulo
+        // wrap. Expected values are hardcoded independently of the shift
+        // table, so a mutated table entry changes the output but not the
+        // expectation (not a tautology against the code under test).
+        let cases: [(usize, [f32; 3]); 5] = [
+            (0, [0.62, 0.64, 0.67]),
+            (1, [0.67, 0.61, 0.62]),
+            (2, [0.57, 0.67, 0.72]),
+            (3, [0.70, 0.68, 0.61]),
+            (MEMBER_HUE_TABLE_LEN, [0.62, 0.64, 0.67]), // wraps to index 0
+        ];
+        for (index, expect) in cases {
+            let got = member_appearance(index).base_color;
+            for ch in 0..3 {
+                assert!(
+                    (got[ch] - expect[ch]).abs() < 1e-6,
+                    "member {index} channel {ch}: {} vs {}",
+                    got[ch],
+                    expect[ch]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn srgb_to_linear_pins_each_piecewise_branch() {
+        // Mutation bucket-4 pin: the sRGB inverse-EOTF's two branches and the
+        // 0.04045 breakpoint, against independently-computed values (standard
+        // sRGB inverse transform, tolerance 1e-6). The breakpoint itself is
+        // ~continuous (both branches agree there by design), so the branch
+        // SELECTION is pinned by two points clearly on either side: 0.03
+        // (linear, u/12.92) and 0.05 (power, ((u+0.055)/1.055)^2.4).
+        let cases: [(f32, f32); 5] = [
+            (0.0, 0.0),
+            (0.03, 0.002_321_98), // linear branch
+            (0.05, 0.003_935_94), // power branch (breakpoint-selection pin)
+            (0.5, 0.214_041_14),
+            (1.0, 1.0),
+        ];
+        for (input, expect) in cases {
+            assert!(
+                (srgb_to_linear(input) - expect).abs() < 1e-6,
+                "srgb_to_linear({input}) = {} expected {expect}",
+                srgb_to_linear(input)
+            );
+        }
+    }
+
+    #[test]
+    fn rotate_x_and_rotate_y_ninety_degrees_map_the_axes() {
+        // Mutation bucket-1 pin (known-angle): rotate_x(90°) maps ŷ→ẑ, ẑ→−ŷ,
+        // x̂ fixed; rotate_y(90°) maps x̂→−ẑ, ẑ→x̂, ŷ fixed.
+        let close = |a: Vec3, b: Vec3| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-12);
+        let q = std::f64::consts::FRAC_PI_2;
+        assert!(close(rotate_x([0.0, 1.0, 0.0], q), [0.0, 0.0, 1.0]));
+        assert!(close(rotate_x([0.0, 0.0, 1.0], q), [0.0, -1.0, 0.0]));
+        assert!(close(rotate_x([5.0, 0.0, 0.0], q), [5.0, 0.0, 0.0]));
+        assert!(close(rotate_y([1.0, 0.0, 0.0], q), [0.0, 0.0, -1.0]));
+        assert!(close(rotate_y([0.0, 0.0, 1.0], q), [1.0, 0.0, 0.0]));
+        assert!(close(rotate_y([0.0, 7.0, 0.0], q), [0.0, 7.0, 0.0]));
+        // A generic 30° rotation on an all-nonzero vector: at 90° cos = 0 zeroes
+        // the `y·sin + z·cos` / `x·cos + z·sin` cross-terms, hiding a `+`→`−`
+        // flip in the second summand. cos30 = √3/2, sin30 = 1/2, on [2, 3, 5]:
+        let h = std::f64::consts::FRAC_PI_6;
+        assert!(close(
+            rotate_x([2.0, 3.0, 5.0], h),
+            [2.0, 0.098_076_211_353_316_02, 5.830_127_018_922_194],
+        ));
+        assert!(close(
+            rotate_y([2.0, 3.0, 5.0], h),
+            [4.232_050_807_568_877, 3.0, 3.330_127_018_922_194],
+        ));
+    }
+
+    /// Component-wise closeness for the geometric-builder mutation pins below.
+    fn close3(a: Vec3, b: Vec3) -> bool {
+        (0..3).all(|i| (a[i] - b[i]).abs() < 1e-9)
+    }
+
+    #[test]
+    fn vadd_sums_each_component() {
+        // Bucket-4 pin: distinct nonzero components so a `+`→`−` flip on ANY
+        // lane shows (an all-equal input lets component 0's mutation hide).
+        assert_eq!(
+            vadd([1.0, 2.0, 3.0], [10.0, 20.0, 30.0]),
+            [11.0, 22.0, 33.0]
+        );
+    }
+
+    #[test]
+    fn sdf_eval_part_breaks_distance_ties_toward_the_earlier_part() {
+        // Bucket-4 pin: `d < best` (strict) keeps the FIRST part on an exact
+        // tie; a `<`→`<=` flip would hand ties to the later duplicate. Two
+        // identical capsules ⇒ equal distance everywhere ⇒ the winning index
+        // must stay 0.
+        let cap = || ScenePart {
+            shape: SdfPart::Capsule {
+                a: [0.0, 0.0, 0.0],
+                b: [0.0, 10.0, 0.0],
+                radius_mm: 2.0,
+            },
+            appearance: steel(),
+        };
+        let scene = SdfScene {
+            parts: vec![cap(), cap()],
+            cuts: Vec::new(),
+        };
+        let (_, index) = sdf_eval_part(&scene, [5.0, 5.0, 0.0]);
+        assert_eq!(index, 0);
+    }
+
+    #[test]
+    fn coils_hostile_flags_negative_active_but_not_zero() {
+        // Bucket-4 pin: the `active < 0.0` boundary. A finite negative active
+        // with a valid total is hostile (kills `||`→`&&` and `<`→`==`); a zero
+        // active with a valid total is NOT (kills `<`→`<=`).
+        assert!(coils_hostile(-1.0, 5.0));
+        assert!(!coils_hostile(0.0, 5.0));
+    }
+
+    #[test]
+    fn scene_extent_mm_reports_the_radial_diameter_when_it_dominates() {
+        // A wide, short helix: radius 50, wire_r 1.5 ⇒ radial reach 51.5, so
+        // extent = 2·(50 + 1.5) = 103, governing over the ~21mm y-span. Pins
+        // the `big_r + wire_r` radial reach and the `2.0 * radial` diameter —
+        // both dormant in the y-span-dominated pad test (which never lets the
+        // radial term reach `extent`).
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: 50.0,
+                    taper_small_r: None,
+                    pitch_mm: 3.0,
+                    turns: 6.0,
+                    profile: Profile::Circle { radius_mm: 1.5 },
+                    axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
+                }),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let (extent, _) = scene_extent_mm(&scene).expect("populated");
+        assert_relative_eq!(extent, 103.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn scene_extent_mm_bounds_a_torus_arc_reach_and_midpoint() {
+        // One TorusArc at radial 50 (center (30, 10, 40): hypot(30, 40) = 50),
+        // reach major_r + minor_r = 8 + 2 = 10 ⇒ radial 60, extent = 120
+        // (governs over the 20mm y-span [0, 20]); y_mid = 10. Pins
+        // `major_r + minor_r` and the `center[1] ± reach` y-range terms — the
+        // TorusArc arm had no dedicated extent case.
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::TorusArc {
+                    center: [30.0, 10.0, 40.0],
+                    y_rotation: 0.0,
+                    tilt: 0.0,
+                    major_r: 8.0,
+                    minor_r: 2.0,
+                    sweep: std::f64::consts::PI,
+                },
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("populated");
+        assert_relative_eq!(extent, 120.0, max_relative = 1e-9);
+        assert_relative_eq!(y_mid, 10.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn torsion_sdf_places_the_helix_end_and_leg2_at_the_swept_angle() {
+        // torsion_fixture uses INTEGER body_coils (5) ⇒ end_angle = 10π, cos = 1,
+        // sin = 0 — degenerate, hiding the `r·cos`/`r·sin` end point and the
+        // leg2 tangent `l2·(∓sin, cos)`. Re-run at 5.1 turns (end_angle mod 2π =
+        // 0.2π = 36°, cos and sin both nonzero, distinct) and pin the two
+        // capsule legs' endpoints against the independently-computed geometry.
+        // r = 10, wire = 2, l1 = 15, l2 = 10; cos36 = 0.809017, sin36 = 0.587785.
+        let mut d = torsion_fixture();
+        d.inputs.body_coils = 5.1;
+        let scene = torsion_sdf(&d);
+        let SdfPart::Capsule { a: a1, b: b1, .. } = scene.parts[1].shape else {
+            panic!("leg1 is a capsule");
+        };
+        assert!(close3(a1, [10.0, 0.0, 0.0]));
+        assert!(close3(b1, [10.0, 0.0, -15.0]));
+        let SdfPart::Capsule { a: a2, b: b2, .. } = scene.parts[2].shape else {
+            panic!("leg2 is a capsule");
+        };
+        // end = [r·cos, turns·wire, r·sin]
+        assert!(close3(
+            a2,
+            [8.090_169_943_749_475, 10.2, 5.877_852_522_924_731]
+        ));
+        // leg2_end = [end.x + l2·(−sin), end.y, end.z + l2·cos]
+        assert!(close3(
+            b2,
+            [2.212_317_420_824_744, 10.2, 13.968_022_466_674_206]
+        ));
+    }
+
+    #[test]
+    fn hook_torus_part_builds_the_torus_arc_at_the_attach_frame() {
+        // Bucket-4 pin: direct field check at attach_angle = π/3 (cos = 0.5 ≠ 1,
+        // so `coil_r·cos` vs `coil_r/cos` shows). Pins the center placement, the
+        // y_rotation (−attach − π) and the 1.5π sweep (vs a `1.5 + π` flip).
+        let part = hook_torus_part(
+            std::f64::consts::FRAC_PI_3,
+            4.0,
+            10.0,
+            3.0,
+            1.0,
+            0.5,
+            steel(),
+        );
+        let SdfPart::TorusArc {
+            center,
+            y_rotation,
+            tilt,
+            major_r,
+            minor_r,
+            sweep,
+        } = part.shape
+        else {
+            panic!("hook is a torus arc");
+        };
+        assert!(close3(center, [5.0, 7.0, 8.660_254_037_844_387]));
+        assert_relative_eq!(
+            y_rotation,
+            -4.0 * std::f64::consts::FRAC_PI_3,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(tilt, -std::f64::consts::FRAC_PI_2, max_relative = 1e-12);
+        assert_relative_eq!(major_r, 3.0, max_relative = 1e-12);
+        assert_relative_eq!(minor_r, 0.5, max_relative = 1e-12);
+        assert_relative_eq!(sweep, 1.5 * std::f64::consts::PI, max_relative = 1e-12);
+    }
+
+    #[test]
+    fn helical_body_parts_winds_each_segment_at_the_cumulative_phase() {
+        // Bucket-4 pin: a 3-segment body (dead 1 / active 8 / dead 1). The
+        // dead-hi segment's phase_rad must be TAU·(dead_per_end + active) =
+        // 9·TAU so it starts where the active segment ended; a `+`→`−`/`*` flip
+        // on that sum breaks the join.
+        let parts = helical_body_parts(|_| 5.0, 8.0, 10.0, 3.0, 2.0, 0.0, steel());
+        assert_eq!(parts.len(), 3);
+        let SdfPart::Helix(active) = &parts[1].shape else {
+            panic!("active segment is a helix");
+        };
+        let SdfPart::Helix(dead_hi) = &parts[2].shape else {
+            panic!("dead-hi segment is a helix");
+        };
+        assert_relative_eq!(
+            active.phase_rad,
+            std::f64::consts::TAU,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            dead_hi.phase_rad,
+            9.0 * std::f64::consts::TAU,
+            max_relative = 1e-12
+        );
+    }
+
     /// Review F1-extension fix: `pack_appearance` must linearize
     /// `base_color` (sRGB-authored, per `Appearance`'s doc) before it
     /// reaches the shader's per-part slot — the same reason `viz::bg_rgba`
@@ -3567,6 +3836,44 @@ mod tests {
         let appearance0 = scene.parts[0].appearance;
         let appearance1 = scene.parts[3].appearance;
         assert_ne!(appearance0.base_color, appearance1.base_color);
+    }
+
+    #[test]
+    fn assembly_sdf_series_stacks_members_by_two_max_wire_diameters() {
+        // Bucket-4 pin: the Series y-stacking gap = 2 · max member wire-dia. The
+        // shared two-member fixture's max wire is 2mm, where 2·2 == 2+2 —
+        // degenerate, hiding a `*`→`+` flip. Build member 0 at wire 3mm
+        // (2·3 = 6 ≠ 2+3 = 5) so the gap term shows in member 1's base offset.
+        use crate::assembly::form::{parse_and_solve, AsmFormState};
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let mut f = AsmFormState::with_default_material("Music Wire");
+        f.topology = "series".to_string();
+        f.loads = "10, 25".into();
+        f.members[0] = member_form("3", "24", "10", "80");
+        f.members.push(member_form("1.5", "16", "8", "60"));
+        let d = parse_and_solve(
+            &f,
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        let scene = assembly_sdf(&d);
+
+        // member 0 is SquaredGround ⇒ 3 parts; member 1's first (dead-lo) part
+        // sits at y_base = member0_height + gap, gap = 2 · max(3, 1.5) = 6.
+        let g0 = coil_geom(&d.members[0].design).expect("member 0 geometry");
+        let height0 = crate::viz::coil_height_fn(g0.active, g0.total, g0.pitch, g0.wire)(1.0);
+        let expected_y_base = height0 + 2.0 * 3.0;
+        let SdfPart::Helix(first_of_member1) = &scene.parts[3].shape else {
+            panic!("member 1's first segment is a helix");
+        };
+        assert_relative_eq!(
+            first_of_member1.axial_offset_mm,
+            expected_y_base,
+            max_relative = 1e-9
+        );
     }
 
     #[test]
