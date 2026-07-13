@@ -126,10 +126,11 @@ const SAMPLES_PER_TURN: usize = 32;
 ///
 /// Hostile coil counts (non-finite, negative, or zero-`total`
 /// `active`/`total`, or `total` past [`MAX_RENDER_TURNS`]) and a non-finite
-/// `pitch_mm` return the degenerate empty-body scene (`scene_extent` →
-/// `None`, the caller shows the placeholder) — the same verdicts the SDF
-/// builders' `coils_hostile`/`geometry_hostile` gates reach, so the two
-/// geometry paths agree on what is degenerate (R2 input-domain F3: a
+/// OR non-positive `pitch_mm` return the degenerate empty-body scene
+/// (`scene_extent` → `None`, the caller shows the placeholder) — the same
+/// verdicts the SDF builders' `coils_hostile`/`geometry_hostile`/`pitch <=
+/// 0.0` gates reach, so the two geometry paths agree on what is degenerate
+/// (R2 input-domain F3: a
 /// zero-coil or infinite-pitch body previously kept finite stray points,
 /// letting detail-building callers attach floating hooks around a poisoned
 /// body). The guard lives HERE and not only in [`helix`] because the
@@ -147,14 +148,20 @@ pub fn scene_from_radius(
 ) -> SceneData {
     // The range check rejects a NaN/±inf total too (`contains` is false for
     // all three); active needs its own finiteness test since `+inf < 0.0`
-    // and `NaN < 0.0` are both false. `total <= 0.0` and the pitch
-    // finiteness term mirror the SDF path's `coils_hostile`/
-    // `geometry_hostile` verdicts exactly.
+    // and `NaN < 0.0` are both false. `total <= 0.0` mirrors the SDF
+    // `coils_hostile` verdict; the two pitch terms mirror BOTH the SDF
+    // builders' `geometry_hostile(&[pitch])` finiteness check AND their
+    // SEPARATE `pitch <= 0.0` gate (R3 general note: e1d8527's "mirrors
+    // exactly" was imprecise — the SDF `pitch <= 0.0` gate is distinct from
+    // `geometry_hostile`, so a finite non-positive pitch slipped THIS path
+    // and rendered a flat/inverted coil where the SDF showed a placeholder;
+    // both now degrade to placeholder together).
     let coils_hostile = !active.is_finite()
         || active < 0.0
         || !(0.0..=MAX_RENDER_TURNS).contains(&total)
         || total <= 0.0
-        || !pitch_mm.is_finite();
+        || !pitch_mm.is_finite()
+        || pitch_mm <= 0.0;
     if coils_hostile {
         // Same shape as the normal path (exactly one Wire polyline, here
         // with no points) so the documented one-polyline invariant holds
@@ -963,6 +970,21 @@ mod tests {
         assert!(scene_extent(&nan_total).is_none());
         let negative_total = scene_from_radius(|_| 10.0, 10.0, 10.0, -2.0, 5.0, 2.0);
         assert!(scene_extent(&negative_total).is_none());
+    }
+
+    /// R3 general note (wireframe/SDF parity): a finite NON-POSITIVE pitch
+    /// (post-solve `wire<=0`, the same mutation threat model the SDF builders'
+    /// `pitch <= 0.0` gate defends) must empty the body here too — otherwise
+    /// the wireframe rendered a flat (pitch=0) / inverted (pitch<0) coil while
+    /// the SDF (`compression_sdf_zero_pitch_yields_default`) showed a
+    /// placeholder. `pitch = 0.0` isolates the new term (the finiteness term
+    /// is false for 0.0), so this genuinely pins the added gate.
+    #[test]
+    fn scene_from_radius_non_positive_pitch_yields_a_degenerate_scene() {
+        let zero_pitch = scene_from_radius(|_| 10.0, 10.0, 10.0, 10.0, 0.0, 2.0);
+        assert!(scene_extent(&zero_pitch).is_none());
+        let negative_pitch = scene_from_radius(|_| 10.0, 10.0, 10.0, 10.0, -1.0, 2.0);
+        assert!(scene_extent(&negative_pitch).is_none());
     }
 
     #[test]
