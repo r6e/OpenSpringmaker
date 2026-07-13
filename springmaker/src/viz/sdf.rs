@@ -183,6 +183,12 @@ pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f6
 /// (the large end when tapered); `taper_small_r` linearly interpolates the
 /// local coil radius down to `Some(small_r)` across the full `[0, turns]`
 /// sweep. `axial_offset_mm` stacks members in a series assembly.
+/// `phase_rad` sets the starting azimuth: wire parameter `phi` sits at
+/// world azimuth `phi + phase_rad`, i.e. the whole helix is the
+/// `phase_rad = 0` helix rigidly rotated about Y
+/// (`helix_phase_rotates_the_whole_helix_rigidly`) — this is what lets
+/// [`helical_body_parts`]'s segments stay azimuthally CONTINUOUS across
+/// fractional dead/active coil splits (review F2).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct HelixParams {
     pub radius_mm: f64,
@@ -191,6 +197,7 @@ pub(crate) struct HelixParams {
     pub turns: f64,
     pub profile: Profile,
     pub axial_offset_mm: f64,
+    pub phase_rad: f64,
 }
 
 /// Distance to a (possibly tapered) circular helix via PERIODIC REDUCTION:
@@ -335,10 +342,25 @@ pub(crate) struct HelixParams {
 /// box is not rotation-invariant about the helix tangent); they are not
 /// rendered by any current scene — revisit alongside the rectangular
 /// family's shaded view.
+///
+/// **Phase (review-F2 fix).** `phase_rad` rotates the whole helix rigidly
+/// about Y: wire parameter `phi` sits at world azimuth `phi + phase_rad`,
+/// so `phi ≡ theta_world - phase_rad (mod TAU)` and the reduction's
+/// candidates are `phi_c = (theta_world - phase_rad) + TAU*k`. That is ONE
+/// substitution — mapping the query azimuth into the helix's own phase
+/// frame up front — after which every downstream expression (the window
+/// vertex `k*`, the covering clamp, the per-winding bound) is unchanged and
+/// phase-consistent, because they all consume `theta` only through `phi_c`.
+/// The terminal caps use the true world azimuth of each end
+/// (`phi_end + phase_rad`). For `phase_rad = 0` the substitution is the
+/// identity (bit-for-bit: `rem_euclid` of an unshifted angle), so every
+/// phase-0 property below — conservativeness sweeps included — carries over
+/// unchanged; `helix_phase_rotates_the_whole_helix_rigidly` pins the
+/// general case by rotation equivariance.
 pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
     let axial = p[1] - h.axial_offset_mm;
     let radial = p[0].hypot(p[2]);
-    let theta = p[2].atan2(p[0]).rem_euclid(TAU);
+    let theta = (p[2].atan2(p[0]) - h.phase_rad).rem_euclid(TAU);
     let max_phi = TAU * h.turns;
     let s = h.pitch_mm / TAU;
     let small_r = h.taper_small_r.unwrap_or(h.radius_mm);
@@ -394,13 +416,15 @@ pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
         best = best.min(d);
     }
 
-    // Finding-3 terminal caps: exact distance to both end centerline points.
+    // Finding-3 terminal caps: exact distance to both end centerline points
+    // (at their TRUE world azimuth phi_end + phase_rad).
     for phi_end in [0.0, max_phi] {
         let coil_r = h.radius_mm + g * phi_end;
+        let az = phi_end + h.phase_rad;
         let end = [
-            coil_r * phi_end.cos(),
+            coil_r * az.cos(),
             s * phi_end + h.axial_offset_mm,
-            coil_r * phi_end.sin(),
+            coil_r * az.sin(),
         ];
         best = best.min(vlen(vsub(p, end)) - profile_cap_radius(h.profile));
     }
@@ -701,15 +725,17 @@ fn geometry_hostile(values: &[f64]) -> bool {
 /// ((total - active) / 2).max(0)`; a zero-turn segment is skipped (`Plain`
 /// ends: `dead_per_end == 0`, collapsing to the single active segment).
 ///
-/// **Accepted approximation.** Each segment's own `phi = 0` is pinned to
-/// world azimuth 0 ([`sd_helix`] has no phase parameter), so the
-/// reconstruction is phase-exact only when `dead_per_end` and `active` are
-/// both integers (true for Squared/SquaredGround, and trivially for Plain).
-/// A `PlainGround` end (`dead_per_end == 0.5`) would show a real azimuthal
-/// seam where the active segment resumes at world azimuth 0 instead of the
-/// true half-turn-away angle. No shipped family/fixture exercises that
-/// case; same register of accepted simplification as the wireframe's
-/// representative hook arcs.
+/// **Phase continuity (review-F2 fix).** Each segment's `phase_rad` is
+/// `TAU ×` the cumulative turns wound before it (dead-lo: `0`; active:
+/// `TAU·dead_per_end`; dead-hi: `TAU·(dead_per_end + active)`), so every
+/// segment STARTS at the exact world azimuth where the previous one ended —
+/// one continuous wire for ANY dead/active split, fractional counts
+/// included (`PlainGround`'s `dead_per_end = 0.5`, a fractional `active`
+/// like `7.5`). The phase-less reconstruction restarted every segment at
+/// world azimuth 0 — exact only for integer counts, with a real seam (two
+/// dangling wire ends, interpenetrating coils) otherwise;
+/// `plain_ground_segment_joins_have_no_azimuthal_seam` and
+/// `fractional_active_squared_top_join_has_no_azimuthal_seam` pin the fix.
 fn helical_body_parts(
     radius_at: impl Fn(f64) -> f64,
     active: f64,
@@ -724,7 +750,7 @@ fn helical_body_parts(
     let t1 = dead_per_end / total;
     let t2 = (dead_per_end + active) / total;
     let mut parts = Vec::with_capacity(3);
-    let mut push_segment = |turns: f64, pitch: f64, r0: f64, r1: f64, offset: f64| {
+    let mut push_segment = |turns: f64, pitch: f64, r0: f64, r1: f64, offset: f64, phase: f64| {
         if turns <= 0.0 {
             return;
         }
@@ -736,6 +762,7 @@ fn helical_body_parts(
                 turns,
                 profile: Profile::Circle { radius_mm: wire_r },
                 axial_offset_mm: offset,
+                phase_rad: phase,
             }),
             appearance,
         });
@@ -746,6 +773,7 @@ fn helical_body_parts(
         radius_at(0.0),
         radius_at(t1),
         axial_shift,
+        0.0,
     );
     push_segment(
         active,
@@ -753,6 +781,7 @@ fn helical_body_parts(
         radius_at(t1),
         radius_at(t2),
         axial_shift + dead_per_end * wire_mm,
+        TAU * dead_per_end,
     );
     push_segment(
         dead_per_end,
@@ -760,6 +789,7 @@ fn helical_body_parts(
         radius_at(t2),
         radius_at(1.0),
         axial_shift + dead_per_end * wire_mm + active * pitch_mm,
+        TAU * (dead_per_end + active),
     );
     parts
 }
@@ -776,11 +806,19 @@ fn is_ground_end(end_type: springcore::EndType) -> bool {
 }
 
 /// One [`GroundPlane`] per ground end (bottom + top), positioned at the
-/// flattened end coil's OUTER face — `y = wire_r` at the bottom, `y =
-/// total_height - wire_r` at the top — `total_height` from the SAME
-/// `viz::coil_height_fn` the wireframe uses (dead coils flattened, active
-/// coils at the solved pitch), so the cut sits exactly where the
-/// wireframe's flattened dead coil ends. Empty for non-ground `end_type`s.
+/// TRUE ground faces — `y = 0` and `y = total_height` (review F1; the
+/// previous inset by `wire_r` sat one wire radius too deep and shaved real
+/// coil material). The geometry: `coil_height_fn`'s centerline spans
+/// `[0, H]` with `H` = dead coils at wire pitch + active at solved pitch —
+/// for SquaredGround that is exactly Shigley's `L0`; the un-ground wire
+/// (the Squared blank) fills `[-wire_r, H + wire_r]`, and grinding removes
+/// half a wire diameter of material per end (Shigley Table 10-1: a ground
+/// end carries `d/2` less material per end), leaving flat faces at the
+/// centerline extremes and preserving face-to-face = `L0`. Solid-length
+/// cross-check: at solid the same faces sit at `{0, Nt·d}`, reproducing
+/// `Ls = d·Nt` exactly. `total_height` comes from the SAME
+/// `viz::coil_height_fn` the wireframe uses. Empty for non-ground
+/// `end_type`s.
 fn ground_cuts(
     end_type: springcore::EndType,
     active: f64,
@@ -791,15 +829,14 @@ fn ground_cuts(
     if !is_ground_end(end_type) {
         return Vec::new();
     }
-    let wire_r = wire_mm / 2.0;
     let total_height = crate::viz::coil_height_fn(active, total, pitch_mm, wire_mm)(1.0);
     vec![
         GroundPlane {
-            point: [0.0, wire_r, 0.0],
+            point: [0.0, 0.0, 0.0],
             normal: [0.0, -1.0, 0.0],
         },
         GroundPlane {
-            point: [0.0, total_height - wire_r, 0.0],
+            point: [0.0, total_height, 0.0],
             normal: [0.0, 1.0, 0.0],
         },
     ]
@@ -910,6 +947,7 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
                     turns,
                     profile: Profile::Circle { radius_mm: wire_r },
                     axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
                 }),
                 appearance,
             },
@@ -971,6 +1009,7 @@ pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
                     turns,
                     profile: Profile::Circle { radius_mm: wire_r },
                     axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
                 }),
                 appearance,
             },
@@ -1075,7 +1114,8 @@ mod tests {
         };
         let cy = h.pitch_mm * phi / TAU + h.axial_offset_mm;
         let rr = big_r + wire_r * ring_ang.cos();
-        [rr * phi.cos(), cy + wire_r * ring_ang.sin(), rr * phi.sin()]
+        let az = phi + h.phase_rad; // world azimuth of wire parameter phi
+        [rr * az.cos(), cy + wire_r * ring_ang.sin(), rr * az.sin()]
     }
 
     #[test]
@@ -1087,6 +1127,7 @@ mod tests {
             turns: 8.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         for i in 0..200 {
             let phi = (i as f64 / 199.0) * TAU * h.turns;
@@ -1121,6 +1162,7 @@ mod tests {
             turns: 10.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         let wire_r = 1.0;
         let radial_gap = 1.2;
@@ -1176,10 +1218,11 @@ mod tests {
                 Some(s) => h.radius_mm + (s - h.radius_mm) * t,
                 None => h.radius_mm,
             };
+            let az = phi + h.phase_rad; // world azimuth of wire parameter phi
             let c = [
-                big_r * phi.cos(),
+                big_r * az.cos(),
                 h.pitch_mm * phi / TAU + h.axial_offset_mm,
-                big_r * phi.sin(),
+                big_r * az.sin(),
             ];
             let d = vsub(p, c);
             vdot(d, d)
@@ -1233,6 +1276,7 @@ mod tests {
             turns: 8.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         // (radial, y, azimuth) probes: the counterexample, the coil axis,
         // on-cylinder mid-gaps at other azimuths, bore and exterior points,
@@ -1257,6 +1301,7 @@ mod tests {
             turns: 5.0,
             profile: Profile::Circle { radius_mm: 0.5 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         let steep_grid: [(f64, f64, f64); 8] = [
             (3.0, 5.0, 0.0),  // on-cylinder mid-gap
@@ -1300,6 +1345,7 @@ mod tests {
             turns: 5.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         let p = [0.0, 1.2, 0.0];
         // Distance to the turn-5 (small-end) ring-plane candidate: coil
@@ -1324,6 +1370,7 @@ mod tests {
             turns: 8.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         let plain = HelixParams {
             taper_small_r: None,
@@ -1340,6 +1387,48 @@ mod tests {
             assert!(
                 (a - b).abs() < 1e-12,
                 "zero-delta taper diverged at i={i}: {a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn helix_phase_rotates_the_whole_helix_rigidly() {
+        // Review F2 semantics pin: a phase-φ helix is the phase-0 helix
+        // rigidly rotated about Y, nothing else. `rotate_y(p, φ)` maps a
+        // point at azimuth θ to azimuth θ - φ (see rotate_y's doc), exactly
+        // undoing the phase — so sd(p, phase=φ) must equal
+        // sd(rotate_y(p, φ), phase=0) for EVERY geometry and query. φ = 0 is
+        // the identity, so this also pins phase-0 back-compat: every
+        // existing phase-0 property (conservativeness sweeps included)
+        // transfers to any phase by rotation invariance of distances.
+        let mut rng = TestRng(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..400 {
+            let radius_mm = rng.range(5.0, 20.0);
+            let h0 = HelixParams {
+                radius_mm,
+                taper_small_r: Some(radius_mm * rng.range(0.3, 1.0)),
+                pitch_mm: rng.range(1.0, 10.0),
+                turns: rng.range(0.4, 9.0),
+                profile: Profile::Circle { radius_mm: 0.8 },
+                axial_offset_mm: rng.range(-5.0, 5.0),
+                phase_rad: 0.0,
+            };
+            let phase = rng.range(-TAU, TAU);
+            let hp = HelixParams {
+                phase_rad: phase,
+                ..h0
+            };
+            let p = [
+                rng.range(-25.0, 25.0),
+                rng.range(-10.0, 60.0),
+                rng.range(-25.0, 25.0),
+            ];
+            let a = sd_helix(p, &hp);
+            let b = sd_helix(rotate_y(p, phase), &h0);
+            assert!(
+                (a - b).abs() < 1e-9,
+                "phase is not a rigid rotation: phase={phase} p={p:?} \
+                 phased={a} rotated-unphased={b}"
             );
         }
     }
@@ -1469,6 +1558,7 @@ mod tests {
                 turns,
                 profile: Profile::Circle { radius_mm: wire_r },
                 axial_offset_mm: 0.0,
+                phase_rad: 0.0,
             };
 
             // Query near a random point along the actual sweep: pick a wire
@@ -1511,6 +1601,7 @@ mod tests {
             turns: 0.5,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         let p = [0.0, 3.0, -10.0];
         let d = sd_helix(p, &h);
@@ -1541,6 +1632,7 @@ mod tests {
             turns: 8.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         // wire centerline point:
         let phi = TAU * 3.25;
@@ -1558,6 +1650,7 @@ mod tests {
             turns: 6.0,
             profile: Profile::Circle { radius_mm: 0.8 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         for frac in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let phi = frac * TAU * h.turns;
@@ -1575,6 +1668,7 @@ mod tests {
             turns: 4.0,
             profile: Profile::Circle { radius_mm: 1.0 },
             axial_offset_mm: 0.0,
+            phase_rad: 0.0,
         };
         // Below the start: distance grows with axial gap, never negative.
         let d = sd_helix([10.0, -5.0, 0.0], &h);
@@ -1703,9 +1797,12 @@ mod tests {
     /// plane is tangent to the wire's OWN cross-section there), so its
     /// SDF value degrades from the full `-wire_r` towards `0` even though
     /// it isn't literally past the plane. Concretely this excludes the
-    /// WHOLE dead-coil turn adjoining each ground end (that turn's centerline
-    /// spans exactly one wire diameter — `[0, 2·wire_r]` at the bottom —
-    /// so it's ENTIRELY within one wire radius of the cut). So near a
+    /// OUTER HALF-TURN of the dead coil adjoining each ground end: the cut
+    /// sits at the centerline extreme (`y = 0` at the bottom, review F1),
+    /// so of that coil's full `[0, 2·wire_r]` centerline span only
+    /// `[0, wire_r)` is within one wire radius of it — 16 of the 32
+    /// samples per turn, pinned exactly by the agreement tests below
+    /// (review F3). So near a
     /// ground end, the SDF (which DOES cut it) is MORE accurate than the
     /// wireframe, not less — those points are SUPPOSED to read closer to
     /// `0` than `-wire_r`. `ground_cut_flattens_material_below_the_
@@ -1796,26 +1893,34 @@ mod tests {
         assert!(extent > 0.0 && extent.is_finite());
     }
 
-    /// Golden fixture mirrored from `compression::scene_model`'s own test
-    /// (wire 2mm, mean 20mm, active 10 coils, free 60mm, SquaredGround).
-    fn compression_fixture() -> springcore::SpringDesign {
+    /// Solve the standard compression geometry (wire 2mm, mean 20mm, free
+    /// 60mm, loads 10/30N) for any end type / active count — the golden
+    /// fixture below plus the F2 seam fixtures (PlainGround's half-integer
+    /// dead coils, fractional active) parameterize this.
+    fn solved_compression(end_type: springcore::EndType, active: f64) -> springcore::SpringDesign {
         use springcore::units::{Force, Length};
-        use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario};
+        use springcore::{EndFixity, MaterialSet, PowerUser, Scenario};
         let m = MaterialSet::load_default()
             .get("Music Wire")
             .unwrap()
             .clone();
         PowerUser {
-            end_type: EndType::SquaredGround,
+            end_type,
             fixity: EndFixity::FixedFixed,
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
-            active: 10.0,
+            active,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0), Force::from_newtons(30.0)],
         }
         .solve(&m, springcore::CurvatureCorrection::Bergstrasser)
         .unwrap()
+    }
+
+    /// Golden fixture mirrored from `compression::scene_model`'s own test
+    /// (wire 2mm, mean 20mm, active 10 coils, free 60mm, SquaredGround).
+    fn compression_fixture() -> springcore::SpringDesign {
+        solved_compression(springcore::EndType::SquaredGround, 10.0)
     }
 
     #[test]
@@ -1840,8 +1945,10 @@ mod tests {
         let scene = compression_sdf(&d);
         let wire_r = d.wire_dia.millimeters() / 2.0;
         let wireframe = compression_scene(&d);
+        let mut excluded = 0usize;
         for p in &wireframe.polylines[0].points {
             if within_ground_cut_reach(&scene, *p, wire_r) {
+                excluded += 1;
                 continue; // see within_ground_cut_reach's doc: the ground cut sliver
             }
             let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
@@ -1851,6 +1958,12 @@ mod tests {
                 -wire_r
             );
         }
+        // Review F3: pin the exclusion's EXACT size so a mispositioned plane
+        // cannot silently widen its own blind spot. With the planes at the
+        // true faces (y = 0 and y = H), the wire_r reach covers the OUTER
+        // HALF-TURN of each flattened end coil: 16 of the 32 samples per
+        // turn, at each end — 32 of the fixture's 385 points.
+        assert_eq!(excluded, 32);
     }
 
     #[test]
@@ -1872,11 +1985,13 @@ mod tests {
     fn ground_cut_flattens_material_below_the_squared_ground_end() {
         let d = compression_fixture();
         let scene = compression_sdf(&d);
-        let wire_r = d.wire_dia.millimeters() / 2.0;
         let r = d.mean_dia.millimeters() / 2.0;
         let p = [r, -2.0, 0.0]; // near the terminal cap, but below the ground face
         let (base_d, _) = sdf_eval_part(&scene, p);
-        let plane_distance = wire_r - p[1]; // dot(p - plane_point, normal), bottom plane
+        // Review F1: the bottom face sits at y = 0 (the centerline's own
+        // start — grinding shaves the material's [-wire_r, 0) overhang), so
+        // the plane's signed distance is dot(p - [0,0,0], [0,-1,0]) = -p[1].
+        let plane_distance = -p[1];
         let full = sdf_eval(&scene, p);
         assert!(full >= plane_distance - 1e-9);
         assert_relative_eq!(full, plane_distance, max_relative = 1e-9);
@@ -1886,6 +2001,123 @@ mod tests {
              raw wire surface (base={base_d}, cut-adjusted={full}) — otherwise \
              the flattening has no effect"
         );
+    }
+
+    #[test]
+    fn ground_cuts_match_planes_derived_from_engine_fields() {
+        // Review F3: `within_ground_cut_reach` reads `scene.cuts` — the
+        // implementation's OWN output — so a mispositioned plane would
+        // auto-exclude its own damage from the centerline checks (exactly
+        // what let the F1 inset slip through review). This pins BOTH planes
+        // (position AND normal — the top plane was previously entirely
+        // unpinned) against values derived here, in-test, from ENGINE fields
+        // only. F1's geometry: the centerline spans [0, H] (H = dead coils
+        // at wire pitch + active at solved pitch = the SquaredGround free
+        // length); the un-ground material spans [-d/2, H + d/2]; grinding
+        // removes d/2 of material per end, leaving faces at y = 0 and y = H
+        // (face-to-face = L0; at solid the same faces reproduce Ls = d·Nt).
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        let wire = d.wire_dia.millimeters();
+        let dead = d.total_coils - d.active_coils;
+        let top_face = dead * wire + d.active_coils * d.pitch.millimeters();
+        assert_eq!(scene.cuts.len(), 2);
+        let bottom = &scene.cuts[0];
+        assert_eq!(bottom.normal, [0.0, -1.0, 0.0]);
+        assert_relative_eq!(bottom.point[0], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(bottom.point[1], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(bottom.point[2], 0.0, epsilon = 1e-9);
+        let top = &scene.cuts[1];
+        assert_eq!(top.normal, [0.0, 1.0, 0.0]);
+        assert_relative_eq!(top.point[0], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(top.point[1], top_face, epsilon = 1e-9);
+        assert_relative_eq!(top.point[2], 0.0, epsilon = 1e-9);
+    }
+
+    /// Sample the continuous wireframe centerline in a ±0.2-turn
+    /// neighborhood of `join_turn` (a body-segment boundary) and assert the
+    /// SDF reads ≈ -wire_r there — the review-F2 seam probe: a wrongly
+    /// phased segment leaves the true centerline empty on its side of the join
+    /// (its coil restarts azimuthally elsewhere), so the SDF reads far
+    /// above -wire_r. Points within a ground cut's reach are skipped (same
+    /// contract as the centerline-agreement tests); returns how many points
+    /// were actually checked so callers can assert the exclusion did not
+    /// swallow the probe.
+    fn checked_seamless_join_points(
+        scene: &SdfScene,
+        join_turn: f64,
+        coil_r: f64,
+        total: f64,
+        height: &dyn Fn(f64) -> f64,
+        wire_r: f64,
+    ) -> usize {
+        let mut checked = 0usize;
+        for delta in [-0.2, -0.15, -0.1, -0.05, 0.05, 0.1, 0.15, 0.2] {
+            let turn = join_turn + delta;
+            let ang = turn * TAU;
+            let p = (coil_r * ang.cos(), height(turn / total), coil_r * ang.sin());
+            if within_ground_cut_reach(scene, p, wire_r) {
+                continue;
+            }
+            checked += 1;
+            let dist = sdf_eval(scene, [p.0, p.1, p.2]);
+            assert!(
+                (dist + wire_r).abs() < 0.1 * wire_r,
+                "azimuthal seam at join turn {join_turn} (delta {delta}): \
+                 sdf={dist}, expected ~{}",
+                -wire_r
+            );
+        }
+        checked
+    }
+
+    #[test]
+    fn plain_ground_segment_joins_have_no_azimuthal_seam() {
+        // Review F2 (UI-reachable): PlainGround — a pick-list option — has
+        // dead_per_end = 0.5, so the active segment starts half a turn in:
+        // at azimuth π, exactly where the dead segment ends. A phase-less
+        // reconstruction restarted it at azimuth 0 (two dangling wire ends
+        // + interpenetrating coils). The true continuous centerline across
+        // BOTH joins must read ≈ -wire_r.
+        let d = solved_compression(springcore::EndType::PlainGround, 10.0);
+        let scene = compression_sdf(&d);
+        let wire = d.wire_dia.millimeters();
+        let wire_r = wire / 2.0;
+        let coil_r = d.mean_dia.millimeters() / 2.0;
+        let (active, total) = (d.active_coils, d.total_coils);
+        let dead_per_end = (total - active) / 2.0;
+        assert_relative_eq!(dead_per_end, 0.5, epsilon = 1e-12); // the case under test
+        let height = crate::viz::coil_height_fn(active, total, d.pitch.millimeters(), wire);
+        let mut checked = 0usize;
+        for join in [dead_per_end, dead_per_end + active] {
+            checked += checked_seamless_join_points(&scene, join, coil_r, total, &height, wire_r);
+        }
+        // The ground-cut exclusion swallows the face-side half of each
+        // neighborhood; the 4 body-side points per join must remain.
+        assert!(
+            checked >= 8,
+            "exclusion swallowed the seam probes: {checked}"
+        );
+    }
+
+    #[test]
+    fn fractional_active_squared_top_join_has_no_azimuthal_seam() {
+        // Review F2: a fractional active count ("7.5" is valid form input)
+        // makes the TOP dead segment start at azimuth frac(active)·TAU even
+        // for Squared ends (integer dead_per_end = 1) — the phase-less
+        // reconstruction seamed it at azimuth 0.
+        let d = solved_compression(springcore::EndType::Squared, 7.5);
+        let scene = compression_sdf(&d);
+        let wire = d.wire_dia.millimeters();
+        let wire_r = wire / 2.0;
+        let coil_r = d.mean_dia.millimeters() / 2.0;
+        let (active, total) = (d.active_coils, d.total_coils);
+        let dead_per_end = (total - active) / 2.0;
+        let height = crate::viz::coil_height_fn(active, total, d.pitch.millimeters(), wire);
+        let top_join = dead_per_end + active; // 8.5 turns: azimuth π, not 0
+        let checked =
+            checked_seamless_join_points(&scene, top_join, coil_r, total, &height, wire_r);
+        assert_eq!(checked, 8); // Squared has no cuts — nothing may be skipped
     }
 
     /// Golden fixture mirrored from `conical::scene_model`'s own test (wire
@@ -1931,8 +2163,10 @@ mod tests {
         let scene = conical_sdf(&d);
         let wire_r = d.inputs.wire_dia.millimeters() / 2.0;
         let wireframe = conical_scene(&d);
+        let mut excluded = 0usize;
         for p in &wireframe.polylines[0].points {
             if within_ground_cut_reach(&scene, *p, wire_r) {
+                excluded += 1;
                 continue; // see within_ground_cut_reach's doc: the ground cut sliver
             }
             let dist = sdf_eval(&scene, [p.0, p.1, p.2]);
@@ -1942,6 +2176,10 @@ mod tests {
                 -wire_r
             );
         }
+        // Review F3: same exact-exclusion pin as the compression twin (the
+        // conical fixture shares its coil counts and heights): 16 points per
+        // end = 32 of 385.
+        assert_eq!(excluded, 32);
     }
 
     #[test]
