@@ -13,7 +13,7 @@ use iced::{Point, Rectangle};
 
 use crate::app::Message;
 
-use super::sdf;
+use super::{camera_uniforms, sdf, Orbit};
 
 /// Raw WGSL source, unmodified — [`instantiate_wgsl`] substitutes every
 /// `{{PLACEHOLDER}}` token below before it reaches `wgpu::ShaderSource::Wgsl`.
@@ -46,13 +46,25 @@ pub(crate) struct DragState {
 }
 
 /// The `shader::Program` for the shaded 3D view: carries the already-packed
-/// scene/camera/background data (computed upstream by `viz::
-/// spring3d_element`, its single production constructor) and mirrors
+/// scene/background data plus the RAW camera inputs (computed upstream by
+/// `viz::spring3d_element`, its single production constructor) and mirrors
 /// `OrbitCanvas`'s drag-to-`Message::Orbit` discipline, plus
 /// wheel-to-`Message::Zoom`.
+///
+/// **No pre-packed camera field (review finding 1 fix).** The camera is
+/// built fresh in [`Program::draw`] every frame from `extent_mm`/`y_mid_mm`/
+/// `orbit`/`zoom` here PLUS the widget's live layout `Rectangle` — the only
+/// input `camera_uniforms` needs that isn't already known at `view()` time.
+/// Baking a camera here (at a nominal aspect) would drift from the panel's
+/// actual on-screen aspect ratio whenever it differs from that nominal
+/// value, which is every window width other than the one nominal value was
+/// tuned for.
 pub(crate) struct SpringShader {
     pub uniforms: Vec<f32>,
-    pub camera: [f32; 32],
+    pub extent_mm: f64,
+    pub y_mid_mm: f64,
+    pub orbit: Orbit,
+    pub zoom: f32,
     pub bg: [f32; 4],
 }
 
@@ -101,11 +113,17 @@ impl shader::Program<Message> for SpringShader {
         &self,
         _state: &DragState,
         _cursor: mouse::Cursor,
-        _bounds: Rectangle,
+        bounds: Rectangle,
     ) -> SpringPrimitive {
+        // The widget's LIVE on-screen aspect ratio (review finding 1) — not
+        // a nominal stand-in baked in at `view()` time — so the fitted
+        // camera tracks the panel's actual shape every frame, including
+        // across a live window resize.
+        let aspect = bounds.width / bounds.height;
+        let camera = camera_uniforms(self.extent_mm, self.y_mid_mm, self.orbit, self.zoom, aspect);
         SpringPrimitive {
             uniforms: self.uniforms.clone(),
-            camera: self.camera,
+            camera,
             bg: self.bg,
         }
     }
@@ -300,7 +318,10 @@ mod tests {
     fn shader_fixture() -> SpringShader {
         SpringShader {
             uniforms: vec![0.0; SCENE_STORAGE_FLOATS],
-            camera: [0.0; 32],
+            extent_mm: 80.0,
+            y_mid_mm: 40.0,
+            orbit: Orbit::default(),
+            zoom: 1.0,
             bg: [0.1, 0.2, 0.3, 1.0],
         }
     }
@@ -506,13 +527,55 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn draw_clones_the_packed_uniforms_camera_and_background() {
+    fn draw_clones_the_packed_uniforms_and_background() {
         let program = shader_fixture();
         let state = DragState::default();
         let primitive = program.draw(&state, Cursor::Unavailable, bounds());
         assert_eq!(primitive.uniforms, program.uniforms);
-        assert_eq!(primitive.camera, program.camera);
         assert_eq!(primitive.bg, program.bg);
+    }
+
+    /// Review finding 1: the camera must be rebuilt every frame from the
+    /// widget's LIVE layout `Rectangle`, not pre-baked at a nominal aspect —
+    /// two different bounds must therefore produce DIFFERENT camera arrays,
+    /// each matching `camera_uniforms` called directly with that bounds'
+    /// own aspect ratio (the pure fn is the oracle). Before this fix
+    /// `SpringPrimitive::camera` was just `self.camera`, a value fixed at
+    /// `view()` time — this test is RED against that shape (both bounds
+    /// would report the identical stale camera).
+    #[test]
+    fn draw_builds_the_camera_from_the_live_bounds_aspect_every_frame() {
+        let program = shader_fixture();
+        let state = DragState::default();
+        // Two very different aspect ratios: wide (4:3) and tall (3:4).
+        let wide = Rectangle::new(Point::new(0.0, 0.0), Size::new(400.0, 300.0));
+        let tall = Rectangle::new(Point::new(0.0, 0.0), Size::new(300.0, 400.0));
+
+        let primitive_wide = program.draw(&state, Cursor::Unavailable, wide);
+        let primitive_tall = program.draw(&state, Cursor::Unavailable, tall);
+
+        assert_ne!(
+            primitive_wide.camera, primitive_tall.camera,
+            "two widget bounds with different aspect ratios must produce different \
+             cameras — an unchanging camera means `draw` is still ignoring live bounds"
+        );
+
+        let expected_wide = camera_uniforms(
+            program.extent_mm,
+            program.y_mid_mm,
+            program.orbit,
+            program.zoom,
+            wide.width / wide.height,
+        );
+        let expected_tall = camera_uniforms(
+            program.extent_mm,
+            program.y_mid_mm,
+            program.orbit,
+            program.zoom,
+            tall.width / tall.height,
+        );
+        assert_eq!(primitive_wide.camera, expected_wide);
+        assert_eq!(primitive_tall.camera, expected_tall);
     }
 
     // ------------------------------------------------------------------

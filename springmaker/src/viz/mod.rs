@@ -504,12 +504,16 @@ const FIT_MARGIN: f64 = 1.02;
 
 /// Bounding-sphere radius that safely contains the shape [`sdf::
 /// scene_extent_mm`] actually bounds: a cylinder of radius `extent_mm/2`
-/// spanning `y ∈ [0, extent_mm]` (both hold because
-/// `extent_mm = max(2·r_max, y_span)` — see that function's doc), centered
-/// at `(0, extent_mm/2, 0)`. The worst-case corner (full radial reach AND a
-/// full axial half-span SIMULTANEOUSLY, e.g. `(extent_mm/2, 0, 0)`) sits at
+/// spanning `y ∈ [y_mid - extent_mm/2, y_mid + extent_mm/2]` (both hold
+/// because `extent_mm = max(2·r_max, y_span)` and `y_mid` is the TRUE
+/// midpoint of the scene's y-span — see that function's doc), centered at
+/// `(0, y_mid, 0)`. The worst-case corner (full radial reach AND a full
+/// axial half-span SIMULTANEOUSLY, e.g. `(extent_mm/2, y_mid, 0)`) sits at
 /// `extent_mm/sqrt(2)` from that center — NOT `extent_mm/2`, which would
 /// under-cover a wide, flat spring's outer coil by a factor of `sqrt(2)`.
+/// (`y_mid` doesn't appear in the formula itself — the sphere's RADIUS is
+/// independent of where its center sits along Y — but every caller of this
+/// function centers the resulting sphere at `y_mid`, not the origin.)
 fn fit_sphere_radius(extent_mm: f64) -> f64 {
     (extent_mm / std::f64::consts::SQRT_2) * FIT_MARGIN
 }
@@ -531,12 +535,15 @@ fn fit_distance(extent_mm: f64, aspect: f64) -> f64 {
 }
 
 /// World-space eye position for the given orbit/zoom/extent: spherical
-/// coordinates about the scene's target `(0, extent_mm/2, 0)` (see
-/// [`fit_sphere_radius`]'s doc for why that height, not the origin) at
+/// coordinates about the scene's target `(0, y_mid_mm, 0)` — the TRUE
+/// midpoint of the scene's y-span, not necessarily `extent_mm/2` (see
+/// [`sdf::scene_extent_mm`]'s doc — asymmetric scenes like extension's hooks
+/// need the real value; [`fit_sphere_radius`]'s doc covers why the fitted
+/// sphere centers there at all rather than at the origin) — at
 /// [`fit_distance`] divided by `zoom` (`zoom > 1` moves the eye closer —
 /// magnified). `yaw` rotates about world Y, `pitch` tilts toward/away from
 /// it — the same [`Orbit`] angles the wireframe path already carries.
-fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3] {
+fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, y_mid_mm: f64, aspect: f64) -> [f64; 3] {
     let distance = fit_distance(extent_mm, aspect) / f64::from(zoom);
     let yaw = f64::from(orbit.yaw);
     let pitch = f64::from(orbit.pitch);
@@ -547,7 +554,7 @@ fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3
     ];
     [
         distance * dir[0],
-        extent_mm / 2.0 + distance * dir[1],
+        y_mid_mm + distance * dir[1],
         distance * dir[2],
     ]
 }
@@ -557,9 +564,17 @@ fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3
 /// bit-for-bit: `[0..16)` = `view_proj` (world → clip, column-major, the
 /// standard WGSL `mat4x4<f32>` layout — column `c`'s four floats are
 /// `[c*4 .. c*4+4)`), `[16..32)` = its inverse. Camera: perspective, 45°
-/// vertical FOV ([`FOV_Y_RAD`]), looking at `(0, extent_mm/2, 0)` from
-/// [`eye_position`] (fit-to-extent distance divided by `zoom`), world-Y up,
-/// near/far derived from `extent_mm` ([`NEAR_FRACTION`]/[`FAR_FRACTION`]).
+/// vertical FOV ([`FOV_Y_RAD`]), looking at `(0, y_mid_mm, 0)` — the scene's
+/// TRUE y-midpoint, from [`sdf::scene_extent_mm`], NOT assumed `extent_mm/2`
+/// (see that function's doc) — from [`eye_position`] (fit-to-extent
+/// distance divided by `zoom`), world-Y up, near/far derived from
+/// `extent_mm` ([`NEAR_FRACTION`]/[`FAR_FRACTION`]).
+///
+/// **`aspect` is the LIVE widget aspect ratio, not a nominal one.** The
+/// caller (`shader3d::SpringShader::draw`) recomputes this every frame from
+/// the shader widget's actual layout `Rectangle` (`bounds.width /
+/// bounds.height`) — this function itself stays pure and stateless, taking
+/// whatever aspect its caller measured.
 ///
 /// **No separate stored eye position.** Task 5's vertex shader reconstructs
 /// each pixel's world-space ray directly from the INVERSE block by
@@ -571,16 +586,28 @@ fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3
 /// [`eye_position`]/[`fit_distance`] directly as private helpers instead —
 /// Task 5 should NOT hunt for a third stored field; there isn't one.
 ///
-/// A non-finite or non-positive `extent_mm`/`aspect` falls back to `1.0`
-/// (defense in depth — a pure fn reachable directly by tests/future
-/// callers, mirroring [`stroke_for`]'s non-finite guard); `zoom` is clamped
-/// to [`ZOOM_MIN`]/[`ZOOM_MAX`] even though the committed `App.zoom` state
-/// is expected to already be clamped by [`zoom_step`].
-pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f32) -> [f32; 32] {
+/// A non-finite or non-positive `extent_mm`/`aspect` falls back to `1.0`; a
+/// non-finite `y_mid_mm` falls back to `extent_mm/2` (defense in depth — a
+/// pure fn reachable directly by tests/future callers, mirroring
+/// [`stroke_for`]'s non-finite guard); `zoom` is clamped to [`ZOOM_MIN`]/
+/// [`ZOOM_MAX`] even though the committed `App.zoom` state is expected to
+/// already be clamped by [`zoom_step`].
+pub(crate) fn camera_uniforms(
+    extent_mm: f64,
+    y_mid_mm: f64,
+    orbit: Orbit,
+    zoom: f32,
+    aspect: f32,
+) -> [f32; 32] {
     let extent = if extent_mm.is_finite() && extent_mm > 0.0 {
         extent_mm
     } else {
         1.0
+    };
+    let y_mid = if y_mid_mm.is_finite() {
+        y_mid_mm
+    } else {
+        extent / 2.0
     };
     let aspect = if aspect.is_finite() && aspect > 0.0 {
         f64::from(aspect)
@@ -588,8 +615,8 @@ pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f
         1.0
     };
     let zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
-    let eye = eye_position(orbit, zoom, extent, aspect);
-    let target = [0.0, extent / 2.0, 0.0];
+    let eye = eye_position(orbit, zoom, extent, y_mid, aspect);
+    let target = [0.0, y_mid, 0.0];
     let up = [0.0, 1.0, 0.0];
     let near = extent * NEAR_FRACTION;
     let far = (extent * FAR_FRACTION).max(near * 2.0);
@@ -610,31 +637,6 @@ pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f
 /// adapter, over-budget scene — falls back to the wireframe path.
 pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) -> bool {
     shader_available && uniforms.is_some()
-}
-
-/// The nominal camera aspect for the shaded view: the same 760×300 frame
-/// the wireframe bitmap pipeline rasterizes at (`plot::CHART_W`/`CHART_H`).
-///
-/// **Accepted limitation (nominal, not live, bounds).** `shader::Program::
-/// draw` and `shader::Primitive::prepare` DO receive the widget's real
-/// layout `Rectangle` every frame (`SpringShader::draw`/`SpringPrimitive::
-/// prepare` in `shader3d.rs` both take a `bounds` parameter today — unused,
-/// hence the leading underscore on each). The actual constraint is that
-/// `SpringShader` carries a camera PRE-PACKED at `view()` time: this
-/// function's caller, `spring3d_element`, builds `camera_uniforms` once from
-/// `chart_aspect`'s nominal ratio before the shader widget ever sees a real
-/// bounds value, and `draw` only clones that already-packed camera through
-/// (Task 5's contract). Threading live bounds into the camera would need a
-/// `SpringShader` field/flow change to carry them forward to where the
-/// camera is built — deferred, not attempted here. The widget fills the
-/// same Fill×300 slot as the wireframe canvas; at panel widths other than
-/// 760 px the horizontal field of view is proportionally wider or narrower
-/// than exact. Fit-framing still holds for anything at least as wide as it
-/// is tall: [`fit_distance`] takes the MORE restrictive of the vertical and
-/// aspect-derived horizontal half-FOV, and the vertical (fixed) one governs
-/// for all aspects ≥ 1, so a wider-than-nominal panel only adds margin.
-fn chart_aspect() -> f32 {
-    crate::plot::CHART_W as f32 / crate::plot::CHART_H as f32
 }
 
 /// The shaded path's clear color: the same panel surface the wireframe
@@ -676,9 +678,14 @@ fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
 /// ever disagree, the wireframe scene's verdict governs the WORDING via
 /// [`canvas3d`]'s `placeholder_for`, per the shipped placeholder contract.
 ///
-/// The shaded widget matches the wireframe slot's sizing (Fill × the
-/// bitmap height) and builds its camera at the nominal [`chart_aspect`]
-/// (see that doc for the accepted live-bounds limitation).
+/// The shaded widget matches the wireframe slot's sizing (Fill × the bitmap
+/// height); it carries the scene's raw `extent_mm`/`y_mid_mm` plus
+/// `orbit`/`zoom` rather than a pre-packed camera — `SpringShader::draw`
+/// rebuilds the camera every frame from the widget's LIVE layout `Rectangle`
+/// (`camera_uniforms`'s `aspect` argument), so the fitted view tracks the
+/// panel's actual on-screen aspect ratio instead of a nominal one (review
+/// finding 1 — the previous nominal-`chart_aspect` camera distorted coils by
+/// up to ~25% at the shipped default window width).
 pub(crate) fn spring3d_element(
     pal: &'static crate::app::Palette,
     scene: SceneData,
@@ -691,24 +698,24 @@ pub(crate) fn spring3d_element(
         .as_ref()
         .and_then(render3d::frame_ranges)
         .is_some();
-    let (true, Some(extent_mm)) = (wireframe_frames, sdf::scene_extent_mm(&sdf_scene)) else {
+    let (true, Some((extent_mm, y_mid_mm))) = (wireframe_frames, sdf::scene_extent_mm(&sdf_scene))
+    else {
         return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
     };
     let uniforms = sdf::scene_uniforms(&sdf_scene);
     if !use_shaded(shader_available, uniforms.as_ref()) {
         return scene_element(pal, scene, orbit);
     }
-    let Some(uniforms) = uniforms else {
-        // Unreachable: `use_shaded` is true only when `uniforms` is `Some`.
-        // A typed fallback to the same wireframe path rather than an
-        // `unwrap` — the two branches are behaviorally identical, so this
-        // cannot drift from the chooser's verdict.
-        return scene_element(pal, scene, orbit);
-    };
-    let camera = camera_uniforms(extent_mm, orbit, zoom, chart_aspect());
+    // `use_shaded` just confirmed `uniforms.is_some()`; unwrap rather than a
+    // second `let ... else` fallback arm identical to the one above (the
+    // prior shape's dead-code-shaped duplicate — simplifier F4).
+    let uniforms = uniforms.expect("use_shaded confirmed uniforms is Some");
     let program = shader3d::SpringShader {
         uniforms,
-        camera,
+        extent_mm,
+        y_mid_mm,
+        orbit,
+        zoom,
         bg: bg_rgba(pal),
     };
     iced::widget::shader::Shader::new(program)
@@ -1010,19 +1017,20 @@ mod tests {
 
     #[test]
     fn eye_position_matches_the_independently_computed_pinned_vector() {
-        // extent=60mm, aspect=16/9, zoom=1.5, yaw=0.3, pitch=0.2 rad (as
-        // ACTUALLY stored — `Orbit`'s fields are `f32`, so the literals
-        // below round to the nearest f32 before this function ever sees
-        // them: yaw = 0.300000011920928..., pitch = 0.200000002980232...) —
-        // hand-computed (Python, independent of this module's Rust code,
-        // starting from those SAME f32-rounded values) via the documented
-        // formula: eye = (0, extent/2, 0) + (fit_distance(extent, aspect) /
-        // zoom) * (cos(pitch)sin(yaw), sin(pitch), cos(pitch)cos(yaw)).
+        // extent=60mm, y_mid=extent/2=30mm (the symmetric case), aspect=16/9,
+        // zoom=1.5, yaw=0.3, pitch=0.2 rad (as ACTUALLY stored — `Orbit`'s
+        // fields are `f32`, so the literals below round to the nearest f32
+        // before this function ever sees them: yaw = 0.300000011920928...,
+        // pitch = 0.200000002980232...) — hand-computed (Python, independent
+        // of this module's Rust code, starting from those SAME f32-rounded
+        // values) via the documented formula: eye = (0, y_mid, 0) +
+        // (fit_distance(extent, aspect) / zoom) * (cos(pitch)sin(yaw),
+        // sin(pitch), cos(pitch)cos(yaw)).
         let orbit = Orbit {
             yaw: 0.3,
             pitch: 0.2,
         };
-        let eye = eye_position(orbit, 1.5, 60.0, 16.0 / 9.0);
+        let eye = eye_position(orbit, 1.5, 60.0, 30.0, 16.0 / 9.0);
         assert_relative_eq!(eye[0], 21.834752933693835, max_relative = 1e-9);
         assert_relative_eq!(eye[1], 44.97739694247343, max_relative = 1e-9);
         assert_relative_eq!(eye[2], 70.5858173404607, max_relative = 1e-9);
@@ -1034,9 +1042,9 @@ mod tests {
             yaw: 0.4,
             pitch: -0.35,
         };
-        let (extent, aspect, zoom) = (80.0, 1.6, 2.0);
-        let eye = eye_position(orbit, zoom, extent, aspect);
-        let target = [0.0, extent / 2.0, 0.0];
+        let (extent, y_mid, aspect, zoom) = (80.0, 40.0, 1.6, 2.0);
+        let eye = eye_position(orbit, zoom, extent, y_mid, aspect);
+        let target = [0.0, y_mid, 0.0];
         let dist = ((eye[0] - target[0]).powi(2)
             + (eye[1] - target[1]).powi(2)
             + (eye[2] - target[2]).powi(2))
@@ -1046,6 +1054,27 @@ mod tests {
             fit_distance(extent, aspect) / f64::from(zoom),
             max_relative = 1e-9
         );
+    }
+
+    #[test]
+    fn eye_position_targets_y_mid_not_half_extent_when_they_differ() {
+        // Review finding 4: an asymmetric scene's true y-midpoint need not
+        // be extent/2 (extension's hook overhang is the real-world case) —
+        // `eye_position` must orbit about the SUPPLIED `y_mid`, not a value
+        // re-derived from `extent`. `pitch = 0` puts the eye exactly at
+        // `target.y` (the `sin(pitch)` term vanishes), so the eye's own Y
+        // coordinate is a direct, unambiguous readout of `y_mid`.
+        let orbit = Orbit {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        let eye = eye_position(orbit, 1.0, 100.0, 12.5, 1.0);
+        assert_relative_eq!(eye[1], 12.5, max_relative = 1e-9);
+        // The SAME extent with the naively-assumed `extent/2` midpoint
+        // (50.0) lands the eye somewhere else entirely — proving the two
+        // are not interchangeable.
+        let eye_naive = eye_position(orbit, 1.0, 100.0, 50.0, 1.0);
+        assert!((eye[1] - eye_naive[1]).abs() > 30.0);
     }
 
     #[test]
@@ -1062,6 +1091,7 @@ mod tests {
     fn camera_uniforms_matrix_times_its_inverse_is_the_identity() {
         let out = camera_uniforms(
             120.0,
+            60.0,
             Orbit {
                 yaw: 0.9,
                 pitch: 0.25,
@@ -1091,47 +1121,61 @@ mod tests {
         // forward view-proj matrix at two very different aspect ratios
         // (wide and tall) and confirm every pole's NDC x/y stays within
         // [-1, 1] (a tiny epsilon absorbs f32 rounding at the tangent
-        // boundary).
+        // boundary). Run at BOTH a symmetric `y_mid` (== extent/2, the
+        // compression case) and an asymmetric one (the extension-hook case,
+        // review finding 4) — the containment property must hold regardless
+        // of where the true midpoint sits, since the sphere is centered at
+        // `y_mid`, not a value re-derived from `extent`.
         let extent = 90.0;
         let orbit = Orbit {
             yaw: 0.5,
             pitch: -0.3,
         };
-        let center = [0.0, extent / 2.0, 0.0];
         let true_radius = extent / std::f64::consts::SQRT_2;
-        for aspect in [1.777_f32, 0.5625_f32] {
-            let out = camera_uniforms(extent, orbit, 1.0, aspect);
-            let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
-            for axis in 0..3 {
-                for sign in [-1.0, 1.0] {
-                    let mut pole = center;
-                    pole[axis] += sign * true_radius;
-                    let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
-                    assert!(
-                        clip[3] > 0.0,
-                        "aspect {aspect}: pole {pole:?} landed behind the camera (w={})",
-                        clip[3]
-                    );
-                    let ndc_x = clip[0] / clip[3];
-                    let ndc_y = clip[1] / clip[3];
-                    assert!(
-                        ndc_x.abs() <= 1.0 + 1e-6,
-                        "aspect {aspect}: pole {pole:?} ndc_x={ndc_x}"
-                    );
-                    assert!(
-                        ndc_y.abs() <= 1.0 + 1e-6,
-                        "aspect {aspect}: pole {pole:?} ndc_y={ndc_y}"
-                    );
+        for y_mid in [extent / 2.0, 20.0] {
+            let center = [0.0, y_mid, 0.0];
+            for aspect in [1.777_f32, 0.5625_f32] {
+                let out = camera_uniforms(extent, y_mid, orbit, 1.0, aspect);
+                let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
+                for axis in 0..3 {
+                    for sign in [-1.0, 1.0] {
+                        let mut pole = center;
+                        pole[axis] += sign * true_radius;
+                        let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
+                        assert!(
+                            clip[3] > 0.0,
+                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} landed behind the \
+                             camera (w={})",
+                            clip[3]
+                        );
+                        let ndc_x = clip[0] / clip[3];
+                        let ndc_y = clip[1] / clip[3];
+                        assert!(
+                            ndc_x.abs() <= 1.0 + 1e-6,
+                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} ndc_x={ndc_x}"
+                        );
+                        assert!(
+                            ndc_y.abs() <= 1.0 + 1e-6,
+                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} ndc_y={ndc_y}"
+                        );
+                    }
                 }
             }
         }
     }
 
     #[test]
-    fn camera_uniforms_non_finite_extent_and_aspect_do_not_produce_nan() {
-        let out = camera_uniforms(f64::NAN, Orbit::default(), 1.0, f32::INFINITY);
+    fn camera_uniforms_non_finite_extent_y_mid_and_aspect_do_not_produce_nan() {
+        let out = camera_uniforms(f64::NAN, f64::NAN, Orbit::default(), 1.0, f32::INFINITY);
         assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
-        let out_neg = camera_uniforms(-5.0, Orbit::default(), 1.0, -1.0);
+        let out_neg = camera_uniforms(-5.0, f64::NAN, Orbit::default(), 1.0, -1.0);
         assert!(out_neg.iter().all(|v| v.is_finite()), "{out_neg:?}");
+        // A non-finite y_mid alone (finite, sane extent/aspect) must also
+        // fall back rather than poison the target with NaN.
+        let out_bad_y_mid = camera_uniforms(80.0, f64::INFINITY, Orbit::default(), 1.0, 1.5);
+        assert!(
+            out_bad_y_mid.iter().all(|v| v.is_finite()),
+            "{out_bad_y_mid:?}"
+        );
     }
 }

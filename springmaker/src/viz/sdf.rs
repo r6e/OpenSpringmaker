@@ -700,15 +700,28 @@ pub(crate) fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
 
 /// Coarse spatial reach of a scene — `None` for an empty (degenerate) scene,
 /// driving the existing placeholder exactly like `viz::scene_extent`'s
-/// `None` does for the wireframe path. Otherwise the larger of "twice the
-/// farthest radial reach from the Y axis" and "the full axial (Y) span",
-/// mirroring `scene_from_radius`'s own extent formula. Per-part bounding
-/// reach is CONSERVATIVE (an over-estimate of the part's true footprint,
-/// e.g. a torus arc's full major+minor radius even though the arc doesn't
-/// sweep the full circle) — camera fitting (Task 4) tolerates slack; only
-/// the distance FUNCTIONS themselves (not this bound) carry the
-/// sphere-tracing conservativeness contract.
-pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<f64> {
+/// `None` does for the wireframe path. Otherwise `(extent, y_mid)`: `extent`
+/// is the larger of "twice the farthest radial reach from the Y axis" and
+/// "the full axial (Y) span", mirroring `scene_from_radius`'s own extent
+/// formula; `y_mid` is the TRUE midpoint of that Y span, `(y_min + y_max) /
+/// 2`. Per-part bounding reach is CONSERVATIVE (an over-estimate of the
+/// part's true footprint, e.g. a torus arc's full major+minor radius even
+/// though the arc doesn't sweep the full circle, or the Helix arm's
+/// centerline range padded by the wire radius on both ends to cover the
+/// terminal cap's overhang — see [`sd_helix`]'s terminal-cap treatment) —
+/// camera fitting (Task 4) tolerates slack; only the distance FUNCTIONS
+/// themselves (not this bound) carry the sphere-tracing conservativeness
+/// contract.
+///
+/// **Why `y_mid`, not an assumed `extent / 2`.** A body-only scene
+/// (compression/conical: dead/active coils flattened symmetrically at both
+/// ends) has `y_min == 0`, so `y_mid == extent / 2` coincidentally — but
+/// extension's asymmetric hook radii (`r1 = D/2`, `r2 = D/4` by spec
+/// default) push the true Y span well off that assumption (the bottom hook
+/// dips below `y = 0`); a camera built from `extent / 2` alone would target
+/// the WRONG point and crop or off-center the fitted view. Callers MUST use
+/// the returned `y_mid`, not re-derive it from `extent`.
+pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<(f64, f64)> {
     if scene.parts.is_empty() {
         return None;
     }
@@ -727,7 +740,17 @@ pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<f64> {
                 let big_r = h.radius_mm.max(h.taper_small_r.unwrap_or(h.radius_mm));
                 let y0 = h.axial_offset_mm;
                 let y1 = h.axial_offset_mm + h.pitch_mm * h.turns;
-                expand(0.0, big_r + wire_r, y0.min(y1), y0.max(y1));
+                // Pad the centerline range by the terminal cap radius: the
+                // wire's rounded end can sit up to `wire_r` beyond the
+                // centerline endpoint in ANY direction (including Y), so a
+                // centerline-only range under-covers by up to one wire
+                // radius at each open end (review finding 4).
+                expand(
+                    0.0,
+                    big_r + wire_r,
+                    y0.min(y1) - wire_r,
+                    y0.max(y1) + wire_r,
+                );
             }
             SdfPart::TorusArc {
                 center,
@@ -751,7 +774,9 @@ pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<f64> {
         }
     }
     let extent = (2.0 * radial).max(y_max - y_min);
-    (radial.is_finite() && radial > 0.0 && extent.is_finite() && extent > 0.0).then_some(extent)
+    let y_mid = (y_min + y_max) / 2.0;
+    (radial.is_finite() && radial > 0.0 && extent.is_finite() && extent > 0.0 && y_mid.is_finite())
+        .then_some((extent, y_mid))
 }
 
 /// Whether a coil count is too hostile to render — mirrors
@@ -2299,8 +2324,111 @@ mod tests {
             }],
             cuts: Vec::new(),
         };
-        let extent = scene_extent_mm(&scene).expect("a populated scene has finite extent");
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("a populated scene has finite extent");
         assert!(extent > 0.0 && extent.is_finite());
+        assert!(y_mid.is_finite());
+        // A symmetric capsule from y=0 to y=50 (no radial dominance: radial
+        // reach is just the 2mm capsule radius) has its true midpoint at 25.
+        assert_relative_eq!(y_mid, 25.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn scene_extent_mm_pads_the_helix_y_range_by_the_wire_radius() {
+        // Review finding 4 (second clause): the doc calls the per-part bound
+        // "conservative" but the Helix arm only ever measured the CENTERLINE
+        // y-range, silently under-covering the terminal cap's up-to-`wire_r`
+        // overhang at each open end. A single untapered Helix, wire_r=1.5,
+        // pitch*turns=48 (centerline span [0, 48]): the true (padded) y-span
+        // is [−1.5, 49.5] = 51mm, 3mm more than the centerline-only 48mm.
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: 5.0, // small, so the y-span (not 2*radial) governs extent
+                    taper_small_r: None,
+                    pitch_mm: 6.0,
+                    turns: 8.0,
+                    profile: Profile::Circle { radius_mm: 1.5 },
+                    axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
+                }),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("populated scene");
+        assert_relative_eq!(extent, 51.0, max_relative = 1e-9);
+        // A single segment pads symmetrically at both ends, so the midpoint
+        // is unaffected by the padding itself (24.0, same as the unpadded
+        // centerline midpoint) — only `extent` grows.
+        assert_relative_eq!(y_mid, 24.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn scene_extent_mm_reports_the_true_asymmetric_y_midpoint_for_the_extension_hook_scene() {
+        // Review finding 4 (worked fixture): the extension body's bottom hook
+        // dips below y=0 (the body's own centerline start) while the top
+        // hook's overhang past the body's end is generally a DIFFERENT
+        // amount (different hook radius) — so the scene's true y-midpoint is
+        // NOT `extent/2`, the value every caller silently assumed before
+        // this fix. This is the regression the golden fixture exposes: a
+        // camera built from `(extent, extent/2)` instead of the ACTUAL
+        // `(extent, y_mid)` this function now returns would mis-center the
+        // fitted view.
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("extension scene has finite extent");
+        assert!(
+            (y_mid - extent / 2.0).abs() > 0.5,
+            "extent={extent} y_mid={y_mid}: the asymmetric hook geometry must shift the true \
+             midpoint measurably away from extent/2, or this fixture doesn't exercise the bug"
+        );
+    }
+
+    #[test]
+    fn extension_hook_scene_camera_contains_all_six_true_bounding_sphere_poles() {
+        // Review finding 4 (worked fixture, end-to-end): feed the REAL
+        // extension fixture's `(extent, y_mid)` straight into
+        // `camera_uniforms` and confirm the true (y_min-aware) bounding
+        // sphere's six world-axis poles all project inside NDC — the
+        // concrete case the general parametric frustum test in
+        // `viz::tests` exercises abstractly (an arbitrary off-center
+        // `y_mid`), now pinned against the actual asymmetric hook geometry
+        // that motivated the fix.
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("extension scene has finite extent");
+        let center = [0.0, y_mid, 0.0];
+        let true_radius = extent / std::f64::consts::SQRT_2;
+        let orbit = crate::viz::Orbit {
+            yaw: 0.6,
+            pitch: -0.25,
+        };
+        for aspect in [1.777_f32, 0.5625_f32] {
+            let camera = crate::viz::camera_uniforms(extent, y_mid, orbit, 1.0, aspect);
+            let view_proj: [f64; 16] = std::array::from_fn(|i| f64::from(camera[i]));
+            // Column-major 4x4 * homogeneous vec4, matching camera_uniforms's
+            // documented WGSL-mirroring layout.
+            let apply = |m: &[f64; 16], v: [f64; 4]| -> [f64; 4] {
+                std::array::from_fn(|row| (0..4).map(|col| m[col * 4 + row] * v[col]).sum::<f64>())
+            };
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut pole = center;
+                    pole[axis] += sign * true_radius;
+                    let clip = apply(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
+                    assert!(
+                        clip[3] > 0.0,
+                        "aspect {aspect}: pole {pole:?} behind the camera"
+                    );
+                    let ndc_x = clip[0] / clip[3];
+                    let ndc_y = clip[1] / clip[3];
+                    assert!(
+                        ndc_x.abs() <= 1.0 + 1e-6 && ndc_y.abs() <= 1.0 + 1e-6,
+                        "aspect {aspect}: pole {pole:?} outside NDC (x={ndc_x} y={ndc_y})"
+                    );
+                }
+            }
+        }
     }
 
     /// Solve the standard compression geometry (wire 2mm, mean 20mm, free
@@ -2381,6 +2509,28 @@ mod tests {
         let mut d = compression_fixture();
         d.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
         assert_eq!(compression_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn compression_sdf_scene_extent_keeps_the_true_y_midpoint_near_extent_over_two() {
+        // Regression (review finding 4): compression's coil body pads
+        // symmetrically at both ends (same wire radius throughout), so its
+        // TRUE y-midpoint stays at the unpadded centerline's middle
+        // (`total_height / 2`) regardless of the wire-radius padding fix.
+        // When the y-span governs `extent` (as it does for this fixture),
+        // that padding adds a full `wire_r` to `extent` on top (`y_max -
+        // y_min` grows by `2 * wire_r`, `extent / 2` by `wire_r`) WITHOUT
+        // moving `y_mid` at all — so `y_mid` and `extent / 2` differ by
+        // exactly `wire_r` here, not zero. That's still a tiny, harmless
+        // offset (well inside the camera's fit slack) — utterly unlike the
+        // extension hook scene's double-digit-millimeter divergence from
+        // its ASYMMETRIC (r1 != r2) hook radii. This pins that the
+        // symmetric case stays near-centered, not exactly at `extent/2`.
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        let (extent, y_mid) = scene_extent_mm(&scene).expect("compression scene has finite extent");
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        assert_relative_eq!(y_mid, extent / 2.0 - wire_r, max_relative = 1e-9);
     }
 
     #[test]
