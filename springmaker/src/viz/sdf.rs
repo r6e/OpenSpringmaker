@@ -45,15 +45,12 @@ pub(crate) const MAX_PARTS: usize = 48;
 /// double that for headroom.
 pub(crate) const MAX_CUTS: usize = 4;
 /// Sphere-march iteration cap — Task 5's WGSL fragment shader loop bound.
-#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
 pub(crate) const MARCH_MAX_STEPS: u32 = 160;
 /// Sphere-march step-size safety factor (steps `SAFETY × |sdf|`, not the
 /// full reported distance, guarding against the [`sd_helix`]/[`cut_plane`]
 /// conservative-but-inexact regions overshooting past a thin feature).
-#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
 pub(crate) const MARCH_SAFETY: f32 = 0.8;
 /// Sphere-march surface epsilon, mm-scale.
-#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
 pub(crate) const MARCH_EPS: f32 = 1e-3;
 /// Fixed per-part float stride in the packed uniform buffer — see
 /// [`scene_uniforms`]'s doc for the exact per-`SdfPart`-kind layout within

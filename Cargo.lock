@@ -3207,6 +3207,7 @@ dependencies = [
  "directories",
  "iced",
  "iced_test",
+ "naga",
  "plotters",
  "rfd",
  "serde",

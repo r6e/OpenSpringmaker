@@ -321,6 +321,16 @@ pub enum Message {
     // control used by every family (compression, conical, extension, torsion,
     // assembly).
     Orbit(f32, f32),
+    // Shaded-3D zoom (Task 5 addition, ahead of Task 6's app-wiring plan
+    // step): the shaded shader3d::SpringShader::update publishes this from a
+    // wheel-scroll event on the shader widget, mirroring `Orbit`'s "publish
+    // the raw delta, accumulate in App::update" discipline. Task 6 adds the
+    // `App.zoom` field and wires this arm to `crate::viz::zoom_step`; until
+    // then the placeholder arm below keeps this match exhaustive (same
+    // "wire app dispatch in the form task + placeholder" shape the app has
+    // used before for a cross-task enum addition).
+    #[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
+    Zoom(f32),
     Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
@@ -799,6 +809,11 @@ impl App {
                 self.orbit = crate::viz::orbit_step(self.orbit, dx, dy);
                 false
             }
+            // Placeholder: no `App.zoom` field exists yet (Task 6 adds it +
+            // the real `zoom_step` wiring). Keeping the match exhaustive lets
+            // `shader3d::SpringShader` construct/publish this message today
+            // without a dangling no-op message nobody handles.
+            Message::Zoom(_delta) => false,
             Message::Visual(v) => {
                 self.results_visual = v;
                 false
@@ -1536,6 +1551,27 @@ mod tests {
             "App::update must delegate to orbit_step, not duplicate its math"
         );
         assert_eq!(app.action_error.as_deref(), Some("sentinel"));
+    }
+
+    /// `Message::Zoom`'s Task-5 placeholder arm (Task 6 wires the real
+    /// `App.zoom` + `zoom_step` handling) must be a true no-op: no
+    /// recompute, no side effect — so `shader3d::SpringShader::update` can
+    /// construct/publish it today without any observable app-state change
+    /// until Task 6 lands.
+    #[test]
+    fn zoom_message_placeholder_is_a_true_no_op_pending_task_6() {
+        let mut app = test_app();
+        app.action_error = Some("sentinel".into());
+        let before_orbit = app.orbit;
+        let before_visual = app.results_visual;
+        app.update(Message::Zoom(2.0));
+        assert_eq!(app.orbit, before_orbit);
+        assert_eq!(app.results_visual, before_visual);
+        assert_eq!(
+            app.action_error.as_deref(),
+            Some("sentinel"),
+            "Zoom must not recompute (recompute clears action_error)"
+        );
     }
 
     /// The regression this fix targets: publishing per-event DELTAS (rather
