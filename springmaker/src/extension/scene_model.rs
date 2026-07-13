@@ -313,4 +313,31 @@ mod tests {
         let s = extension_scene(&d);
         assert!(crate::viz::scene_extent(&s).is_none());
     }
+
+    /// Sibling parity with `extension_sdf` (R2 input-domain F3): ZERO active
+    /// coils drives the derived pitch to `stretch / 0 = inf`, poisoning the
+    /// body heights (`0 × inf = NaN`) while the bottom hook stays fully
+    /// finite — pre-fix this rendered a disembodied floating hook arc, the
+    /// exact artifact the empty-body bail documents preventing, where the
+    /// SDF path correctly degrades to the default scene.
+    #[test]
+    fn zero_active_coils_yield_degenerate_scene_not_floating_hooks() {
+        let mut d = design();
+        d.active_coils = 0.0;
+        let s = extension_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
+    }
+
+    /// Sibling parity with `extension_sdf`'s `geometry_hostile(&[pitch])`
+    /// gate (R2 input-domain F3): an INFINITE free length (post-solve
+    /// mutation) makes the derived pitch infinite; the body's points go
+    /// NaN/inf (filtered downstream) but the bottom hook stays finite —
+    /// pre-fix: a floating hook arc instead of the placeholder.
+    #[test]
+    fn infinite_free_length_yields_degenerate_scene_not_floating_hooks() {
+        let mut d = design();
+        d.free_length = springcore::units::Length::from_millimeters(f64::INFINITY);
+        let s = extension_scene(&d);
+        assert!(crate::viz::scene_extent(&s).is_none());
+    }
 }

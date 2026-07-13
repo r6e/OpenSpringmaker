@@ -37,13 +37,16 @@ pub fn assembly_scene(design: &AssemblyDesign) -> SceneData {
             d.wire_dia.millimeters(),
         );
         // Contrast with the NaN-cascade semantics pinned in the tests below:
-        // NaN in COIL COUNTS (active_coils, total_coils) routes through
-        // `scene_from_radius`'s entry guard (empty body → whole-scene bail
-        // via `coil_body_is_empty`). Only NaN in NON-COIL fields (pitch,
-        // mean_dia) produces the contributing-points cascade: a NaN-poisoned
-        // member still CONTRIBUTES points (non-finite, filtered per point by
-        // `finite3`) because the solver output was already poisoned upstream,
-        // and a partial render is the accepted trade-off. A CAPPED member is
+        // NaN in COIL COUNTS (active_coils, total_coils) or PITCH routes
+        // through `scene_from_radius`'s entry guard (empty body →
+        // whole-scene bail via `coil_body_is_empty` — the pitch term is the
+        // R2 sibling-parity gate matching `assembly_sdf`'s whole-scene
+        // verdict for a hostile member). Only NaN in the remaining NON-COIL
+        // fields (mean_dia → radius, wire_dia → height/stroke) produces the
+        // contributing-points cascade: a NaN-poisoned member still
+        // CONTRIBUTES points (non-finite, filtered per point by `finite3`)
+        // because the solver output was already poisoned upstream, and a
+        // partial render is the accepted trade-off. A CAPPED member is
         // different — its input is VALID and solvable, and the sampler
         // returned an EMPTY body; rendering the assembly minus one member
         // would silently misrepresent the design. Honest bail instead: any
@@ -217,18 +220,35 @@ mod tests {
     }
 
     /// Series stacks via a running y-offset derived from each member's own
-    /// solved height; a NaN first-member height poisons every member after
-    /// it (NaN + gap = NaN), so a broken FIRST member yields a fully
-    /// degenerate (whole-scene placeholder) result. Documented trade-off of
-    /// the shared running-offset accumulator (task report).
+    /// solved height; a NaN first-member height (via `wire_dia`, which feeds
+    /// `coil_height_fn` without tripping the entry guard) poisons every
+    /// member after it (NaN + gap = NaN), so a broken FIRST member yields a
+    /// fully degenerate (whole-scene placeholder) result. Documented
+    /// trade-off of the shared running-offset accumulator (task report).
     #[test]
     fn series_degenerate_first_member_cascades_through_the_axial_offset() {
         let mut d = series_two_member_design();
-        d.members[0].design.pitch = springcore::units::Length::from_millimeters(f64::NAN);
+        d.members[0].design.wire_dia = springcore::units::Length::from_millimeters(f64::NAN);
         let s = assembly_scene(&d);
         assert!(
             scene_extent(&s).is_none(),
             "a NaN first-member height must poison every later member's offset"
+        );
+    }
+
+    /// R2 sibling parity: a NaN member PITCH now routes through
+    /// `scene_from_radius`'s entry guard (non-finite pitch → empty body →
+    /// the capped-member whole-scene bail) — the SAME verdict
+    /// `assembly_sdf` reaches for any hostile member, instead of the
+    /// wireframe's former partial-render cascade for this field.
+    #[test]
+    fn nan_pitch_member_degrades_the_whole_scene_matching_the_sdf_path() {
+        let mut d = series_two_member_design();
+        d.members[1].design.pitch = springcore::units::Length::from_millimeters(f64::NAN);
+        let s = assembly_scene(&d);
+        assert!(
+            scene_extent(&s).is_none(),
+            "a NaN-pitch member must degrade the whole scene, matching assembly_sdf"
         );
     }
 
@@ -253,7 +273,7 @@ mod tests {
             ..AsmMemberForm::blank("Music Wire")
         });
         let mut d = solve(&form);
-        d.members[1].design.pitch = springcore::units::Length::from_millimeters(f64::NAN);
+        d.members[1].design.wire_dia = springcore::units::Length::from_millimeters(f64::NAN);
         let s = assembly_scene(&d);
 
         assert!(
