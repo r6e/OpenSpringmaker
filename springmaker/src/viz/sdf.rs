@@ -1012,12 +1012,14 @@ struct CoilGeom {
 /// Reads [`CoilGeom`] from a `SpringDesign`'s solved fields, or `None` if
 /// the coil counts/geometry are hostile — INCLUDING `pitch <= 0.0` (review
 /// finding 6). `pitch` is a real, independent parameter for every caller of
-/// this reader (unlike extension/torsion's close-wound body, whose
-/// `pitch_mm = wire` is always positive by construction, so those families
-/// don't go through this reader at all) — see [`sd_helix`]'s doc for why
-/// `pitch_mm == 0.0` is a genuine precondition violation, not merely an
-/// unusual value. `geometry_hostile` alone doesn't catch it (`0.0` is
-/// finite), so it's checked separately.
+/// this reader. Extension and torsion don't go through this reader, but
+/// they carry the SAME `pitch <= 0.0` gate spelled against their own pitch
+/// sources (extension's derived [`extension_body_pitch_mm`]; torsion's
+/// close-wound `pitch_mm = wire`) — neither is "positive by construction":
+/// a finite `wire <= 0.0` passes `geometry_hostile` and poisons both. See
+/// [`sd_helix`]'s doc for why `pitch_mm == 0.0` is a genuine precondition
+/// violation, not merely an unusual value. `geometry_hostile` alone doesn't
+/// catch it (`0.0` is finite), so it's checked separately.
 fn coil_geom(design: &springcore::SpringDesign) -> Option<CoilGeom> {
     let active = design.active_coils;
     let total = design.total_coils;
@@ -1175,8 +1177,12 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
     if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
         return SdfScene::default();
     }
+    // Derived pitch (`wire + max(0, stretch)/active`) needs the SAME
+    // `pitch <= 0.0` gate as `coil_geom`/`conical_sdf` (review finding 6):
+    // a finite `wire <= 0.0` passes `geometry_hostile` yet derives a
+    // zero/negative pitch, `sd_helix`'s documented precondition violation.
     let pitch = extension_body_pitch_mm(d);
-    if geometry_hostile(&[pitch]) {
+    if geometry_hostile(&[pitch]) || pitch <= 0.0 {
         return SdfScene::default();
     }
     let wire_r = wire / 2.0;
@@ -1214,7 +1220,11 @@ pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
     let turns = d.inputs.body_coils;
     let r = d.inputs.mean_dia.millimeters() / 2.0;
     let wire = d.inputs.wire_dia.millimeters();
-    if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
+    // `wire` IS the close-wound body pitch (`pitch_mm: wire` below), so the
+    // finding-6 `pitch <= 0.0` gate applies to it directly: a finite
+    // `wire <= 0.0` passes `geometry_hostile` yet builds a zero/negative
+    // pitch helix, `sd_helix`'s documented precondition violation.
+    if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) || wire <= 0.0 {
         return SdfScene::default();
     }
     let wire_r = wire / 2.0;
@@ -3283,6 +3293,22 @@ mod tests {
         assert_eq!(extension_sdf(&d), SdfScene::default());
     }
 
+    /// Review finding 6, fourth spelling (R2 simplifier F-1 / input-domain
+    /// F2): extension's pitch is DERIVED (`wire + max(0, stretch)/active`),
+    /// so a post-solve-mutated `wire_dia = 0` (finite — passes
+    /// `geometry_hostile`) with a free length at/below the hook-allowance
+    /// span (`4·r1` at `wire = 0`) yields `pitch = 0.0` exactly — the
+    /// documented `sd_helix` precondition violation. The gate must match
+    /// `coil_geom`/`conical_sdf`'s `pitch <= 0.0` spelling, not finiteness
+    /// alone.
+    #[test]
+    fn extension_sdf_zero_wire_derived_zero_pitch_yields_default() {
+        let mut d = extension_fixture();
+        d.wire_dia = springcore::units::Length::from_millimeters(0.0);
+        d.free_length = springcore::units::Length::from_millimeters(10.0);
+        assert_eq!(extension_sdf(&d), SdfScene::default());
+    }
+
     #[test]
     fn extension_sdf_capped_active_coils_yield_default() {
         let mut d = extension_fixture();
@@ -3348,6 +3374,18 @@ mod tests {
     fn torsion_sdf_capped_body_coils_yield_default() {
         let mut d = torsion_fixture();
         d.inputs.body_coils = 2001.0;
+        assert_eq!(torsion_sdf(&d), SdfScene::default());
+    }
+
+    /// Review finding 6 sibling (R2 simplifier F-1 / input-domain F2):
+    /// torsion's close-wound body uses `pitch_mm = wire`, so a post-solve
+    /// mutated `wire = 0.0` (finite — passes `geometry_hostile`) IS a
+    /// zero-pitch helix reaching `sd_helix`'s documented precondition
+    /// violation. Same `pitch <= 0.0` gate as every other family builder.
+    #[test]
+    fn torsion_sdf_zero_wire_close_wound_zero_pitch_yields_default() {
+        let mut d = torsion_fixture();
+        d.inputs.wire_dia = springcore::units::Length::from_millimeters(0.0);
         assert_eq!(torsion_sdf(&d), SdfScene::default());
     }
 
