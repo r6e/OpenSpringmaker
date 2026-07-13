@@ -867,6 +867,13 @@ pub(crate) fn spring3d_element(
     else {
         return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
     };
+    // A missing GPU adapter is the whole-session wireframe case on a GPU-less
+    // machine — return before packing `scene_uniforms`, which `use_shaded`
+    // below would only discard (Copilot perf note). Pure early-out: the
+    // adapter∧scene∧camera verdict below is unchanged.
+    if !shader_available {
+        return scene_element(pal, scene, orbit);
+    }
     let uniforms = sdf::scene_uniforms(&sdf_scene);
     if !use_shaded(shader_available, uniforms.as_ref())
         || !camera_representable(extent_mm, y_mid_mm, orbit, zoom)
