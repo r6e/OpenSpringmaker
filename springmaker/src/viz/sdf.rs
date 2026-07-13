@@ -2275,7 +2275,10 @@ mod tests {
             // Always tapered (small end strictly below the large end).
             let taper_small_r = radius_mm * rng.range(0.05, 0.99);
             let pitch_mm = rng.range(0.5, 12.0);
-            let turns = rng.range(0.3, 0.9); // strictly sub-turn
+            // Sub-turn up to the full-turn boundary: [0.3, 1.0) closes the
+            // [0.9, 1.0) band left unsampled between this test and the
+            // turns ∈ [1, 9] sweeps (R4 formula-mirror coverage note).
+            let turns = rng.range(0.3, 1.0);
             let r_min = radius_mm.min(taper_small_r);
             // Wire radius plausible relative to pitch and coil radius (a
             // form-reachable cone, not degenerate self-overlap).

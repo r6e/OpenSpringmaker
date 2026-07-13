@@ -84,10 +84,12 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
 /// defense-in-depth fix — the finding's minimum-required remedy.)
 fn below_minimum_message(free: f64, min: f64, unit: &str) -> String {
     if !free.is_finite() || !min.is_finite() {
-        return format!(
-            "free length is below the close-wound minimum, but the value is \
-             out of the displayable range in {unit} (input out of range)"
-        );
+        // No number is shown in this fallback, so the unit is omitted — naming
+        // it produced the ungrammatical "…range in in" in US mode (R4
+        // stateful-UI). The value is out of the displayable range in any unit.
+        return "free length is below the close-wound minimum, but the value is \
+                out of the displayable range (input out of range)"
+            .to_string();
     }
     let free_s = format!("{free:.3}");
     let min_s = format!("{min:.3}");
@@ -543,19 +545,32 @@ mod tests {
     /// phrasing carrying no non-finite number.
     #[test]
     fn format_error_below_minimum_astronomical_minimum_does_not_render_inf() {
+        // The metre→display scale overflows f64 at different magnitudes per
+        // unit (×1000 for mm past ~1.8e305; ×39.37 for inches past ~4.6e306).
+        // Use a minimum past BOTH thresholds so the non-finite fallback fires
+        // in either unit — otherwise US mode renders a huge finite number, not
+        // the fallback, and would not exercise the grammar guard.
         let e = SpringError::FreeLengthBelowMinimum {
-            free_length_m: 0.06,         // ×1000 = 60 mm, finite
-            min_free_length_m: 1.92e305, // ×1000 = +∞ mm
+            free_length_m: 0.06,        // finite in both units
+            min_free_length_m: 1.0e308, // ×1000 and ×39.37 both overflow to +∞
         };
-        let msg = format_error(&e, UnitSystem::Metric);
-        assert!(
-            !msg.contains("inf") && !msg.contains("NaN"),
-            "must not render a non-finite number; got: {msg}"
-        );
-        assert!(
-            msg.contains("out of") && msg.contains("range"),
-            "must fall back to an out-of-range phrasing; got: {msg}"
-        );
+        for units in [UnitSystem::Metric, UnitSystem::Us] {
+            let msg = format_error(&e, units);
+            assert!(
+                !msg.contains("inf") && !msg.contains("NaN"),
+                "must not render a non-finite number ({units:?}); got: {msg}"
+            );
+            assert!(
+                msg.contains("out of") && msg.contains("range"),
+                "must fall back to an out-of-range phrasing ({units:?}); got: {msg}"
+            );
+            // The fallback omits the unit — it must never render the
+            // ungrammatical "in in" that naming the "in" unit produced (R4).
+            assert!(
+                !msg.contains(" in in"),
+                "US-mode fallback double-preposition regressed; got: {msg}"
+            );
+        }
     }
 
     /// Member-wrapped below-minimum errors (an assembly member's free <
