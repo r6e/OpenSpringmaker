@@ -242,7 +242,7 @@ pub fn solve_forward(
         hooks,
         material.shear_modulus,
         material.youngs_modulus,
-    );
+    )?;
     if free_length.meters() < min_free.meters() {
         return Err(SpringError::InconsistentInputs(format!(
             "free length {:.3} mm is below the close-wound minimum {:.3} mm \
@@ -549,9 +549,14 @@ mod tests {
             &[Force::from_newtons(30.0)],
             crate::CurvatureCorrection::Bergstrasser,
         );
+        // Since the R2 body-coil guard landed, a subnormal `active` rejects
+        // EARLIER (Nb = 1e-320 − G/E is negative — nonphysical body coils),
+        // before the rate computation can produce its +Inf. The rate guard's
+        // `is_finite` half stays as defense in depth; its `> 0.0` half keeps
+        // its own dedicated pin (`rejects_zero_rate_from_extreme_mean_dia`).
         assert!(
-            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
-            "subnormal active (+Inf rate) must be rejected by the rate guard, got {r:?}"
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed body coil count")),
+            "subnormal active must be rejected as a nonphysical body-coil count, got {r:?}"
         );
     }
 
@@ -669,6 +674,91 @@ mod tests {
         }
     }
 
+    /// R2 input-domain F1: an editor-representable modulus ratio must not
+    /// silently NEUTRALIZE the close-wound-minimum reject. E = 0.001 GPa
+    /// (finite, positive — passes material validation) gives G/E = 80 000,
+    /// so `Nb = active − G/E ≈ −80 000` and the computed "minimum" is
+    /// ≈ −160 m: every positive free length passed the old `<` check, and a
+    /// 1 mm free length "solved" while the renderer clamped to ~58 mm —
+    /// engine/render disagreement flowing into exports. The moduli make the
+    /// body-coil correction nonphysical: reject.
+    #[test]
+    fn rejects_hostile_moduli_that_neutralize_the_close_wound_minimum() {
+        let mut draft = crate::test_support::music_wire().to_draft();
+        draft.youngs_modulus_gpa = 0.001;
+        let m = draft.build().expect("finite positive moduli build");
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(1.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(r, Err(crate::SpringError::InconsistentInputs(_))),
+            "a nonphysical body-coil count must reject, not neutralize the minimum: {r:?}"
+        );
+    }
+
+    /// R2 input-domain F1 twin: `youngs_modulus_gpa × 1e9` overflows to
+    /// +Inf AFTER material validation's finiteness check (1e300 GPa is
+    /// finite in GPa). G/E is then 0, `Nb = active`, and the minimum falls
+    /// back to the (slightly over-stated, still correct-in-the-limit)
+    /// Na-based close-wound length — the solve must still succeed for a
+    /// comfortably-above-minimum free length, not error or misbehave.
+    #[test]
+    fn overflowed_youngs_modulus_still_solves_with_the_na_based_minimum() {
+        let mut draft = crate::test_support::music_wire().to_draft();
+        draft.youngs_modulus_gpa = 1e300;
+        let m = draft.build().expect("1e300 GPa is finite in GPa units");
+        assert!(m.youngs_modulus.pascals().is_infinite());
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(100.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(r.is_ok(), "G/E = 0 limit must still solve: {r:?}");
+    }
+
+    /// R2 input-domain F1 twin, shear side: an overflowed SHEAR modulus
+    /// (G = +Inf Pa) drives `G/E = +Inf` → `Nb = −Inf`; and BOTH moduli
+    /// overflowed drive `G/E = NaN` → `Nb = NaN`. Both must reject at the
+    /// body-coil guard (not fall through a `<` that is false for NaN).
+    #[test]
+    fn rejects_overflowed_shear_modulus_body_coil_count() {
+        for (g_gpa, e_gpa) in [(1e300, 203.4), (1e300, 1e300)] {
+            let mut draft = crate::test_support::music_wire().to_draft();
+            draft.shear_modulus_gpa = g_gpa;
+            draft.youngs_modulus_gpa = e_gpa;
+            let m = draft.build().expect("finite in GPa units");
+            let r = solve_forward(
+                &m,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                10.0,
+                Length::from_millimeters(100.0),
+                Force::from_newtons(10.0),
+                HookEnds::default_for(Length::from_millimeters(20.0)),
+                &[Force::from_newtons(30.0)],
+                crate::CurvatureCorrection::Bergstrasser,
+            );
+            assert!(
+                matches!(r, Err(crate::SpringError::InconsistentInputs(_))),
+                "non-finite body-coil count (G={g_gpa} GPa, E={e_gpa} GPa) must reject: {r:?}"
+            );
+        }
+    }
+
     /// Just above the minimum is a valid (nearly close-wound) spring.
     #[test]
     fn accepts_free_length_just_above_close_wound_minimum() {
@@ -702,7 +792,8 @@ mod tests {
             hooks,
             m.shear_modulus,
             m.youngs_modulus,
-        );
+        )
+        .unwrap();
         let r = solve_forward(
             &m,
             Length::from_millimeters(2.0),

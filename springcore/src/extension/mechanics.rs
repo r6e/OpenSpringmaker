@@ -17,15 +17,39 @@ use std::f64::consts::PI;
 /// minimum by `(G/E)·d` and falsely reject textbook designs — Shigley's
 /// own Example 10-6 (`Na = 12.574`, `L0 = 0.817 in` computed from
 /// `Nb = 12.17`) sits inside that band.
+///
+/// Errors when the derived quantities are nonphysical (R2 input-domain F1;
+/// guards cover every derived value): a hostile-but-validated modulus ratio
+/// (e.g. E = 0.001 GPa → G/E = 80 000, or a modulus that overflowed to
+/// +Inf Pa in the GPa→Pa conversion) drives `Nb` non-positive, NaN, or
+/// ±Inf — the old unguarded value made the minimum hugely negative, so the
+/// caller's `<` reject NEVER fired and impossible free lengths solved.
+/// `Nb` must be a positive finite count and the composed minimum finite.
 pub fn min_free_length(
     wire_dia: Length,
     active: f64,
     hooks: HookEnds,
     shear_modulus: Stress,
     youngs_modulus: Stress,
-) -> Length {
+) -> crate::Result<Length> {
     let body_coils = active - shear_modulus.pascals() / youngs_modulus.pascals();
-    free_length_from_geometry(wire_dia, body_coils, hooks)
+    if !(body_coils.is_finite() && body_coils > 0.0) {
+        return Err(crate::SpringError::InconsistentInputs(
+            "computed body coil count (active coils minus the G/E hook-compliance \
+             turns) is not a positive finite number (check the material's shear \
+             and Young's moduli)"
+                .into(),
+        ));
+    }
+    let min = free_length_from_geometry(wire_dia, body_coils, hooks);
+    if !min.meters().is_finite() {
+        return Err(crate::SpringError::InconsistentInputs(
+            "computed close-wound minimum free length is not finite \
+             (check wire diameter and hook bend radius r1)"
+                .into(),
+        ));
+    }
+    Ok(min)
 }
 
 /// Hook bending curvature factor at point A (Shigley, extension springs):
@@ -192,7 +216,82 @@ mod tests {
             hooks,
             crate::units::Stress::from_pascals(80.0e9),
             crate::units::Stress::from_pascals(203.4e9),
-        );
+        )
+        .unwrap();
         assert_relative_eq!(min.millimeters(), 57.2133726647001, max_relative = 1e-12);
+    }
+
+    fn r1_10mm_hooks() -> HookEnds {
+        HookEnds {
+            r1: Length::from_millimeters(10.0),
+            r2: Length::from_millimeters(5.0),
+        }
+    }
+
+    /// R2 input-domain F1: a hostile modulus ratio (G/E ≥ active) drives the
+    /// body coil count non-positive; the old unguarded value made the
+    /// minimum hugely negative and neutralized the solver's reject. Exactly
+    /// zero body coils (active == G/E) is nonphysical too — pins `>`, not
+    /// `>=`.
+    #[test]
+    fn min_free_length_rejects_non_positive_body_coils() {
+        // G/E = 80 000 ≫ active = 10.
+        let r = min_free_length(
+            Length::from_millimeters(2.0),
+            10.0,
+            r1_10mm_hooks(),
+            crate::units::Stress::from_pascals(80.0e9),
+            crate::units::Stress::from_pascals(1.0e6), // E = 0.001 GPa
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+        // Boundary: G/E == active exactly → Nb == 0 → still nonphysical.
+        let r = min_free_length(
+            Length::from_millimeters(2.0),
+            10.0,
+            r1_10mm_hooks(),
+            crate::units::Stress::from_pascals(80.0e9),
+            crate::units::Stress::from_pascals(8.0e9), // G/E = 10 = active
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// R2 input-domain F1 twin: a modulus that overflowed to +Inf Pa in the
+    /// GPa→Pa conversion (validated finite in GPa) makes G/E = +Inf
+    /// (Nb = −Inf) or, with both infinite, NaN — neither may pass the
+    /// body-coil guard (`<` comparisons are false for NaN).
+    #[test]
+    fn min_free_length_rejects_non_finite_body_coils() {
+        for (g, e) in [(f64::INFINITY, 203.4e9), (f64::INFINITY, f64::INFINITY)] {
+            let r = min_free_length(
+                Length::from_millimeters(2.0),
+                10.0,
+                r1_10mm_hooks(),
+                crate::units::Stress::from_pascals(g),
+                crate::units::Stress::from_pascals(e),
+            );
+            assert!(
+                matches!(r, Err(crate::SpringError::InconsistentInputs(_))),
+                "G={g}, E={e} must reject"
+            );
+        }
+    }
+
+    /// Output-side guard (guards cover EVERY derived value): a positive
+    /// finite body coil count can still compose a non-finite minimum when
+    /// the geometry itself overflows (2·(2·r1 − d) alone exceeds f64::MAX).
+    #[test]
+    fn min_free_length_rejects_non_finite_composed_minimum() {
+        let hooks = HookEnds {
+            r1: Length::from_meters(1.0e308),
+            r2: Length::from_meters(5.0),
+        };
+        let r = min_free_length(
+            Length::from_meters(1.0e308),
+            10.0,
+            hooks,
+            crate::units::Stress::from_pascals(80.0e9),
+            crate::units::Stress::from_pascals(203.4e9),
+        );
+        assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
     }
 }
