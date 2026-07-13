@@ -281,10 +281,30 @@ pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
 pub(crate) const ZOOM_MIN: f32 = 0.3;
 pub(crate) const ZOOM_MAX: f32 = 4.0;
 
-/// Zoom sensitivity: e-folding rate per unit of `scroll_delta`. Chosen so a
-/// typical single wheel/trackpad tick (`scroll_delta` ~1-3) changes zoom by
-/// a comfortable ~10-35%.
+/// Zoom sensitivity: e-folding rate per unit of `scroll_delta`, where
+/// `scroll_delta` is a RAW line-equivalent scroll count — one wheel "notch"
+/// is conventionally one line. Chosen so a typical single wheel/trackpad
+/// tick (`scroll_delta` ~1-3 lines) changes zoom by a comfortable ~10-35%
+/// (one line: `e^0.1 ≈ 1.105`, +10.5%).
+///
+/// **Single rate constant (review finding 2 fix).** `shader3d::SpringShader::
+/// update` used to pre-normalize its own wheel delta by an UNNAMED ×0.1
+/// (Lines) / ×0.002 (Pixels) factor before publishing `Message::Zoom`, so
+/// this constant's OWN ×0.1 applied a second time — 139 wheel notches to
+/// zoom from 1.0 to 4.0 instead of the ~15 the doc above promises. The
+/// widget now publishes a RAW line-equivalent count (see
+/// [`WHEEL_PIXELS_PER_LINE`]) and this is the ONLY rate applied.
 const ZOOM_SENSITIVITY: f32 = 0.1;
+
+/// Pixel-to-line-equivalent conversion for a `ScrollDelta::Pixels` wheel
+/// event (trackpads and some mice report pixels, not discrete lines) — a
+/// standard terminal/GUI line height in pixels, so a pixel delta converts to
+/// the SAME line-equivalent unit `ScrollDelta::Lines` already reports
+/// natively before either reaches [`zoom_step`]. Named beside
+/// `ZOOM_SENSITIVITY` (simplifier F8) since the two constants together
+/// define the whole wheel-to-zoom-rate pipeline; `shader3d::SpringShader::
+/// update` is the sole reader.
+pub(crate) const WHEEL_PIXELS_PER_LINE: f32 = 16.0;
 
 /// Apply a scroll-wheel delta multiplicatively: `current * e^(delta ×
 /// SENSITIVITY)` — exponential rather than `current * (1 + delta ×

@@ -13,7 +13,9 @@ use iced::{Point, Rectangle};
 
 use crate::app::Message;
 
-use super::{camera_uniforms, sdf, Orbit};
+#[cfg(test)]
+use super::zoom_step;
+use super::{camera_uniforms, sdf, Orbit, WHEEL_PIXELS_PER_LINE};
 
 /// Raw WGSL source, unmodified — [`instantiate_wgsl`] substitutes every
 /// `{{PLACEHOLDER}}` token below before it reaches `wgpu::ShaderSource::Wgsl`.
@@ -99,11 +101,20 @@ impl shader::Program<Message> for SpringShader {
                 None
             }
             iced::Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
-                let normalized = match *delta {
-                    mouse::ScrollDelta::Lines { y, .. } => y * 0.1,
-                    mouse::ScrollDelta::Pixels { y, .. } => y * 0.002,
+                // Publish the RAW line-equivalent count — `zoom_step`'s own
+                // `ZOOM_SENSITIVITY` is the single rate applied to it
+                // (review finding 2: a second scaling factor here used to
+                // compound with that rate). `Pixels` converts to the same
+                // line-equivalent unit via `WHEEL_PIXELS_PER_LINE`.
+                let lines = match *delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y,
+                    mouse::ScrollDelta::Pixels { y, .. } => y / WHEEL_PIXELS_PER_LINE,
                 };
-                Some(Action::publish(Message::Zoom(normalized)))
+                // `.and_capture()` (review finding 3): without it the outer
+                // results-panel `scrollable` ALSO scrolls on every
+                // wheel-zoom tick, since an `Ignored` status bubbles the
+                // event past this widget.
+                Some(Action::publish(Message::Zoom(lines)).and_capture())
             }
             _ => None,
         }
@@ -340,6 +351,21 @@ mod tests {
         message.expect("expected a published Message")
     }
 
+    /// Like [`expect_published`] but for the wheel-zoom case (review finding
+    /// 3), which — unlike the drag arms above — must ALSO capture the event
+    /// (`Status::Captured`) so the outer results-panel `scrollable` doesn't
+    /// ALSO scroll on every wheel-zoom tick. Asserts the status explicitly
+    /// rather than discarding it.
+    fn expect_published_and_captured(action: Option<Action<Message>>) -> Message {
+        let (message, _redraw, status) = action.expect("expected a published Action").into_inner();
+        assert_eq!(
+            status,
+            iced::event::Status::Captured,
+            "wheel-zoom must capture the event, or the outer scrollable also scrolls mid-zoom"
+        );
+        message.expect("expected a published Message")
+    }
+
     // ------------------------------------------------------------------
     // Drag lifecycle — mirrors OrbitCanvas::update's discipline exactly.
     // ------------------------------------------------------------------
@@ -472,7 +498,12 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn wheel_scrolled_lines_publishes_a_scaled_zoom_delta() {
+    fn wheel_scrolled_lines_publishes_the_raw_line_count_and_captures() {
+        // Review finding 2: the widget must publish the RAW line-equivalent
+        // count — `zoom_step`'s own `ZOOM_SENSITIVITY` is the ONLY rate
+        // applied. A pre-normalizing ×0.1 here (the pre-fix shape) would
+        // compound with that rate, needing ~139 notches for a 1x -> 4x zoom
+        // instead of the documented ~15.
         let program = shader_fixture();
         let mut state = DragState::default();
         let action = program.update(
@@ -483,28 +514,64 @@ mod tests {
             bounds(),
             Cursor::Available(Point::new(50.0, 50.0)),
         );
-        match expect_published(action) {
-            Message::Zoom(delta) => assert!((delta - 0.2).abs() < 1e-6, "delta={delta}"),
+        match expect_published_and_captured(action) {
+            Message::Zoom(delta) => assert!((delta - 2.0).abs() < 1e-6, "delta={delta}"),
             other => panic!("expected Message::Zoom, got {other:?}"),
         }
     }
 
     #[test]
-    fn wheel_scrolled_pixels_publishes_a_scaled_zoom_delta() {
+    fn wheel_scrolled_pixels_publishes_the_line_equivalent_count_and_captures() {
         let program = shader_fixture();
         let mut state = DragState::default();
         let action = program.update(
             &mut state,
             &Event::Mouse(MouseEvent::WheelScrolled {
-                delta: ScrollDelta::Pixels { x: 0.0, y: 100.0 },
+                delta: ScrollDelta::Pixels { x: 0.0, y: 32.0 },
             }),
             bounds(),
             Cursor::Available(Point::new(50.0, 50.0)),
         );
-        match expect_published(action) {
-            Message::Zoom(delta) => assert!((delta - 0.2).abs() < 1e-6, "delta={delta}"),
+        match expect_published_and_captured(action) {
+            // 32px / WHEEL_PIXELS_PER_LINE(16) = 2.0 lines — the same
+            // line-equivalent unit `ScrollDelta::Lines` reports natively.
+            Message::Zoom(delta) => assert!((delta - 2.0).abs() < 1e-6, "delta={delta}"),
             other => panic!("expected Message::Zoom, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn wheel_zoom_composes_through_zoom_step_to_the_documented_per_line_rate() {
+        // Review finding 2 (composed-pipeline regression): dispatch what the
+        // WIDGET actually publishes for a single-line scroll tick straight
+        // through `zoom_step` (the app-level accumulator) and confirm the
+        // resulting change matches `ZOOM_SENSITIVITY`'s documented ~10% per
+        // line — not the pre-fix ~1% (two compounded ×0.1 factors).
+        let program = shader_fixture();
+        let mut state = DragState::default();
+        let action = program.update(
+            &mut state,
+            &Event::Mouse(MouseEvent::WheelScrolled {
+                delta: ScrollDelta::Lines { x: 0.0, y: 1.0 },
+            }),
+            bounds(),
+            Cursor::Available(Point::new(50.0, 50.0)),
+        );
+        let published = match expect_published_and_captured(action) {
+            Message::Zoom(delta) => delta,
+            other => panic!("expected Message::Zoom, got {other:?}"),
+        };
+        let zoomed = zoom_step(1.0, published);
+        assert!(
+            (zoomed - std::f32::consts::E.powf(0.1)).abs() < 1e-6,
+            "single-line zoom_step result {zoomed}, expected e^0.1 ({})",
+            std::f32::consts::E.powf(0.1)
+        );
+        assert!(
+            (0.10..0.12).contains(&(zoomed - 1.0)),
+            "a single wheel line must change zoom by ~10%, got {}%",
+            (zoomed - 1.0) * 100.0
+        );
     }
 
     #[test]
