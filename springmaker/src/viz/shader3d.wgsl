@@ -270,6 +270,10 @@ struct PartHit {
 //                       [9..12) base_color [12] metallic [13] roughness
 //   Capsule (kind 2):  [1..4) a [4..7) b [7] radius_mm
 //                       [8..11) base_color [11] metallic [12] roughness
+// base_color is already LINEAR here (sdf.rs's `pack_appearance` linearizes
+// the sRGB-authored `Appearance::base_color` at pack time — see that fn's
+// doc); this shader consumes every base_color slot as-is, no further
+// conversion needed before it's used in `shade`'s linear-space lighting math.
 fn part_hit_at(base: u32, p: vec3<f32>) -> PartHit {
     let kind = scene[base];
     var out: PartHit;

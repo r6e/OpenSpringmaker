@@ -117,6 +117,18 @@ pub(crate) enum Profile {
 
 /// Forward-ready per-part material description (design doc §Decisions 2):
 /// a future material-DB swaps values in without touching the contract.
+///
+/// **Color convention (review F1-extension fix).** `base_color` here (and in
+/// [`steel`]/the member hue table) is authored in ordinary sRGB, the same
+/// display-color convention every other color in this app uses (`crate::
+/// app::Palette`'s tokens included) — these were eyeballed as on-screen
+/// colors, not measured radiometric values. [`pack_appearance`] linearizes
+/// it at PACK TIME, right before it reaches the shaded shader's per-part
+/// slot, for the same reason `viz::bg_rgba` linearizes the background: the
+/// fragment shader writes to an sRGB-format target, so every color the
+/// shader consumes for its (linear-space) shading math must already be
+/// linear. `metallic`/`roughness` are plain material scalars, not colors —
+/// they pack and unpack unchanged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Appearance {
     pub base_color: [f32; 3],
@@ -1145,12 +1157,32 @@ pub(crate) fn assembly_sdf(d: &springcore::assembly::AssemblyDesign) -> SdfScene
     }
 }
 
+/// sRGB EOTF (decode: encoded -> linear) for one channel — mirrors
+/// `iced_core::Color::into_linear`'s private `linear_component` helper
+/// exactly (same 0.04045 threshold, same piecewise formula:
+/// <https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation>).
+/// Hand-rolled here rather than routed through `iced::Color` — ADR 0008
+/// purity forbids `iced` types in this module — but it MUST NOT
+/// independently drift from iced's own conversion, since `viz::bg_rgba`
+/// linearizes the very same sRGB-authoring convention (via the real
+/// `iced::Color::into_linear`) for the background these packed part colors
+/// share a shader with.
+fn srgb_to_linear(u: f32) -> f32 {
+    if u < 0.04045 {
+        u / 12.92
+    } else {
+        ((u + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Pack `appearance`'s 5 floats (`base_color[0..3]`, `metallic`,
-/// `roughness`, already `f32`) into `slot[0..5]`.
+/// `roughness`, already `f32`) into `slot[0..5]` — linearizing `base_color`
+/// via [`srgb_to_linear`] per [`Appearance`]'s documented convention;
+/// `metallic`/`roughness` are scalars, not colors, and pack unchanged.
 fn pack_appearance(slot: &mut [f32], appearance: Appearance) {
-    slot[0] = appearance.base_color[0];
-    slot[1] = appearance.base_color[1];
-    slot[2] = appearance.base_color[2];
+    slot[0] = srgb_to_linear(appearance.base_color[0]);
+    slot[1] = srgb_to_linear(appearance.base_color[1]);
+    slot[2] = srgb_to_linear(appearance.base_color[2]);
     slot[3] = appearance.metallic;
     slot[4] = appearance.roughness;
 }
@@ -1312,10 +1344,30 @@ pub(crate) fn scene_uniforms(scene: &SdfScene) -> Option<Vec<f32>> {
     Some(out)
 }
 
+/// Inverse sRGB EOTF (linear -> encoded), test-only: undoes
+/// [`srgb_to_linear`] so [`unpack_appearance`]/[`unpack_scene`] stays a
+/// genuine round-trip inverse of [`pack_appearance`]/[`scene_uniforms`]
+/// rather than a partial one that goes blind to the pack-time
+/// linearization. Standard piecewise sRGB encode (threshold 0.0031308,
+/// the linear-side value corresponding to the decode's 0.04045 —
+/// <https://en.wikipedia.org/wiki/SRGB#The_forward_transformation>).
+#[cfg(test)]
+fn linear_to_srgb(u: f32) -> f32 {
+    if u <= 0.003_130_8 {
+        u * 12.92
+    } else {
+        1.055 * u.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 #[cfg(test)]
 fn unpack_appearance(slot: &[f32]) -> Appearance {
     Appearance {
-        base_color: [slot[0], slot[1], slot[2]],
+        base_color: [
+            linear_to_srgb(slot[0]),
+            linear_to_srgb(slot[1]),
+            linear_to_srgb(slot[2]),
+        ],
         metallic: slot[3],
         roughness: slot[4],
     }
@@ -2106,6 +2158,36 @@ mod tests {
             member_appearance(0).base_color,
             member_appearance(MEMBER_HUE_TABLE_LEN).base_color
         );
+    }
+
+    /// Review F1-extension fix: `pack_appearance` must linearize
+    /// `base_color` (sRGB-authored, per `Appearance`'s doc) before it
+    /// reaches the shader's per-part slot — the same reason `viz::bg_rgba`
+    /// linearizes the background. Expected values are independently
+    /// hand-computed (Python) via the standard sRGB EOTF
+    /// (<https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation>),
+    /// not derived from this crate's own conversion — a genuine external
+    /// pin, not a tautology against the code under test. `metallic`/
+    /// `roughness` are plain scalars and must pack UNCHANGED.
+    #[test]
+    fn pack_appearance_linearizes_base_color_but_not_metallic_or_roughness() {
+        let mut slot = [0.0f32; 5];
+        pack_appearance(&mut slot, steel());
+        // steel().base_color = [0.62, 0.64, 0.67] -> sRGB EOTF (Python):
+        assert_relative_eq!(slot[0], 0.342_391_64, max_relative = 1e-5);
+        assert_relative_eq!(slot[1], 0.367_246_46, max_relative = 1e-5);
+        assert_relative_eq!(slot[2], 0.406_448_3, max_relative = 1e-5);
+        // Not a no-op: the packed value must differ meaningfully from the
+        // raw authored component (rules out a mutant that skips the
+        // conversion entirely).
+        for (packed, raw) in slot[0..3].iter().zip(steel().base_color) {
+            assert!(
+                (packed - raw).abs() > 0.1,
+                "packed={packed} looks unlinearized (raw={raw})"
+            );
+        }
+        assert_eq!(slot[3], steel().metallic);
+        assert_eq!(slot[4], steel().roughness);
     }
 
     // --- Task 3: SdfScene composition, family builders, degenerate discipline ---
@@ -3017,7 +3099,21 @@ mod tests {
             _ => panic!("part 2 kind did not round-trip"),
         }
         for (orig, rt) in scene.parts.iter().zip(&round_tripped.parts) {
-            assert_eq!(orig.appearance, rt.appearance);
+            // `base_color` round-trips through pack-time linearization
+            // (srgb_to_linear) and the test-only inverse (linear_to_srgb),
+            // so — like every OTHER field in this test that crosses the
+            // f64/f32 packed boundary — it needs an epsilon, not bit-exact
+            // equality; `metallic`/`roughness` are untouched scalars and
+            // stay exact.
+            for i in 0..3 {
+                assert_relative_eq!(
+                    orig.appearance.base_color[i],
+                    rt.appearance.base_color[i],
+                    max_relative = 1e-4
+                );
+            }
+            assert_eq!(orig.appearance.metallic, rt.appearance.metallic);
+            assert_eq!(orig.appearance.roughness, rt.appearance.roughness);
         }
         for (orig, rt) in scene.cuts.iter().zip(&round_tripped.cuts) {
             for i in 0..3 {

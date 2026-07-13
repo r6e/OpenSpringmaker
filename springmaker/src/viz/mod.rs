@@ -615,11 +615,19 @@ pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) ->
 /// The nominal camera aspect for the shaded view: the same 760×300 frame
 /// the wireframe bitmap pipeline rasterizes at (`plot::CHART_W`/`CHART_H`).
 ///
-/// **Accepted limitation (nominal, not live, bounds).** `SpringShader`
-/// carries a pre-packed camera built here at view time — its `draw` only
-/// clones it (Task 5's contract), so the shader widget's real layout bounds
-/// are not available to the camera math. The widget fills the same
-/// Fill×300 slot as the wireframe canvas; at panel widths other than
+/// **Accepted limitation (nominal, not live, bounds).** `shader::Program::
+/// draw` and `shader::Primitive::prepare` DO receive the widget's real
+/// layout `Rectangle` every frame (`SpringShader::draw`/`SpringPrimitive::
+/// prepare` in `shader3d.rs` both take a `bounds` parameter today — unused,
+/// hence the leading underscore on each). The actual constraint is that
+/// `SpringShader` carries a camera PRE-PACKED at `view()` time: this
+/// function's caller, `spring3d_element`, builds `camera_uniforms` once from
+/// `chart_aspect`'s nominal ratio before the shader widget ever sees a real
+/// bounds value, and `draw` only clones that already-packed camera through
+/// (Task 5's contract). Threading live bounds into the camera would need a
+/// `SpringShader` field/flow change to carry them forward to where the
+/// camera is built — deferred, not attempted here. The widget fills the
+/// same Fill×300 slot as the wireframe canvas; at panel widths other than
 /// 760 px the horizontal field of view is proportionally wider or narrower
 /// than exact. Fit-framing still holds for anything at least as wide as it
 /// is tall: [`fit_distance`] takes the MORE restrictive of the vertical and
@@ -630,10 +638,25 @@ fn chart_aspect() -> f32 {
 }
 
 /// The shaded path's clear color: the same panel surface the wireframe
-/// bitmap fills, as the RGBA floats the WGSL `Camera.bg` slot expects.
+/// bitmap fills, as the LINEAR RGBA floats the WGSL `Camera.bg` slot
+/// expects.
+///
+/// **Linear, not raw sRGB (review F1 fix).** `Palette`'s tokens (like every
+/// other color authored in this app) are ordinary sRGB display values, but
+/// this app's `iced` compositor picks an sRGB-FORMAT swapchain texture
+/// whenever gamma correction is enabled (the default: `iced_wgpu`'s
+/// `Compositor::new` calls `formats.find(TextureFormat::is_srgb)` under
+/// `color::GAMMA_CORRECTION`, which is `true` unless the `web-colors`
+/// feature is on — not enabled here) — writing to such a target, the
+/// hardware itself re-encodes whatever the fragment shader returns from
+/// linear to sRGB on store. `into_linear` (the same conversion every other
+/// `iced` rendering pipeline applies before handing a `Color` to the GPU)
+/// undoes the authoring convention so the shader's `ambient = luminance(bg)`
+/// term operates on genuinely linear light, and the raw clear color the GPU
+/// eventually stores back matches the authored panel color instead of being
+/// double-encoded.
 fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
-    let c = pal.panel;
-    [c.r, c.g, c.b, c.a]
+    pal.panel.into_linear()
 }
 
 /// The results panel's shared 3D element: shaded ray-marched view when
@@ -936,6 +959,22 @@ mod tests {
         assert!(!use_shaded(false, Some(&packed)));
         assert!(!use_shaded(true, None));
         assert!(use_shaded(true, Some(&packed)));
+    }
+
+    // ------------------------------------------------------------------
+    // Review F1 fix: gamma — the shaded background must be LINEAR, not raw
+    // sRGB, since the shader writes to an sRGB-format compositor target
+    // (hardware re-encodes linear -> sRGB on store).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bg_rgba_returns_the_panel_color_linearized() {
+        // Neither DARK's nor LIGHT's `panel` sits at a 0/1 fixed point of the
+        // sRGB EOTF, so this pin has real teeth: a regression back to raw
+        // components would fail it (revert-probed below in the fix commit).
+        for pal in [&crate::app::DARK, &crate::app::LIGHT] {
+            assert_eq!(bg_rgba(pal), pal.panel.into_linear());
+        }
     }
 
     // ------------------------------------------------------------------
