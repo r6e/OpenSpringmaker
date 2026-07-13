@@ -37,6 +37,10 @@ const MARCH_EPS: f32 = {{MARCH_EPS}};
 // Central-difference normal-gradient offset — brief: "normals via
 // central-difference gradient (h = 2×EPS)".
 const NORMAL_H: f32 = 2.0 * MARCH_EPS;
+// Per-winding azimuth sub-range subdivisions in sd_helix — substituted from
+// sdf.rs's HELIX_WINDING_SUBDIVISIONS (see its doc + sd_helix's per-winding
+// bound section). Must match the Rust side exactly or the two SDFs drift.
+const HELIX_WINDING_SUBDIVISIONS: u32 = {{HELIX_WINDING_SUBDIVISIONS}}u;
 
 // `rem_euclid` (Rust's `f64::rem_euclid`, always non-negative for m > 0 —
 // our only use is `m = TAU`) — WGSL has no builtin equivalent.
@@ -110,6 +114,19 @@ fn winding_distance(d_radial: f32, d_axial: f32, azimuth_sq: f32, profile_kind: 
     return sd_profile_2d(d_radial, d_axial, profile_kind, dim0, dim1);
 }
 
+// Mirrors `jordan_chord_coeff` in sdf.rs: the tightest chord constant
+// (1 - cos u_max)/u_max^2 valid across |u| <= u_max, computed in the
+// numerically stable 0.5*sinc^2(u_max/2) form (1 - cos cancels near zero),
+// guarded at u_max -> 0 (exact small-angle limit 0.5).
+fn jordan_chord_coeff(u_max: f32) -> f32 {
+    if (u_max < 1e-6) {
+        return 0.5;
+    }
+    let half = u_max * 0.5;
+    let sinc = sin(half) / half;
+    return 0.5 * sinc * sinc;
+}
+
 fn cut_plane(d: f32, p: vec3<f32>, plane_point: vec3<f32>, plane_normal: vec3<f32>) -> f32 {
     return max(d, dot(p - plane_point, plane_normal));
 }
@@ -132,10 +149,11 @@ fn rotate_x(v: vec3<f32>, angle: f32) -> vec3<f32> {
 // clamp BEFORE forming phi (not a raw-phi clamp), the per-winding
 // Jordan-chord contraction (not a constant cos-alpha rescale), the
 // candidate_window_vertex anchor, the sub-turn terminal caps, the
-// max-of-two-bounds boundary windings (wave-2 V3 — the frozen-azimuth
-// form alone produced phantom seam bands; the clamped Jordan quadratic
-// now floors it), and phase_rad threaded through both the phase-frame
-// theta AND the terminal caps.
+// subdivided per-winding lower bound (wave-2 R2 — HELIX_WINDING_SUBDIVISIONS
+// pieces, each with its own local Jordan constant and local coil radius;
+// min over pieces == min over the whole winding, tightening the boundary/
+// seam regime the earlier frozen-azimuth form left under-tight), and
+// phase_rad threaded through both the phase-frame theta AND the terminal caps.
 // -----------------------------------------------------------------------
 
 struct HelixParams {
@@ -186,7 +204,6 @@ fn sd_helix(p: vec3<f32>, h: HelixParams) -> f32 {
     let k_cov_hi = floor((max_phi + PI - theta) / TAU);
     let anchor = clamp(floor(k_star), k_cov_lo, max(k_cov_hi - 2.0, k_cov_lo));
 
-    let chord_sq = 4.0 * radial * r_min / (PI * PI);
     let planar_sq = g * g + s * s;
 
     var best: f32 = SDF_INF;
@@ -199,34 +216,25 @@ fn sd_helix(p: vec3<f32>, h: HelixParams) -> f32 {
         }
         let a = radial - (h.radius_mm + g * phi_c);
         let b = axial - s * phi_c;
-        // Coupled Jordan-chord quadratic, clamped to the winding's real
-        // sub-range — valid for interior and boundary windings alike (the
-        // sub-range always sits inside [-PI, PI], where Jordan holds).
-        let denom = planar_sq + chord_sq;
-        var u: f32 = clamp(0.0, u_lo, u_hi);
-        if (denom > 0.0) {
-            u = clamp((a * g + b * s) / denom, u_lo, u_hi);
-        }
-        var d = winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile_kind, h.dim0, h.dim1);
-        if (u_lo > 0.0 || u_hi < 0.0) {
-            // Boundary winding (u = 0 outside the real sub-range): ALSO
-            // evaluate the frozen-azimuth planar form — exact at the
-            // terminal cross-sections where the Jordan bound is loose —
-            // and keep the TIGHTER of the two lower bounds (wave-2 V3
-            // fix; the frozen form alone reported phantom material at
-            // segment seams — see sd_helix's doc in sdf.rs).
-            var u_nz: f32 = u_hi;
-            if (u_lo > 0.0) {
-                u_nz = u_lo;
+        // Subdivide the winding's real sub-range into HELIX_WINDING_SUBDIVISIONS
+        // pieces, each bounded with its OWN local Jordan chord constant and
+        // local minimum coil radius; keep the min over pieces (min over a
+        // partition == min over the whole range — see sd_helix's per-winding
+        // bound doc in sdf.rs for the validity proof and why this subsumes the
+        // old interior-Jordan + boundary frozen-azimuth max-of-two).
+        let span = (u_hi - u_lo) / f32(HELIX_WINDING_SUBDIVISIONS);
+        for (var i: u32 = 0u; i < HELIX_WINDING_SUBDIVISIONS; i = i + 1u) {
+            let lo = u_lo + span * f32(i);
+            let hi = lo + span;
+            let r_local = max(min(h.radius_mm + g * (phi_c + lo), h.radius_mm + g * (phi_c + hi)), r_min);
+            let chord_sq = 2.0 * radial * r_local * jordan_chord_coeff(max(abs(lo), abs(hi)));
+            let denom = planar_sq + chord_sq;
+            var u: f32 = clamp(0.0, lo, hi);
+            if (denom > 0.0) {
+                u = clamp((a * g + b * s) / denom, lo, hi);
             }
-            let azimuth_sq = 2.0 * radial * r_min * (1.0 - cos(u_nz));
-            var u_planar: f32 = u_nz;
-            if (planar_sq > 0.0) {
-                u_planar = clamp((a * g + b * s) / planar_sq, u_lo, u_hi);
-            }
-            d = max(d, winding_distance(a - g * u_planar, b - s * u_planar, azimuth_sq, h.profile_kind, h.dim0, h.dim1));
+            best = min(best, winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile_kind, h.dim0, h.dim1));
         }
-        best = min(best, d);
     }
 
     // Finding-3 terminal caps: exact distance to both end centerline points,

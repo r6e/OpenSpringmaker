@@ -38,6 +38,10 @@ pub(crate) fn instantiate_wgsl() -> String {
         .replace("{{MARCH_MAX_STEPS}}", &sdf::MARCH_MAX_STEPS.to_string())
         .replace("{{MARCH_SAFETY}}", &sdf::MARCH_SAFETY.to_string())
         .replace("{{MARCH_EPS}}", &sdf::MARCH_EPS.to_string())
+        .replace(
+            "{{HELIX_WINDING_SUBDIVISIONS}}",
+            &sdf::HELIX_WINDING_SUBDIVISIONS.to_string(),
+        )
 }
 
 /// Per-drag ephemeral canvas state — mirrors `canvas3d::DragState` exactly
@@ -787,6 +791,13 @@ mod tests {
         assert!(
             src.contains(&sdf::MAX_PARTS.to_string()),
             "MAX_PARTS not found in instantiated WGSL"
+        );
+        assert!(
+            src.contains(&format!(
+                "HELIX_WINDING_SUBDIVISIONS: u32 = {}u",
+                sdf::HELIX_WINDING_SUBDIVISIONS
+            )),
+            "HELIX_WINDING_SUBDIVISIONS not substituted in instantiated WGSL"
         );
     }
 

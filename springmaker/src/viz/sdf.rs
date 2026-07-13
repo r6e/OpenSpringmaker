@@ -55,6 +55,18 @@ pub(crate) const MARCH_MAX_STEPS: u32 = 160;
 pub(crate) const MARCH_SAFETY: f32 = 0.8;
 /// Sphere-march surface epsilon, mm-scale.
 pub(crate) const MARCH_EPS: f32 = 1e-3;
+/// Number of equal sub-intervals each [`sd_helix`] winding's real azimuth
+/// sub-range is split into for the per-winding lower bound (wave-2 R2 fix —
+/// see `sd_helix`'s "Per-winding lower bound" doc). Each piece carries its
+/// own LOCAL Jordan chord constant ([`jordan_chord_coeff`]) and LOCAL minimum
+/// coil radius, so the reported bound tightens toward the true winding
+/// distance as this rises; 8 drives the residual seam under-shoot below
+/// `0.05 · wire_r` across every family regime (close-wound/torsion, steep
+/// conical taper, sub-turn — pinned by the seam-band scans), matching the
+/// slack the conservativeness sweeps already tolerate. WGSL-mirrored (the
+/// per-pixel-per-march-step cost scales with it: `4 × this` winding-distance
+/// evaluations), so it is a shared `{{HELIX_WINDING_SUBDIVISIONS}}` constant.
+pub(crate) const HELIX_WINDING_SUBDIVISIONS: u32 = 8;
 /// Fixed per-part float stride in the packed uniform buffer — see
 /// [`scene_uniforms`]'s doc for the exact per-`SdfPart`-kind layout within
 /// one `FLOATS_PER_PART`-wide slot.
@@ -338,12 +350,17 @@ pub(crate) struct HelixParams {
 /// geometries; reverting the anchor to the taper-blind `k_est` reproduces
 /// a real divergence in that same test, confirming it has teeth). The
 /// identity relies on `c^2` being CONSTANT in `k` (the part's global
-/// `R_min`, not a per-winding radius) — a future per-winding tightening of
-/// the Jordan bound would break the cancellation and require re-deriving
-/// `k**` from the 2x2 system directly rather than reusing `k*`.
+/// `R_min`, not a per-winding radius): the `V(k)` this identity is about is
+/// the WINDOW-ANCHOR objective, the one whose vertex `k*` selects WHICH
+/// windings to evaluate. It is deliberately kept on the global constant so
+/// the closed form stays reusable — the per-winding bound BELOW tightens the
+/// evaluated VALUE with local constants without disturbing it (the decoupling
+/// is spelled out there). `ring_plane_vertex_matches_jordan_refined_vertex`
+/// pins this global-`c^2` identity, and `candidate_window_vertex` is
+/// unchanged, so it still holds verbatim.
 ///
 /// So the window, anchored at `floor(k*)`, is PROVEN to bracket `V(k)`'s
-/// true vertex `k**` exactly; combined with the per-winding Jordan bound
+/// true vertex `k**` exactly; combined with the per-winding lower bound
 /// making every evaluated winding conservative (below), the reported
 /// minimum is conservative wherever the window covers the true winner. The
 /// four-wide (not two-wide) span still matters for a separate reason:
@@ -381,44 +398,55 @@ pub(crate) struct HelixParams {
 /// proposed constant rescale `d*cos(alpha)` with `tan(alpha) =
 /// pitch/(TAU*R_min)` is the first-order version of the fix but is NOT a
 /// true bound — measured violations: 5.4e-7 at the counterexample itself,
-/// 6e-2 at exterior steep-pitch points, 4.4e-1 on the coil axis — so the
-/// rigorous form is used instead:
+/// 6e-2 at exterior steep-pitch points, 4.4e-1 on the coil axis — so a
+/// rigorous QUADRATIC-under-bound is used, evaluated per sub-interval:
 ///
-/// * Jordan's chord inequality `1 - cos u >= 2*u^2/PI^2` (valid `|u| <=
-///   PI`) and `R(phi) >= R_min` (the part's smallest coil radius) bound
-///   the azimuth term below by `c^2*u^2` with `c^2 = 4*radial*R_min/PI^2`.
-///   The remaining expression is QUADRATIC in `u`; its vertex `u0 =
-///   (a*g + b*s)/(g^2 + s^2 + c^2)`, clamped to both the Jordan range
-///   `[-PI, PI]` and the winding's real sub-range, gives the constrained
-///   minimum. Evaluating the profile at the shifted in-plane offsets
-///   `(a - g*u0, b - s*u0)` (plus the `c^2*u0^2` azimuth term for circular
-///   profiles) therefore never exceeds the true centerline distance minus
-///   the wire radius — the exact tube distance — and the rendered solid is
-///   a subset of the tube, so the bound is conservative for it a fortiori.
-/// * A virtual boundary winding (real sub-range excludes `u = 0`) keeps
-///   the TIGHTER of TWO independent lower bounds (wave-2 V3 fix):
-///   (1) the same clamped Jordan quadratic — every sub-range is a subset
-///   of `[-PI, PI]` by construction, so the Jordan bound's validity is
-///   untouched by where the clamp interval sits — and (2) the
-///   frozen-azimuth planar form: the azimuth term held at its EXACT value
-///   at the sub-range endpoint nearest zero (`2*radial*R_min*(1 - cos
-///   u_nz)`, a lower bound since the true term is monotone in `|u|` on
-///   `[-PI, PI]` and `|u| >= |u_nz|` across the sub-range), added to the
-///   planar minimum constrained to the sub-range. Each is a valid lower
-///   bound of the winding's true distance, so their `max` is too — and
-///   each is tight exactly where the other is loose: the frozen form is
-///   exact at the terminal cross-sections where Jordan under-shoots by up
-///   to ~1/sqrt(2) (`sub_turn_end_reports_exterior_distance_not_phantom`
-///   pins that exactness), while the Jordan form stays sign-correct at
-///   seam azimuths where the frozen form ALONE collapsed: its planar
-///   minimizer could travel the whole sub-range at near-zero frozen
-///   azimuth cost, cancelling the axial residual and reporting NEGATIVE
-///   values up to a full coil gap outside the wire — an `s*PI`-tall
-///   vertical band of phantom material at every segment's seam azimuth,
-///   user-visible as the wire "kinking 90° up/down" at the ground ends
-///   (`boundary_winding_reports_no_phantom_just_behind_the_helix_start`
-///   pins the traced worst case, `compression_seam_band_contains_no_
-///   phantom_material` the scene-level band).
+/// * Split the winding's real sub-range `[u_lo, u_hi]` into
+///   [`HELIX_WINDING_SUBDIVISIONS`] equal pieces. On a piece `[lo, hi]`, two
+///   inequalities bound the azimuth term `2*radial*R(phi)*(1 - cos u)` below:
+///   `1 - cos u >= c_piece * u^2` with `c_piece = (1 - cos U)/U^2` and
+///   `U = max(|lo|, |hi|)` ([`jordan_chord_coeff`] — the SHARPEST chord
+///   constant valid across the piece, since `(1 - cos u)/u^2` is decreasing
+///   on `(0, PI]`), and `R(phi) >= R_local` where `R_local = min(R(phi_c +
+///   lo), R(phi_c + hi))` (R linear in `u`, so its min over the piece is at
+///   an endpoint; both endpoints lie in `[0, max_phi]` by the `u`-clamp, so
+///   `R_local >= R_min`). Together they floor the azimuth term by
+///   `chord_sq * u^2`, `chord_sq = 2*radial*R_local*c_piece`. The remaining
+///   expression is QUADRATIC in `u`; its vertex clamped to `[lo, hi]` gives
+///   the piece's constrained minimum — a valid lower bound of the winding's
+///   true distance restricted to that piece. Because `min over a partition
+///   == min over the whole range`, the min over all pieces is a valid lower
+///   bound of the winding's true distance. Evaluating the profile at the
+///   shifted in-plane offsets `(a - g*u, b - s*u)` (plus `chord_sq*u^2` for
+///   circular profiles) therefore never exceeds the exact tube distance, and
+///   the rendered solid is a subset of the tube, so the bound is
+///   conservative for it a fortiori.
+/// * Two per-piece localizations — the sharp chord constant `c_piece`
+///   (rising to the exact small-angle limit `0.5` on a narrow seam piece,
+///   vs the global `2/PI^2` a single `[-PI, PI]` Jordan bound is stuck with)
+///   and the local radius `R_local` (the winding's own coil radius, vs the
+///   part's global `R_min` — an ~8x under-count at a steep taper's large end)
+///   — are what tighten the boundary/seam regime the earlier single-Jordan
+///   plus frozen-azimuth form left under-tight. Those seam bands
+///   (`s*PI`-tall vertical phantom at a segment's seam azimuth, user-visible
+///   as the wire "kinking 90° up/down" at a ground end) survived the wave-2
+///   V3 fix in the close-wound/torsion and steep-conical regimes precisely
+///   because the frozen form's planar minimizer could travel a whole
+///   `[u_nz, PI]` sub-range while its azimuth stayed frozen at the tiny
+///   `u_nz` value; subdivision confines each minimizer to a short piece with
+///   a chord constant tight for that piece, so no such travel is possible.
+///   The tightening is DECOUPLED from the window anchor: the anchor keeps
+///   the global-`c^2` objective (identity above, selecting WHICH windings),
+///   while this per-piece bound sets the VALUE. Raising per-winding values
+///   inside an unchanged window cannot introduce over-estimates — each stays
+///   `<= true_dist_k`, and the window still covers the true nearest winding
+///   (`compression_seam_band_contains_no_phantom_material`,
+///   `torsion_seam_band_contains_no_phantom_material` and
+///   `conical_seam_band_contains_no_phantom_material` pin zero seam phantoms
+///   above `0.05 * wire_r`; `boundary_winding_reports_no_phantom_just_behind_
+///   the_helix_start` pins the traced worst case; a 300k-point adversarial
+///   sweep — high turns, steep taper, sub-turn, seam-biased — measured zero
+///   over-estimates, see the task report).
 ///
 /// **Terminal caps (finding-3 fix).** For `turns < 1` a query azimuth can
 /// lie outside the swept arc for EVERY winding; the old raw-`phi` clamp
@@ -428,25 +456,37 @@ pub(crate) struct HelixParams {
 /// closes it exactly: the distance to each terminal centerline point,
 /// minus the profile's cap radius, joins the candidate minimum
 /// unconditionally. These are plain min-participants over real surface
-/// features, so they never break the bound
+/// features, so they never break the bound. The subdivided per-winding
+/// pieces already bound the sub-turn exterior (worst-case ~12.7 of the true
+/// 13.14 for the pinned geometry — well outside), so the caps are now belt
+/// rather than the sole exterior floor the earlier frozen form was
 /// (`sub_turn_end_reports_exterior_distance_not_phantom`).
 ///
 /// **Conservativeness contract.** For circular profiles the reported value
 /// never exceeds the true tube distance (`helix_never_over_estimates_the_
 /// true_wire_distance` checks grids on the brief and steep-pitch
 /// geometries against an independent 1-D minimization; a 2600-point
-/// randomized sweep across three geometries measured zero violations —
-/// see the task report). Under-estimation fattens the level set slightly
-/// instead: measured `max |d|` on exact surface points is 7.4e-3 (0.7% of
-/// the wire radius) for the brief geometry, within the 8% test tolerance;
-/// at a 46.7-degree pitch angle the worst near-surface under-shoot
-/// measured -0.081. Inside the wire the value stays negative (sign
-/// structure exact); depth may exceed the true depth, which is also the
-/// safe direction. `Rectangle` profiles keep the ring-plane evaluation at
-/// the shifted offset WITHOUT a rigorous conservativeness argument (the
-/// box is not rotation-invariant about the helix tangent); they are not
-/// rendered by any current scene — revisit alongside the rectangular
-/// family's shaded view.
+/// randomized sweep across three geometries plus the R2 300k adversarial
+/// sweep — high turns, steep taper, sub-turn, seam-biased, verified against
+/// a turn-scaled per-winding ground truth — measured zero violations, see
+/// the task report). Under-estimation fattens the level set slightly
+/// instead, now bounded below `0.05 * wire_r` at seam azimuths across every
+/// family regime (the earlier single-Jordan-plus-frozen form left up to
+/// `~0.2 * wire_r` residual seam under-shoot in the close-wound/torsion and
+/// steep-conical regimes — its `s*PI` phantom bands — which subdivision
+/// removes). The residual under-shoot magnitude is geometry-specific and
+/// scales with pitch angle and taper: on hostile RANDOM geometries (heavy
+/// taper + sub-turn + ~30-degree pitch angle) it stays within this envelope,
+/// but before subdivision such geometries measured sign-incorrect
+/// near-surface under-shoots up to ~0.30 (33% of `wire_r`) in BOTH the old
+/// and the interior-Jordan code (the pre-existing interior class, safe
+/// direction, conservativeness unaffected). Inside the wire the value stays
+/// negative (sign structure exact); depth may exceed the true depth, which
+/// is also the safe direction. `Rectangle` profiles keep the ring-plane
+/// evaluation at the shifted offset WITHOUT a rigorous conservativeness
+/// argument (the box is not rotation-invariant about the helix tangent);
+/// they are not rendered by any current scene — revisit alongside the
+/// rectangular family's shaded view.
 ///
 /// **Phase (review-F2 fix).** `phase_rad` rotates the whole helix rigidly
 /// about Y: wire parameter `phi` sits at world azimuth `phi + phase_rad`,
@@ -499,7 +539,6 @@ fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
         .floor()
         .clamp(k_cov_lo, (k_cov_hi - 2.0).max(k_cov_lo));
 
-    let chord_sq = 4.0 * radial * r_min / (PI * PI);
     let planar_sq = g * g + s * s;
 
     let mut best = f64::INFINITY;
@@ -512,38 +551,43 @@ fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
         }
         let a = radial - (h.radius_mm + g * phi_c);
         let b = axial - s * phi_c;
-        // Coupled Jordan-chord quadratic, clamped to the winding's real
-        // sub-range — valid for interior and boundary windings alike (the
-        // sub-range always sits inside [-PI, PI], where Jordan holds).
-        let denom = planar_sq + chord_sq;
-        let u = if denom > 0.0 {
-            ((a * g + b * s) / denom).clamp(u_lo, u_hi)
-        } else {
-            0.0f64.clamp(u_lo, u_hi)
-        };
-        let mut d = winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile);
-        if u_lo > 0.0 || u_hi < 0.0 {
-            // Boundary winding (u = 0 outside the real sub-range): ALSO
-            // evaluate the frozen-azimuth planar form — exact at the
-            // terminal cross-sections where the Jordan bound is loose —
-            // and keep the TIGHTER of the two lower bounds (wave-2 V3 fix;
-            // the frozen form alone reported phantom material at segment
-            // seams — see the per-winding bound section of the doc).
-            let u_nz = if u_lo > 0.0 { u_lo } else { u_hi };
-            let azimuth_sq = 2.0 * radial * r_min * (1.0 - u_nz.cos());
-            let u_planar = if planar_sq > 0.0 {
-                ((a * g + b * s) / planar_sq).clamp(u_lo, u_hi)
+        // Subdivide the winding's real sub-range into HELIX_WINDING_SUBDIVISIONS
+        // equal pieces; bound each piece with the coupled quadratic using its
+        // OWN local Jordan chord constant (tight to the piece's max |u|, not
+        // the global [-PI, PI] worst case) and its OWN local minimum coil
+        // radius (tight to the piece's arc, not the part's global r_min). The
+        // reported winding value is the min over pieces — and `min over a
+        // partition == min over the whole range`, so it stays a valid lower
+        // bound of the winding's true distance (each piece's coupled quadratic
+        // is one; see the per-winding bound doc). This subsumes both the old
+        // global-Jordan interior bound AND the boundary-winding frozen form:
+        // the piece nearest a seam gets a near-exact chord constant, killing
+        // the seam phantoms the frozen form left behind.
+        let span = (u_hi - u_lo) / f64::from(HELIX_WINDING_SUBDIVISIONS);
+        for i in 0..HELIX_WINDING_SUBDIVISIONS {
+            let lo = u_lo + span * f64::from(i);
+            let hi = lo + span;
+            // R(phi) is linear in u, so its minimum over [lo, hi] is at an
+            // endpoint; floored at the global r_min (both endpoints lie in
+            // [0, max_phi] by the u-clamp, so R there is >= r_min already —
+            // the floor only guards f64 drift).
+            let r_local = (h.radius_mm + g * (phi_c + lo))
+                .min(h.radius_mm + g * (phi_c + hi))
+                .max(r_min);
+            let chord_sq = 2.0 * radial * r_local * jordan_chord_coeff(lo.abs().max(hi.abs()));
+            let denom = planar_sq + chord_sq;
+            let u = if denom > 0.0 {
+                ((a * g + b * s) / denom).clamp(lo, hi)
             } else {
-                u_nz
+                0.0f64.clamp(lo, hi)
             };
-            d = d.max(winding_distance(
-                a - g * u_planar,
-                b - s * u_planar,
-                azimuth_sq,
+            best = best.min(winding_distance(
+                a - g * u,
+                b - s * u,
+                chord_sq * u * u,
                 h.profile,
             ));
         }
-        best = best.min(d);
     }
 
     // Finding-3 terminal caps: exact distance to both end centerline points
@@ -596,6 +640,25 @@ fn winding_distance(d_radial: f64, d_axial: f64, azimuth_sq: f64, profile: Profi
         }
         rectangle => sd_profile_2d(d_radial, d_axial, rectangle),
     }
+}
+
+/// Tight per-sub-range Jordan chord coefficient: the LARGEST `c` for which
+/// `1 - cos u >= c * u^2` holds across all `|u| <= u_max` (with `u_max <=
+/// PI`). Because `(1 - cos u) / u^2 = 0.5 * sinc^2(u/2)` is decreasing on
+/// `(0, PI]`, that largest `c` is its value at the range's far edge,
+/// `(1 - cos u_max) / u_max^2` — computed in the `0.5 * sinc^2(u_max/2)` form
+/// (`1 - cos` cancels catastrophically near zero). It reduces to Jordan's
+/// global `2 / PI^2` at `u_max = PI` (a full interior winding) and rises to
+/// the exact small-angle limit `0.5` as `u_max -> 0` (a narrow seam piece) —
+/// the source of the per-winding tightening `sd_helix` relies on. See
+/// [`sd_helix`]'s "Per-winding lower bound" doc.
+fn jordan_chord_coeff(u_max: f64) -> f64 {
+    if u_max < 1e-6 {
+        return 0.5;
+    }
+    let half = u_max / 2.0;
+    let sinc = half.sin() / half;
+    0.5 * sinc * sinc
 }
 
 /// Radius of the sphere used for the terminal-cap candidates: the wire
@@ -2150,7 +2213,11 @@ mod tests {
         // Reviewer's counterexample: turns=0.5 (sweep 0..pi), query at
         // azimuth 3*pi/2, p=(0, 3, -10): the broken clamp reports -1.0
         // (a phantom "inside"), the true exterior distance is ~13.14 (the
-        // terminal centerline point is (-10, 3, 0)).
+        // terminal centerline point is (-10, 3, 0)). Post the wave-2 R2
+        // subdivision the winding pieces alone bound this at ~12.7 (well
+        // exterior); the unconditional terminal caps then floor it exactly —
+        // the caps are now belt rather than the sole exterior guard the
+        // earlier frozen-azimuth form was.
         let h = HelixParams {
             radius_mm: 10.0,
             taper_small_r: None,
@@ -4016,13 +4083,60 @@ mod tests {
         assert!(d < 1.76, "over-estimate at the seam: d={d}");
     }
 
+    /// Helix-level seam-band scan (wave-2 R2): `sd_helix` over a box straddling
+    /// the seam azimuth of a single body helix may never report interior
+    /// (`sd < 0`) more than `0.05 * wire_r` OUTSIDE the true wire tube — the 5%
+    /// slack matches the documented near-surface under-shoot the
+    /// conservativeness sweeps tolerate. Ground truth is the accurate
+    /// per-winding [`true_helix_distance`] (`scan_n` scaled with the turn
+    /// count so its dense pre-scan resolves the narrow azimuthal basins of a
+    /// close-wound body — a coarse scan would inflate the true distance and
+    /// mask a phantom). Used for the single-body families whose SCENE-level
+    /// seam sits under a leg (torsion) or a ground cut (conical large end),
+    /// where a scene scan is vacuous — the compression scan already exercises
+    /// the same fix at its interior segment joins, which no cut masks. Returns
+    /// each phantom `(point, sd, true_dist)` for the caller's message.
+    fn helix_seam_phantoms(
+        h: &HelixParams,
+        wire_r: f64,
+        origin: Vec3,
+        step: Vec3,
+        counts: (usize, usize, usize),
+        scan_n: u32,
+    ) -> Vec<(Vec3, f64, f64)> {
+        let (nx, ny, nz) = counts;
+        let mut phantoms = Vec::new();
+        for xi in 0..nx {
+            for yi in 0..ny {
+                for zi in 0..nz {
+                    let p = [
+                        origin[0] + xi as f64 * step[0],
+                        origin[1] + yi as f64 * step[1],
+                        origin[2] + zi as f64 * step[2],
+                    ];
+                    let sd = sd_helix(p, h);
+                    if sd < 0.0 {
+                        let true_dist = true_helix_distance(p, h, scan_n);
+                        if true_dist > 0.05 * wire_r {
+                            phantoms.push((p, sd, true_dist));
+                        }
+                    }
+                }
+            }
+        }
+        phantoms
+    }
+
     /// Scene-level V3 regression: dense scan of the seam-azimuth band of the
     /// compression fixture (all three body segments share one seam azimuth
     /// by phase continuity, so this band concentrates every boundary
     /// winding). NO scanned point may report negative SDF while sitting
     /// measurably outside the true wire tube around the continuous
     /// wireframe centerline. Pre-fix this failed at ~1600 of the scanned
-    /// points (worst: sd −0.79 at true distance +1.75).
+    /// points (worst: sd −0.79 at true distance +1.75). The seam sits at the
+    /// interior segment joins (not the ground-cut ends), so — unlike the
+    /// single-segment torsion body — it is NOT cut-masked and this scene scan
+    /// keeps its teeth.
     #[test]
     fn compression_seam_band_contains_no_phantom_material() {
         let d = compression_fixture();
@@ -4073,6 +4187,111 @@ mod tests {
         assert!(
             phantoms.is_empty(),
             "{} phantom points in the seam band; worst: {:?}",
+            phantoms.len(),
+            phantoms
+                .iter()
+                .max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1)))
+        );
+    }
+
+    /// R2 sibling of the compression seam scan, at the `sd_helix` level on the
+    /// REAL torsion fixture's body helix. The wave-2 V3 general-reviewer
+    /// finding: the close-wound/torsion body is the regime the pre-subdivision
+    /// boundary bound left under-tight — a seam phantom ~-0.024 at true +0.19
+    /// (19% of `wire_r`, ~4x the 5% criterion), the torsion family's DEFAULT
+    /// render. Scanned at the helix level (not the full scene) because
+    /// torsion's SINGLE-segment body has seams only at its two ends, and there
+    /// the tangential legs cover them — the body-seam points sit legitimately
+    /// inside a leg, so a scene scan finds nothing. The body helix isolates the
+    /// `sd_helix` fix: fails at one subdivision, passes at
+    /// [`HELIX_WINDING_SUBDIVISIONS`].
+    #[test]
+    fn torsion_seam_band_contains_no_phantom_material() {
+        let d = torsion_fixture();
+        let scene = torsion_sdf(&d);
+        let SdfPart::Helix(body) = scene.parts[0].shape else {
+            panic!("torsion scene's first part is the body helix");
+        };
+        let wire_r = match body.profile {
+            Profile::Circle { radius_mm } => radius_mm,
+            _ => unreachable!("torsion body is a circular-profile helix"),
+        };
+        let scan_n = (body.turns * 2000.0).ceil() as u32;
+        // Ground-truth resolution check: a point on the wire surface reads ~0.
+        let on = on_surface(&body, 0.5 * body.turns * TAU, 0.0);
+        assert!(
+            true_helix_distance(on, &body, scan_n).abs() < 0.05 * wire_r,
+            "torsion ground truth too coarse"
+        );
+        // Seam-azimuth band around azimuth 0 spanning the whole close-wound
+        // body height (radial 8.5..11.5 brackets R=10; z just behind and ahead
+        // of the seam; both end seams covered).
+        let body_top = body.pitch_mm * body.turns;
+        let phantoms = helix_seam_phantoms(
+            &body,
+            wire_r,
+            [8.5, -0.5, -1.5],
+            [0.1, (body_top + 1.0) / 40.0, 0.1],
+            (30, 40, 30),
+            scan_n,
+        );
+        assert!(
+            phantoms.is_empty(),
+            "{} torsion seam phantoms; worst: {:?}",
+            phantoms.len(),
+            phantoms
+                .iter()
+                .max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1)))
+        );
+    }
+
+    /// R2 sibling of the compression seam scan, at the `sd_helix` level on the
+    /// solved conical fixture's tapered body geometry. The wave-2 V3
+    /// general-reviewer finding: a taper's LARGE end reports seam phantoms
+    /// because the pre-subdivision bound used the part's global `r_min` (the
+    /// SMALL end) for the azimuth penalty — an under-count that grows with the
+    /// taper ratio. The per-piece LOCAL coil radius removes it. Scanned at the
+    /// helix level (conical's large-end seam sits under the ground cut in the
+    /// full scene) on a tapered helix carrying the fixture's radii/pitch:
+    /// fails at one subdivision, passes at [`HELIX_WINDING_SUBDIVISIONS`].
+    #[test]
+    fn conical_seam_band_contains_no_phantom_material() {
+        let d = conical_fixture();
+        let r_large = d.inputs.large_mean_dia.millimeters() / 2.0;
+        let r_small = d.inputs.small_mean_dia.millimeters() / 2.0;
+        let wire_r = d.inputs.wire_dia.millimeters() / 2.0;
+        // A continuous tapered helix over the fixture's radii and solved pitch
+        // — the geometry conical_sdf feeds sd_helix (in dead-coil-flattened
+        // segments); the seam fix is per-winding, so a single continuous body
+        // exercises it directly against its own exact ground truth.
+        let body = HelixParams {
+            radius_mm: r_large,
+            taper_small_r: Some(r_small),
+            pitch_mm: d.pitch.millimeters(),
+            turns: d.total_coils,
+            profile: Profile::Circle { radius_mm: wire_r },
+            axial_offset_mm: 0.0,
+            phase_rad: 0.0,
+        };
+        let scan_n = (body.turns * 1200.0).ceil() as u32;
+        let on = on_surface(&body, 0.2 * body.turns * TAU, 0.0);
+        assert!(
+            true_helix_distance(on, &body, scan_n).abs() < 0.05 * wire_r,
+            "conical ground truth too coarse"
+        );
+        // Large-end seam azimuth band (radial ~r_large, the first turns where
+        // the global-r_min under-count bit hardest).
+        let phantoms = helix_seam_phantoms(
+            &body,
+            wire_r,
+            [r_large - 2.0, -0.5, -1.5],
+            [0.1, (body.pitch_mm * 2.5 + 1.0) / 35.0, 0.1],
+            (30, 35, 30),
+            scan_n,
+        );
+        assert!(
+            phantoms.is_empty(),
+            "{} conical seam phantoms; worst: {:?}",
             phantoms.len(),
             phantoms
                 .iter()
