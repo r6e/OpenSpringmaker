@@ -36,8 +36,8 @@ pub fn min_free_length(
     if !(body_coils.is_finite() && body_coils > 0.0) {
         return Err(crate::SpringError::InconsistentInputs(
             "computed body coil count (active coils minus the G/E hook-compliance \
-             turns) is not a positive finite number (check the material's shear \
-             and Young's moduli)"
+             turns) is not a positive finite number — increase the active coil \
+             count, or check the shear and Young's moduli"
                 .into(),
         ));
     }
@@ -265,6 +265,38 @@ mod tests {
             crate::units::Stress::from_pascals(8.0e9), // G/E = 10 = active
         );
         assert!(matches!(r, Err(crate::SpringError::InconsistentInputs(_))));
+    }
+
+    /// R3 stateful-UI F1: for a low active-coil count (active ∈ (0, G/E) with
+    /// normal steel) the body-coil guard fires because the ACTIVE COUNT — not
+    /// the material — sits below the G/E hook-compliance turns. The message
+    /// must name the active-coil cause (and its remedy) rather than misdirect
+    /// the user to the (valid) material. Music Wire G/E ≈ 80/203.4 ≈ 0.393;
+    /// active = 0.2 < G/E ⇒ Nb = 0.2 − 0.393 < 0.
+    #[test]
+    fn min_free_length_message_names_active_count_not_only_the_material() {
+        let err = min_free_length(
+            Length::from_millimeters(2.0),
+            0.2,
+            r1_10mm_hooks(),
+            crate::units::Stress::from_pascals(80.0e9),
+            crate::units::Stress::from_pascals(203.4e9),
+        )
+        .unwrap_err();
+        let crate::SpringError::InconsistentInputs(msg) = err else {
+            panic!("expected InconsistentInputs, got {err:?}");
+        };
+        // Leads with the active-coil cause and its remedy — the misdirection fix.
+        assert!(
+            msg.contains("increase the active coil count"),
+            "message must name the active-coil cause; got: {msg}"
+        );
+        // Still names the moduli as the OTHER reachable cause, without
+        // asserting the material is at fault.
+        assert!(
+            msg.contains("shear and Young's moduli"),
+            "message must still name the moduli as a possible cause; got: {msg}"
+        );
     }
 
     /// R2 input-domain F1 twin: a modulus that overflowed to +Inf Pa in the
