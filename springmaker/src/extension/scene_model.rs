@@ -12,6 +12,23 @@ use std::f64::consts::{PI, TAU};
 /// coil of radius `coil_r`, with hook radius `hook_r`. `sign` picks the loop
 /// direction (+1 loops toward +y, −1 toward −y); `arc(0)` is exactly the body
 /// endpoint `(coil_r·cos φ, attach_h, coil_r·sin φ)`.
+///
+/// **The loop HANGS axially outward (wave-2 V4 fix).** The loop circle lies
+/// in the vertical plane at the attach azimuth, centered at
+/// `(coil_r, attach_h + sign·hook_r)` — one hook radius BEYOND the attach
+/// along the axis — so the whole 1.5π sweep stays on the outward side of
+/// the attach: radial `coil_r − hook_r·sin θ`, axial
+/// `attach_h + sign·hook_r·(1 − cos θ)`. Its centerline extreme sits
+/// `2·hook_r` beyond the attach, i.e. the loop's INNER surface reaches
+/// `2·hook_r − d` past the body face — exactly the per-end hook allowance
+/// in Shigley's inside-hooks free length (Fig. 10-7b / Eq. 10-39,
+/// `L0 = 2(D − d) + (Nb + 1)d` for standard `r = D/2` loops). The pre-fix
+/// loop was vertically CENTERED on the attach point instead, so its final
+/// quarter-sweep climbed `hook_r` INTO the coil bore (user finding V4,
+/// "hooks curl into the body") and its axial reach matched no citable
+/// free-length convention. The transition at the attach keeps the
+/// documented sharp-corner limitation (the loop plane is vertical, the
+/// coil tangent azimuthal — identical in both geometry paths).
 fn hook_arc(
     attach_angle: f64,
     attach_h: f64,
@@ -23,10 +40,10 @@ fn hook_arc(
     (0..=SAMPLES)
         .map(|i| {
             let theta = i as f64 / SAMPLES as f64 * (1.5 * PI);
-            let radial = coil_r - hook_r + hook_r * theta.cos();
+            let radial = coil_r - hook_r * theta.sin();
             (
                 radial * attach_angle.cos(),
-                attach_h + sign * hook_r * theta.sin(),
+                attach_h + sign * hook_r * (1.0 - theta.cos()),
                 radial * attach_angle.sin(),
             )
         })
@@ -128,6 +145,48 @@ mod tests {
         assert_relative_eq!(t0.0, last.0, max_relative = 1e-9);
         assert_relative_eq!(t0.1, last.1, max_relative = 1e-9);
         assert_relative_eq!(t0.2, last.2, epsilon = 1e-9);
+    }
+
+    /// Regression (wave-2 V4, user-reported "hooks curl INTO the body"):
+    /// the representative hook loop must HANG axially outward from its
+    /// attach point — bottom loop entirely at `y <= 0`, top loop entirely
+    /// at `y >= body_top` — with the loop's centerline extreme exactly
+    /// `2·hook_r` beyond the attach (inner surface `2·hook_r − d` beyond
+    /// the body face: Shigley Fig. 10-7b / Eq. 10-39's per-end hook
+    /// allowance). The pre-fix loop was vertically CENTERED on the attach
+    /// point, so its final quarter-sweep climbed `hook_r` INTO the coil
+    /// bore.
+    #[test]
+    fn hook_arcs_hang_axially_outward_never_into_the_body_span() {
+        let d = design();
+        let s = extension_scene(&d);
+        let body_top = s.polylines[0].points.last().unwrap().1;
+        let r1 = d.hooks.r1.millimeters();
+        let r2 = d.hooks.r2.millimeters();
+        let bottom = &s.polylines[1];
+        let top = &s.polylines[2];
+        for p in &bottom.points {
+            assert!(p.1 <= 1e-9, "bottom hook enters the body span: y={}", p.1);
+        }
+        for p in &top.points {
+            assert!(
+                p.1 >= body_top - 1e-9,
+                "top hook dips into the body span: y={} (body_top={body_top})",
+                p.1
+            );
+        }
+        let bottom_min = bottom
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::INFINITY, f64::min);
+        let top_max = top
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert_relative_eq!(bottom_min, -2.0 * r1, max_relative = 1e-9);
+        assert_relative_eq!(top_max, body_top + 2.0 * r2, max_relative = 1e-9);
     }
 
     /// An active-coil count past the helix render cap (`MAX_RENDER_TURNS`)

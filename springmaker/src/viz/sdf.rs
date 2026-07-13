@@ -1081,11 +1081,26 @@ pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
 
 /// One extension hook as a `TorusArc` part — see [`part_distance`]'s doc for
 /// the `(y_rotation, tilt)` frame convention. `attach_angle`/`attach_h` pin
-/// the loop's start to the coil body's endpoint (matching
+/// one end of the loop to the coil body's endpoint (matching
 /// `extension::scene_model::hook_arc`'s `arc(0)` continuity guarantee);
 /// `sign` picks the loop direction (that same function's `sign` parameter:
 /// -1 for the bottom hook toward -y, +1 for the top hook toward +y); `sweep
 /// = 1.5π` matches `hook_arc`'s `SAMPLES` range.
+///
+/// **The loop HANGS axially outward (wave-2 V4 fix, mirroring
+/// `hook_arc`).** The torus center sits at radial `coil_r`, axial
+/// `attach_h + sign·hook_r` — one hook radius beyond the attach — so the
+/// whole arc stays on the outward side and its inner surface reaches
+/// `2·hook_r − d` past the body face, the Shigley Fig. 10-7b / Eq. 10-39
+/// hook allowance (see `hook_arc`'s doc for the full derivation; the
+/// pre-fix center sat AT the attach height with radial `coil_r − hook_r`,
+/// which curled the loop's tail `hook_r` INTO the coil bore). With this
+/// center the UNCHANGED `(y_rotation = −attach_angle, tilt = −sign·π/2)`
+/// frame maps `hook_arc`'s parameter θ onto local torus azimuth
+/// `1.5π − θ`: the sweep window `[0, 1.5π]` covers exactly the wireframe
+/// arc, with the ATTACH at the window's END (azimuth 1.5π) and the free
+/// tail at its start (azimuth 0) — same point set, opposite traversal
+/// direction, which `sd_torus_arc` (a set distance) cannot observe.
 fn hook_torus_part(
     attach_angle: f64,
     attach_h: f64,
@@ -1095,13 +1110,12 @@ fn hook_torus_part(
     wire_r: f64,
     appearance: Appearance,
 ) -> ScenePart {
-    let center_r = coil_r - hook_r;
     ScenePart {
         shape: SdfPart::TorusArc {
             center: [
-                center_r * attach_angle.cos(),
-                attach_h,
-                center_r * attach_angle.sin(),
+                coil_r * attach_angle.cos(),
+                attach_h + sign * hook_r,
+                coil_r * attach_angle.sin(),
             ],
             y_rotation: -attach_angle,
             tilt: -sign * FRAC_PI_2,
@@ -3094,6 +3108,101 @@ mod tests {
                     (dist + wire_r).abs() < 0.1 * wire_r,
                     "point {p:?}: sdf={dist}, expected ~{}",
                     -wire_r
+                );
+            }
+        }
+    }
+
+    /// Regression (wave-2 V4): the SDF hook loop must hang axially outward
+    /// like the wireframe's (see `extension::scene_model`'s
+    /// `hook_arcs_hang_axially_outward_never_into_the_body_span`). The
+    /// pre-fix torus center sat AT the attach height, so the loop's final
+    /// quarter-sweep put real material `hook_r` up inside the coil bore —
+    /// the old bottom-hook tail point `(coil_r − r1, +r1)` was ON its
+    /// centerline. That point must now be clearly outside the hook part,
+    /// while the new hanging extreme `(coil_r, −2·r1)` must be on it.
+    #[test]
+    fn extension_hook_parts_hang_axially_outward_not_into_the_bore() {
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let r = d.mean_dia.millimeters() / 2.0;
+        let r1 = d.hooks.r1.millimeters();
+        let r2 = d.hooks.r2.millimeters();
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let body_h = match &scene.parts[0].shape {
+            SdfPart::Helix(h) => h.pitch_mm * h.turns,
+            other => panic!("expected the body helix first, got {other:?}"),
+        };
+        // Old tail points (loop centered on the attach) — must be OUTSIDE.
+        let old_bottom_tail = [r - r1, r1, 0.0];
+        let old_top_tail = [r - r2, body_h - r2, 0.0];
+        assert!(
+            part_distance(&scene.parts[1].shape, old_bottom_tail) > wire_r,
+            "bottom hook still curls into the body"
+        );
+        assert!(
+            part_distance(&scene.parts[2].shape, old_top_tail) > wire_r,
+            "top hook still curls into the body"
+        );
+        // New hanging extremes — must be ON each hook's centerline.
+        let bottom_extreme = [r, -2.0 * r1, 0.0];
+        let top_extreme = [r, body_h + 2.0 * r2, 0.0];
+        assert_relative_eq!(
+            part_distance(&scene.parts[1].shape, bottom_extreme),
+            -wire_r,
+            max_relative = 1e-9
+        );
+        assert_relative_eq!(
+            part_distance(&scene.parts[2].shape, top_extreme),
+            -wire_r,
+            max_relative = 1e-9
+        );
+    }
+
+    /// Two-sided arc-extent pin (wave-2 V4 directive): the one-sided
+    /// centerline-agreement test passes even if the SDF arc were LONGER
+    /// than the wireframe's 1.5π sweep. Sample the would-be continuation
+    /// beyond BOTH ends of each hook's window — past the free tail
+    /// (θ ∈ (1.5π, 2π)) and before the attach (θ ∈ (−π/2, 0)) — on the
+    /// hook circle's own centerline; the isolated hook part must report
+    /// clearly-outside distances there (samples stay 0.35 rad clear of
+    /// each window endpoint so the exact terminal cap spheres don't
+    /// legitimately cover them).
+    #[test]
+    fn extension_hook_arcs_do_not_extend_beyond_their_sweep_two_sided() {
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let r = d.mean_dia.millimeters() / 2.0;
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let body_h = match &scene.parts[0].shape {
+            SdfPart::Helix(h) => h.pitch_mm * h.turns,
+            other => panic!("expected the body helix first, got {other:?}"),
+        };
+        let end_angle = d.active_coils * TAU;
+        let cases = [
+            (1usize, 0.0, 0.0, d.hooks.r1.millimeters(), -1.0),
+            (2usize, end_angle, body_h, d.hooks.r2.millimeters(), 1.0),
+        ];
+        for (part_index, attach_angle, attach_h, hook_r, sign) in cases {
+            let margin = 0.35; // rad clear of each endpoint's cap sphere
+            let beyond_tail =
+                (0..6).map(|i| 1.5 * PI + margin + (0.5 * PI - 2.0 * margin) * f64::from(i) / 5.0);
+            let before_attach =
+                (0..6).map(|i| -0.5 * PI + margin + (0.5 * PI - 2.0 * margin) * f64::from(i) / 5.0);
+            for theta in beyond_tail.chain(before_attach) {
+                // The hanging-loop centerline parametrization the builders
+                // share (see `hook_torus_part`'s doc): radial
+                // `coil_r − hook_r·sinθ`, axial `attach_h + sign·hook_r·(1 − cosθ)`.
+                let radial = r - hook_r * theta.sin();
+                let p = [
+                    radial * attach_angle.cos(),
+                    attach_h + sign * hook_r * (1.0 - theta.cos()),
+                    radial * attach_angle.sin(),
+                ];
+                let dist = part_distance(&scene.parts[part_index].shape, p);
+                assert!(
+                    dist > 0.5 * wire_r,
+                    "hook part {part_index} contains continuation θ={theta}: d={dist}"
                 );
             }
         }
