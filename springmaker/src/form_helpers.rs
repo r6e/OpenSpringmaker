@@ -77,7 +77,8 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
 fn below_minimum_message(free: f64, min: f64, unit: &str) -> String {
     let free_s = format!("{free:.3}");
     let min_s = format!("{min:.3}");
-    let base = format!("free length {free_s} {unit} is below the close-wound minimum {min_s} {unit}");
+    let base =
+        format!("free length {free_s} {unit} is below the close-wound minimum {min_s} {unit}");
     if free_s == min_s {
         format!("{base} (short by {:.3e} {unit})", min - free)
     } else {

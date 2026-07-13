@@ -638,9 +638,10 @@ mod tests {
         i.free_length = Length::from_millimeters(0.0);
         assert_eq!(msg(run(&i)), "free length must be a positive finite number");
         let mut i = base.clone();
-        i.free_length = Length::from_millimeters(20.0); // < Ls = 24 mm
-        // Structured variant (R2 stateful-UI F3 sibling sweep) with exact
-        // field pins in SI meters — swapped-field mutants die here.
+        i.free_length = Length::from_millimeters(20.0);
+        // 20 mm < Ls = 24 mm. Structured variant (R2 stateful-UI F3 sibling
+        // sweep) with exact field pins in SI meters — swapped-field mutants
+        // die here.
         match run(&i) {
             Err(crate::SpringError::FreeLengthBelowMinimum {
                 free_length_m,
