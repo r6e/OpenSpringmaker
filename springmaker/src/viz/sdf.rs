@@ -2257,6 +2257,66 @@ mod tests {
     }
 
     #[test]
+    fn sub_turn_with_taper_never_over_estimates() {
+        // Coverage gap closed (R3 input-domain coverage note; flagged to the
+        // formula reviewer): the committed conservativeness sweeps cover
+        // turns ∈ [1, 9], and the sole sub-turn test
+        // (`sub_turn_end_reports_exterior_distance_not_phantom`) is
+        // NON-tapered. A conical spring with active_coils < 1 is REACHABLE
+        // (the conical solver accepts active_coils > 0), so the turns<1 +
+        // taper regime — where the per-winding subdivision bound and the
+        // anchor window both operate on a single partial arc — must be pinned
+        // against the sacred never-over-estimate invariant. Ground truth is a
+        // FINE per-winding scan (100k samples) so it can never spuriously
+        // inflate the true distance and mask an over-estimate.
+        let mut rng = TestRng(0x5ab7_0f0f_7a9e_4201);
+        for _ in 0..800 {
+            let radius_mm = rng.range(5.0, 50.0);
+            // Always tapered (small end strictly below the large end).
+            let taper_small_r = radius_mm * rng.range(0.05, 0.99);
+            let pitch_mm = rng.range(0.5, 12.0);
+            let turns = rng.range(0.3, 0.9); // strictly sub-turn
+            let r_min = radius_mm.min(taper_small_r);
+            // Wire radius plausible relative to pitch and coil radius (a
+            // form-reachable cone, not degenerate self-overlap).
+            let wire_r = rng.range(0.1, (pitch_mm * 0.45).min(r_min * 0.4).max(0.1001));
+            let h = HelixParams {
+                radius_mm,
+                taper_small_r: Some(taper_small_r),
+                pitch_mm,
+                turns,
+                profile: Profile::Circle { radius_mm: wire_r },
+                axial_offset_mm: 0.0,
+                phase_rad: 0.0,
+            };
+
+            // Query the whole reachable neighbourhood of the partial arc: on
+            // the axis (radial 0) through past the coil cylinder, a FULL
+            // azimuth jitter (seam-phantom hazard — the far side of a partial
+            // arc), and axially inside the wire, in the gap, and past both
+            // ends.
+            let max_phi = TAU * turns;
+            let phi_query = rng.range(0.0, max_phi);
+            let t = phi_query / max_phi;
+            let local_r = radius_mm + (taper_small_r - radius_mm) * t;
+            let local_y = pitch_mm * phi_query / TAU;
+            let radial = (local_r * rng.range(0.0, 1.6)).max(0.0);
+            let theta = phi_query.rem_euclid(TAU) + rng.range(-TAU, TAU);
+            let axial = local_y + rng.range(-3.0, 3.0) * pitch_mm.max(wire_r);
+
+            let p = [radial * theta.cos(), axial, radial * theta.sin()];
+            let d = sd_helix(p, &h);
+            let true_d = true_helix_distance(p, &h, 100_000);
+            assert!(
+                d <= true_d + 1e-9,
+                "sub-turn+taper over-estimate: d={d} > true={true_d} \
+                 (radius={radius_mm} taper_small_r={taper_small_r} \
+                 pitch={pitch_mm} turns={turns} wire_r={wire_r} p={p:?})"
+            );
+        }
+    }
+
+    #[test]
     fn helix_inside_wire_is_negative_and_far_outside_positive() {
         let h = HelixParams {
             radius_mm: 10.0,
