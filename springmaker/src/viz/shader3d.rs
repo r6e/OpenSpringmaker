@@ -15,7 +15,7 @@ use crate::app::Message;
 
 #[cfg(test)]
 use super::zoom_step;
-use super::{camera_uniforms, sdf, Orbit, WHEEL_PIXELS_PER_LINE};
+use super::{camera_uniforms, fallback_camera, sdf, Orbit, WHEEL_PIXELS_PER_LINE};
 
 /// Raw WGSL source, unmodified — [`instantiate_wgsl`] substitutes every
 /// `{{PLACEHOLDER}}` token below before it reaches `wgpu::ShaderSource::Wgsl`.
@@ -131,7 +131,15 @@ impl shader::Program<Message> for SpringShader {
         // camera tracks the panel's actual shape every frame, including
         // across a live window resize.
         let aspect = bounds.width / bounds.height;
-        let camera = camera_uniforms(self.extent_mm, self.y_mid_mm, self.orbit, self.zoom, aspect);
+        // `spring3d_element`'s representability probe already rejected a
+        // persistently-hostile extent/y_mid/zoom/orbit before this widget
+        // was ever built, so `None` here is not expected in production —
+        // but `draw` cannot itself return an `Option` (the `shader::
+        // Program` trait requires a concrete `Primitive` every frame), so a
+        // known-safe fallback camera (review finding 5) stands in rather
+        // than an `unwrap` panic on the unreachable-in-practice case.
+        let camera = camera_uniforms(self.extent_mm, self.y_mid_mm, self.orbit, self.zoom, aspect)
+            .unwrap_or_else(fallback_camera);
         SpringPrimitive {
             uniforms: self.uniforms.clone(),
             camera,
@@ -633,16 +641,33 @@ mod tests {
             program.orbit,
             program.zoom,
             wide.width / wide.height,
-        );
+        )
+        .expect("nominal fixture inputs always produce a camera");
         let expected_tall = camera_uniforms(
             program.extent_mm,
             program.y_mid_mm,
             program.orbit,
             program.zoom,
             tall.width / tall.height,
-        );
+        )
+        .expect("nominal fixture inputs always produce a camera");
         assert_eq!(primitive_wide.camera, expected_wide);
         assert_eq!(primitive_tall.camera, expected_tall);
+    }
+
+    /// Review finding 5: if the per-frame `camera_uniforms` call ever DOES
+    /// return `None` (e.g. a persistently-hostile `zoom`/`orbit` that
+    /// slipped past `spring3d_element`'s upstream representability probe —
+    /// defense in depth, not a reachable production path today), `draw`
+    /// must fall back to the documented safe default camera rather than
+    /// panicking on an `unwrap` or propagating a poisoned value.
+    #[test]
+    fn draw_falls_back_to_the_safe_camera_when_camera_uniforms_returns_none() {
+        let mut program = shader_fixture();
+        program.zoom = f32::NAN; // camera_uniforms(..) is None for any aspect
+        let state = DragState::default();
+        let primitive = program.draw(&state, Cursor::Unavailable, bounds());
+        assert_eq!(primitive.camera, fallback_camera());
     }
 
     // ------------------------------------------------------------------

@@ -430,6 +430,21 @@ pub(crate) struct HelixParams {
 /// phase-0 property below — conservativeness sweeps included — carries over
 /// unchanged; `helix_phase_rotates_the_whole_helix_rigidly` pins the
 /// general case by rotation equivariance.
+///
+/// **Precondition: `h.pitch_mm > 0.0` (review finding 6, input-domain F-C).**
+/// [`candidate_window_vertex`]'s `k_est = (axial - s*theta) / pitch_mm`
+/// divides by `pitch_mm` — at exactly `0.0` this is `NaN`, and EVERY
+/// ring-plane candidate this fn computes below inherits that `NaN` (`best =
+/// best.min(d)` with a `NaN` `d` — Rust's `f64::min` silently keeps `best`
+/// unchanged rather than propagating the `NaN`, per IEEE-754 min semantics
+/// — so the candidates are effectively DROPPED, not merely wrong), leaving
+/// only the two terminal caps to report distance. The probed brief geometry
+/// then over-reports by ~20mm INSIDE material — a conservativeness
+/// violation, not just an under-shoot. No current family builder can
+/// actually construct a zero-pitch `HelixParams` (`compression_sdf`/
+/// `conical_sdf` both reject `pitch <= 0.0` before building one; audited),
+/// but this function does not itself defend against the precondition —
+/// callers must.
 pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
     let axial = p[1] - h.axial_offset_mm;
     let radial = p[0].hypot(p[2]);
@@ -945,13 +960,20 @@ fn ground_cuts(
 /// reads — so both geometry paths render the SAME spring. See
 /// [`helical_body_parts`] for why a ground-ended design needs 3 `Helix`
 /// parts, not the single helix a first glance suggests.
+///
+/// **`pitch <= 0.0` is hostile (review finding 6).** `pitch` is a real,
+/// independent parameter here (unlike extension/torsion's close-wound body,
+/// whose `pitch_mm = wire` is always positive by construction) — see
+/// [`sd_helix`]'s doc for why `pitch_mm == 0.0` is a genuine precondition
+/// violation, not merely an unusual value. `geometry_hostile` alone doesn't
+/// catch this (0.0 is finite), so it's checked separately.
 pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
     let active = d.active_coils;
     let total = d.total_coils;
     let r = d.mean_dia.millimeters() / 2.0;
     let wire = d.wire_dia.millimeters();
     let pitch = d.pitch.millimeters();
-    if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) {
+    if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) || pitch <= 0.0 {
         return SdfScene::default();
     }
     SdfScene {
@@ -963,7 +985,9 @@ pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
 /// Conical family SDF scene: linear taper from `large_mean_dia` to
 /// `small_mean_dia` across the FULL total-coil sweep (matching
 /// `conical::scene_model::conical_scene`'s `radius_at`), same dead-coil
-/// reconstruction and ground cuts as `compression_sdf`.
+/// reconstruction and ground cuts as `compression_sdf` — including the same
+/// `pitch <= 0.0` hostility check (review finding 6; see
+/// `compression_sdf`'s doc).
 pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
     let active = d.inputs.active_coils;
     let total = d.total_coils;
@@ -971,7 +995,10 @@ pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
     let r_small = d.inputs.small_mean_dia.millimeters() / 2.0;
     let wire = d.inputs.wire_dia.millimeters();
     let pitch = d.pitch.millimeters();
-    if coils_hostile(active, total) || geometry_hostile(&[r_large, r_small, wire, pitch]) {
+    if coils_hostile(active, total)
+        || geometry_hostile(&[r_large, r_small, wire, pitch])
+        || pitch <= 0.0
+    {
         return SdfScene::default();
     }
     let radius_at = |t: f64| r_large + (r_small - r_large) * t;
@@ -1324,27 +1351,32 @@ fn pack_cut(slot: &mut [f32], cut: &GroundPlane) {
 /// - `[4 + MAX_PARTS·FLOATS_PER_PART ..)`: one `FLOATS_PER_CUT`-float
 ///   (`GroundPlane`) block per cut SLOT — see [`pack_cut`].
 ///
-/// **A (never legitimately constructed) `Some(f64::NAN)` taper is a
-/// documented non-goal, not silently assumed unreachable.** Every family
-/// builder rejects non-finite geometry via `geometry_hostile` before any
-/// `HelixParams` is built, so `Some(NaN)` cannot reach this function
-/// through the real builders — the choice below only matters for a
-/// directly-constructed test fixture. Decision (pinned by a test rather
-/// than left to whatever the encoding happens to do): `pack_part` does
-/// NOT special-case a `NaN` payload — it packs `NaN as f32` like any other
-/// value — and `unpack_scene` (the test-only inverse, `#[cfg(test)]`
-/// below — not doc-linked since it doesn't exist outside test builds)
-/// decodes it as `Some(NaN)`, not `None`: the decode's `< 0.0` comparison
-/// is false for `NaN` under ordinary IEEE-754 rules (the same rule the
-/// `NO_TAPER_SENTINEL` decode elsewhere in this table relies on being
-/// well-defined), so the value passes through rather than being coerced
-/// to the "absent" state. This was a deliberate choice over the
-/// alternative (clamping/rejecting non-finite input at pack time): letting
-/// `Some(NaN)` round-trip as `Some(NaN)` means a violation of the
-/// finite-geometry invariant stays visibly poisoned (`NaN` propagates and
-/// corrupts the render) rather than silently laundering into a valid
-/// untapered helix, which would hide the upstream bug instead of
-/// surfacing it.
+/// **Output-side finiteness sweep (review finding 5 fix — the
+/// subset-guard-bypass class).** Every family builder rejects non-finite
+/// `f64` geometry via `geometry_hostile` upstream, but that guard runs
+/// BEFORE the `as f32` narrowing cast below — a form-reachable value that is
+/// a perfectly finite `f64` (e.g. an extreme `free_length`/`active_coils`
+/// solve landing a huge but finite radius, `1e40`) can still overflow to
+/// `f32::INFINITY` on packing, which `geometry_hostile`'s f64 check can
+/// never see. Without a check on the FINAL packed buffer, that `inf` would
+/// reach the shader as a "representable" (`Some`) uniform — `use_shaded`
+/// would pick the shaded path and render garbage, not the documented
+/// wireframe fallback. So: after packing, this function sweeps every float
+/// in `out` and returns `None` if ANY of them is non-finite — cheap (one
+/// linear pass over a buffer already fully materialized) and catches every
+/// overflow source at once (radius, pitch, turns, taper, appearance —
+/// whichever field the hostile input lands in) without needing a
+/// per-field `f32`-range precheck upstream. This SUPERSEDES the prior
+/// per-field design (a directly-constructed `Some(f64::NAN)` taper used to
+/// round-trip as `Some(NaN)` rather than `None` — see
+/// `scene_uniforms_some_nan_taper_now_fails_the_finiteness_sweep`): a
+/// poisoned buffer reaching the GPU renders silently-wrong pixels, which is
+/// worse than the visible, documented `None` -> wireframe fallback.
+/// `pack_part` itself is UNCHANGED — it still packs `NaN as f32` like any
+/// other value with no special-casing, so `unpack_scene`'s own decode
+/// contract (`NO_TAPER_SENTINEL`'s `< 0.0` — an ordinary comparison, false
+/// for `NaN`, not a NaN-testing one WGSL might constant-fold away) is still
+/// exercisable directly against a hand-packed buffer.
 ///
 /// Every geometry value packs `as f32` (mm-scale doubles lose ~1e-7
 /// relative precision, well under any rendering-visible threshold);
@@ -1366,7 +1398,7 @@ pub(crate) fn scene_uniforms(scene: &SdfScene) -> Option<Vec<f32>> {
         let base = cuts_base + i * FLOATS_PER_CUT;
         pack_cut(&mut out[base..base + FLOATS_PER_CUT], cut);
     }
-    Some(out)
+    out.iter().all(|v| v.is_finite()).then_some(out)
 }
 
 /// Inverse sRGB EOTF (linear -> encoded), test-only: undoes
@@ -2306,6 +2338,173 @@ mod tests {
         assert_relative_eq!(sdf_eval(&scene, p), 2.0, epsilon = 1e-9);
     }
 
+    // ------------------------------------------------------------------
+    // Review finding 7 (spec §Testing, architect F3): "numeric-gradient
+    // normals unit-length and outward" — the spec-named test this branch
+    // was missing entirely.
+    // ------------------------------------------------------------------
+
+    /// Central-difference gradient of `sdf_eval` at `p`, step `h` along
+    /// each world axis — the numeric stand-in for the WGSL fragment
+    /// shader's own gradient-based surface normal (it computes the
+    /// identical central difference against the mirrored WGSL `sdf_eval`).
+    fn numeric_gradient(scene: &SdfScene, p: Vec3, h: f64) -> Vec3 {
+        let d = |q: Vec3| sdf_eval(scene, q);
+        let axis = |i: usize| {
+            let mut lo = p;
+            let mut hi = p;
+            lo[i] -= h;
+            hi[i] += h;
+            (d(hi) - d(lo)) / (2.0 * h)
+        };
+        [axis(0), axis(1), axis(2)]
+    }
+
+    /// `h = 2 * MARCH_EPS` (as `f64`) per the finding's prescribed step —
+    /// small enough to approximate the true local gradient, large enough
+    /// to stay well clear of `f64` cancellation error.
+    fn gradient_step() -> f64 {
+        2.0 * f64::from(MARCH_EPS)
+    }
+
+    /// Shared assertion: the numeric gradient at `p` has near-unit length
+    /// (loose band — `sdf_eval`'s Helix arm is CONSERVATIVE, not exact; see
+    /// `sd_helix`'s doc for its measured ~0.7%-of-wire-radius typical error,
+    /// worse near steep-pitch/seam regions — so the gradient magnitude can
+    /// run somewhat off 1.0 even at a true surface point, hence 0.5 as the
+    /// lower band rather than requiring near-exact unit length) and points
+    /// generally OUTWARD (positive dot with the analytically-known outward
+    /// direction at `p` — sign alone, `outward` need not be normalized).
+    fn assert_gradient_unit_and_outward(scene: &SdfScene, p: Vec3, outward: Vec3, label: &str) {
+        let grad = numeric_gradient(scene, p, gradient_step());
+        let mag = vlen(grad);
+        assert!(
+            (0.5..=1.05).contains(&mag),
+            "{label}: |grad|={mag} at {p:?} (grad={grad:?}), expected in [0.5, 1.05]"
+        );
+        assert!(
+            vdot(grad, outward) > 0.0,
+            "{label}: grad={grad:?} at {p:?} does not point outward (outward={outward:?})"
+        );
+    }
+
+    #[test]
+    fn numeric_gradient_normals_are_unit_length_and_outward() {
+        // Helix: a point on the tube surface at ring_ang=0 (pure RADIAL
+        // offset from the centerline, no axial component), where the
+        // outward direction is — to the loose tolerance above — the world
+        // radial direction at that azimuth (the small pitch-angle tilt of
+        // the true local outward normal is within the conservativeness
+        // slack this test already tolerates).
+        let helix = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 6.0,
+            turns: 8.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+            phase_rad: 0.0,
+        };
+        let helix_scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(helix),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let phi = 3.0 * TAU + 0.7;
+        let p_helix = on_surface(&helix, phi, 0.0);
+        let az = phi; // phase_rad = 0.0
+        assert_gradient_unit_and_outward(&helix_scene, p_helix, [az.cos(), 0.0, az.sin()], "helix");
+
+        // Torus arc: an interior point (well clear of the sweep's end
+        // caps), pure radial offset (ring_ang=0) in the LOCAL XZ plane —
+        // this part's identity (tilt=0, y_rotation=0) transform makes local
+        // == world, so the outward direction is the plain world-radial one.
+        let torus_scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::TorusArc {
+                    center: [0.0, 0.0, 0.0],
+                    y_rotation: 0.0,
+                    tilt: 0.0,
+                    major_r: 10.0,
+                    minor_r: 2.0,
+                    sweep: 1.5 * PI,
+                },
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let theta = std::f64::consts::FRAC_PI_2; // interior of [0, 1.5*PI]
+        let p_torus = [(10.0 + 2.0) * theta.cos(), 0.0, (10.0 + 2.0) * theta.sin()];
+        assert_gradient_unit_and_outward(
+            &torus_scene,
+            p_torus,
+            [theta.cos(), 0.0, theta.sin()],
+            "torus arc",
+        );
+
+        // Capsule: a shaft point (well clear of the hemispherical end
+        // caps), where the outward direction is radial from the segment's
+        // axis (here the world Y axis).
+        let capsule_scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Capsule {
+                    a: [0.0, 0.0, 0.0],
+                    b: [0.0, 20.0, 0.0],
+                    radius_mm: 2.0,
+                },
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let p_capsule = [2.0, 10.0, 0.0];
+        assert_gradient_unit_and_outward(&capsule_scene, p_capsule, [1.0, 0.0, 0.0], "capsule");
+
+        // Composed scene (the compression golden fixture: 3 Helix segments
+        // + 2 ground cuts) at a point on the ACTIVE segment's surface, away
+        // from any segment join or cut — `sdf_eval`'s union-then-cut
+        // pipeline in full, not a single bare part.
+        let d = compression_fixture();
+        let composed = compression_sdf(&d);
+        let r = d.mean_dia.millimeters() / 2.0;
+        let active_helix = HelixParams {
+            radius_mm: r,
+            taper_small_r: None,
+            pitch_mm: d.pitch.millimeters(),
+            turns: 1.0, // unused by on_surface beyond scaling phi -> t; phi is absolute below
+            profile: Profile::Circle {
+                radius_mm: d.wire_dia.millimeters() / 2.0,
+            },
+            axial_offset_mm: d.wire_dia.millimeters(), // dead_per_end(1) * wire_mm — see helical_body_parts
+            phase_rad: TAU,                            // dead_per_end(1) turns wound before it
+        };
+        let phi_active = TAU * 4.0 + 0.3; // well inside the active segment's sweep, away from either join
+        let p_composed = on_surface(&active_helix, phi_active, 0.0);
+        let az_composed = phi_active + active_helix.phase_rad;
+        assert_gradient_unit_and_outward(
+            &composed,
+            p_composed,
+            [az_composed.cos(), 0.0, az_composed.sin()],
+            "composed scene (compression fixture, active segment)",
+        );
+
+        // NEAR (not on) a ground cut: just above the bottom cut plane
+        // (y=0), at the flattened dead coil's own azimuth/radius — deep
+        // inside the wire tube's OWN distance (very negative), so
+        // `cut_plane`'s `max` combinator is governed by the PLANE's
+        // distance instead, and the outward direction is exactly the
+        // plane's own normal (downward, away from the kept material above
+        // it).
+        let p_near_cut = [r, 0.05, 0.0];
+        assert_gradient_unit_and_outward(
+            &composed,
+            p_near_cut,
+            [0.0, -1.0, 0.0],
+            "near a ground cut (compression fixture)",
+        );
+    }
+
     #[test]
     fn scene_extent_mm_is_none_for_the_default_empty_scene() {
         assert_eq!(scene_extent_mm(&SdfScene::default()), None);
@@ -2404,7 +2603,8 @@ mod tests {
             pitch: -0.25,
         };
         for aspect in [1.777_f32, 0.5625_f32] {
-            let camera = crate::viz::camera_uniforms(extent, y_mid, orbit, 1.0, aspect);
+            let camera = crate::viz::camera_uniforms(extent, y_mid, orbit, 1.0, aspect)
+                .expect("finite, sane inputs always produce a camera");
             let view_proj: [f64; 16] = std::array::from_fn(|i| f64::from(camera[i]));
             // Column-major 4x4 * homogeneous vec4, matching camera_uniforms's
             // documented WGSL-mirroring layout.
@@ -2508,6 +2708,25 @@ mod tests {
     fn compression_sdf_degenerate_design_yields_default() {
         let mut d = compression_fixture();
         d.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(compression_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn compression_sdf_zero_pitch_yields_default() {
+        // Review finding 6 (input-domain F-C): `sd_helix`'s `k_est =
+        // (axial - s*theta) / pitch_mm` divides by pitch — at pitch=0 this
+        // is NaN, and `best.min(NaN)` (Rust `f64::min`'s NaN-ignoring
+        // semantics) silently drops every ring-plane candidate, leaving only
+        // the terminal caps to report distance — a helix that over-reports
+        // by ~20mm INSIDE material at the probed brief geometry. Unreachable
+        // via the current builders (audited — the solver never lands
+        // exactly on pitch=0), but the hostility guard didn't encode it, and
+        // rectangular wire (coming next) reuses this same gate. `pitch_mm`
+        // is a real, independent parameter here (unlike extension/torsion's
+        // close-wound `pitch_mm = wire`, always positive by construction),
+        // so the guard belongs in THIS builder.
+        let mut d = compression_fixture();
+        d.pitch = springcore::units::Length::from_millimeters(0.0);
         assert_eq!(compression_sdf(&d), SdfScene::default());
     }
 
@@ -2746,6 +2965,17 @@ mod tests {
     fn conical_sdf_degenerate_design_yields_default() {
         let mut d = conical_fixture();
         d.inputs.large_mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        assert_eq!(conical_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
+    fn conical_sdf_zero_pitch_yields_default() {
+        // Review finding 6 — see `compression_sdf_zero_pitch_yields_default`
+        // for the `sd_helix` mechanism; conical shares the same real,
+        // independent `pitch_mm` parameter (a linear taper, not a
+        // close-wound `pitch_mm = wire`).
+        let mut d = conical_fixture();
+        d.pitch = springcore::units::Length::from_millimeters(0.0);
         assert_eq!(conical_sdf(&d), SdfScene::default());
     }
 
@@ -3100,11 +3330,60 @@ mod tests {
     #[test]
     fn scene_uniforms_none_for_an_assembly_one_member_past_the_budget() {
         // 17 members x 3 = 51 > MAX_PARTS: gracefully degrades to the
-        // wireframe placeholder rather than truncating or panicking.
+        // wireframe render rather than truncating or panicking.
         let d = n_member_assembly_fixture(17);
         let scene = assembly_sdf(&d);
         assert_eq!(scene.parts.len(), 51);
         assert!(scene_uniforms(&scene).is_none());
+    }
+
+    /// A single-part scene with the given Helix radius — the adversary's
+    /// probe geometry for the finiteness-sweep tests below (the exact field
+    /// doesn't matter; `radius_mm` packs straight into a slot with no
+    /// intervening arithmetic, so it's the most direct route to an
+    /// overflowing `as f32` cast).
+    fn huge_radius_scene(radius_mm: f64) -> SdfScene {
+        SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm,
+                    taper_small_r: None,
+                    pitch_mm: 2.0,
+                    turns: 4.0,
+                    profile: Profile::Circle { radius_mm: 1.0 },
+                    axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
+                }),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn scene_uniforms_representable_at_1e38_radius() {
+        // Review finding 5 (input-domain F-A): 1e38 is still safely inside
+        // f32's finite range (max ~3.4028e38) — the finiteness sweep must
+        // NOT reject a merely-huge-but-representable value, or it would
+        // start rejecting legitimate (if extreme) designs.
+        assert!(scene_uniforms(&huge_radius_scene(1e38)).is_some());
+    }
+
+    #[test]
+    fn scene_uniforms_none_for_geometry_that_overflows_f32_on_packing() {
+        // Review finding 5 (input-domain F-A/F-B, the subset-guard-bypass
+        // class): the adversary's exact probe values. `geometry_hostile`'s
+        // f64 finiteness check passes all of these (they ARE finite f64s),
+        // but `1e40 as f32` overflows to `inf` — without a sweep over the
+        // FINAL packed buffer, that `inf` would reach the shader as a
+        // "valid" (`Some`) uniform with `use_shaded = true`, rendering
+        // garbage instead of the documented wireframe fallback.
+        for radius in [1e40, 1e155, 1e300] {
+            assert!(
+                scene_uniforms(&huge_radius_scene(radius)).is_none(),
+                "radius={radius} must fail the finiteness sweep"
+            );
+        }
     }
 
     #[test]
@@ -3308,16 +3587,16 @@ mod tests {
     }
 
     #[test]
-    fn scene_uniforms_some_nan_taper_round_trips_as_some_nan_not_none() {
-        // Negative sentinel, not NaN (F2 review fix): a directly-
-        // constructed `Some(f64::NAN)` — never produced by any real family
-        // builder, which rejects non-finite geometry via `geometry_hostile`
-        // upstream — packs as plain `NaN as f32` (no special-casing) and
-        // decodes via the ordinary `< 0.0` comparison, which is false for
-        // `NaN`, so it passes through as `Some(NaN)` rather than collapsing
-        // to `None`. See `scene_uniforms`'s doc for why this is the chosen
-        // behavior over silently laundering it into a valid untapered
-        // helix. Documented, not silently assumed unreachable.
+    fn scene_uniforms_some_nan_taper_now_fails_the_finiteness_sweep() {
+        // Superseded by review finding 5's blanket finiteness sweep. A
+        // directly-constructed `Some(f64::NAN)` — never produced by any real
+        // family builder, which rejects non-finite geometry via
+        // `geometry_hostile` upstream — packs a `NaN` float into the
+        // buffer, and `scene_uniforms` now rejects ANY non-finite packed
+        // float wholesale rather than letting it through to poison the
+        // shader (see `scene_uniforms`'s doc: a poisoned buffer renders
+        // GARBAGE, not the documented wireframe fallback — strictly worse
+        // than surfacing the bug via `None`).
         let scene = SdfScene {
             parts: vec![ScenePart {
                 shape: SdfPart::Helix(HelixParams {
@@ -3333,8 +3612,30 @@ mod tests {
             }],
             cuts: Vec::new(),
         };
-        let packed = scene_uniforms(&scene).unwrap();
-        let round_tripped = unpack_scene(&packed).unwrap();
+        assert!(scene_uniforms(&scene).is_none());
+    }
+
+    #[test]
+    fn unpack_scene_still_decodes_a_hand_packed_nan_taper_via_ordinary_comparison() {
+        // `unpack_scene`'s own decode contract, independent of
+        // `scene_uniforms`'s gate above: a HAND-PACKED buffer (bypassing
+        // `scene_uniforms` entirely) with a `NaN` in the taper slot still
+        // decodes as `Some(NaN)`, not `None` — `NO_TAPER_SENTINEL`'s `< 0.0`
+        // decode is an ORDINARY numeric comparison (false for `NaN`), not a
+        // NaN-testing one, which matters because WGSL may legally
+        // constant-fold `isNan()`-shaped comparisons under a finite-math
+        // assumption (see `scene_uniforms`'s doc). This is a property of the
+        // decode primitive itself, not of whether a NaN can reach it in
+        // practice (it can't, post finding-5 — see the test above).
+        let mut packed = vec![0.0f32; 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT];
+        packed[0] = 1.0; // one part
+        packed[4] = 0.0; // kind = Helix
+        packed[4 + 1] = 10.0; // radius_mm
+        packed[4 + 2] = f32::NAN; // taper_small_r
+        packed[4 + 3] = 2.0; // pitch_mm
+        packed[4 + 4] = 4.0; // turns
+        packed[4 + 6] = 1.0; // profile_dim0 (radius_mm)
+        let round_tripped = unpack_scene(&packed).expect("well-formed header/counts");
         match &round_tripped.parts[0].shape {
             SdfPart::Helix(h) => assert!(h.taper_small_r.is_some_and(|v| v.is_nan())),
             _ => panic!("expected a Helix part"),

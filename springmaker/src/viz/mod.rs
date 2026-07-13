@@ -612,13 +612,38 @@ fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, y_mid_mm: f64, aspect: 
 /// [`stroke_for`]'s non-finite guard); `zoom` is clamped to [`ZOOM_MIN`]/
 /// [`ZOOM_MAX`] even though the committed `App.zoom` state is expected to
 /// already be clamped by [`zoom_step`].
+///
+/// **Returns `None`, not a poisoned camera (review finding 5 fix).** Two
+/// independent guards, mirroring [`sdf::scene_uniforms`]'s finiteness
+/// sweep on the geometry side:
+/// - `zoom`/`orbit.yaw`/`orbit.pitch` are checked with an explicit
+///   `is_finite` UP FRONT — `f32::clamp` does NOT sanitize a NaN `self`
+///   (neither the `< min` nor `> max` comparison a clamp relies on is true
+///   for NaN, so `zoom.clamp(..)` alone would let a NaN zoom straight
+///   through).
+/// - After building the matrices, every one of the 32 packed floats is
+///   swept for finiteness. This catches a case the input-side guards
+///   above cannot: `extent_mm`/`y_mid_mm` can be huge but perfectly FINITE
+///   `f64`s (e.g. from a hostile-but-finite solved geometry) that are
+///   NOT replaced by the non-finite fallback, yet still overflow to `inf`
+///   once the eye/view/projection math scales with them and the result
+///   narrows `as f32`.
+///
+/// Callers (`spring3d_element`'s representability probe, `shader3d::
+/// SpringShader::draw`'s fallback) treat `None` as "fall back to the
+/// wireframe path" / "use a known-safe default camera" respectively — the
+/// same "documented fallback, never garbage" discipline `scene_uniforms`
+/// established for packed geometry.
 pub(crate) fn camera_uniforms(
     extent_mm: f64,
     y_mid_mm: f64,
     orbit: Orbit,
     zoom: f32,
     aspect: f32,
-) -> [f32; 32] {
+) -> Option<[f32; 32]> {
+    if !zoom.is_finite() || !orbit.yaw.is_finite() || !orbit.pitch.is_finite() {
+        return None;
+    }
     let extent = if extent_mm.is_finite() && extent_mm > 0.0 {
         extent_mm
     } else {
@@ -647,7 +672,23 @@ pub(crate) fn camera_uniforms(
     let mut out = [0.0f32; 32];
     out[0..16].copy_from_slice(&mat4_to_f32(&view_proj));
     out[16..32].copy_from_slice(&mat4_to_f32(&inv_view_proj));
-    out
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// A known-safe, always-finite camera for [`shader3d::SpringShader::draw`]'s
+/// per-frame [`camera_uniforms`] call to fall back to on the (extremely
+/// unlikely, since `spring3d_element`'s representability probe already
+/// rejected any persistently-hostile extent/y_mid/zoom/orbit before the
+/// shaded widget is ever built) chance that a single frame's LIVE aspect
+/// ratio is degenerate — e.g. a transient zero-height layout mid-resize,
+/// which would divide-by-zero into a non-finite `aspect`. A nominal
+/// unit-scene camera (extent 1mm, default orbit/zoom, square aspect) is
+/// guaranteed finite by [`camera_uniforms`]'s own contract for sane inputs,
+/// so this is built by calling it rather than hand-writing a raw array that
+/// could drift from that contract.
+fn fallback_camera() -> [f32; 32] {
+    camera_uniforms(1.0, 0.5, Orbit::default(), 1.0, 1.0)
+        .expect("nominal unit-scene inputs are always finite")
 }
 
 /// Pure chooser for the results panel's 3D slot: the shaded path runs IFF
@@ -657,6 +698,25 @@ pub(crate) fn camera_uniforms(
 /// adapter, over-budget scene — falls back to the wireframe path.
 pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) -> bool {
     shader_available && uniforms.is_some()
+}
+
+/// Whether the shaded camera itself is representable for the given
+/// extent/y_mid/orbit/zoom (review finding 5) — folded into
+/// `spring3d_element`'s shaded/wireframe choice alongside [`use_shaded`]. A
+/// persistently non-finite zoom/orbit, or an extent/y_mid so extreme the
+/// packed camera would overflow `as f32` on narrowing, must fall back to
+/// the wireframe path exactly like an unrepresentable SCENE does — never
+/// reach the shader with a poisoned or garbage camera.
+///
+/// Probed at a fixed representative `aspect` of `1.0`: aspect is always a
+/// positive, finite ratio the widget derives from its own live `Rectangle`
+/// at draw time (`shader3d::SpringShader::draw`), and — per
+/// [`camera_uniforms`]'s own math — cannot itself flip a finite result to
+/// non-finite or vice versa; only `extent_mm`/`y_mid_mm`/`zoom`/`orbit`'s
+/// own magnitude does that. So this ONE check at view-build time is a valid
+/// gate for every later per-frame aspect `draw` will actually use.
+fn camera_representable(extent_mm: f64, y_mid_mm: f64, orbit: Orbit, zoom: f32) -> bool {
+    camera_uniforms(extent_mm, y_mid_mm, orbit, zoom, 1.0).is_some()
 }
 
 /// The shaded path's clear color: the same panel surface the wireframe
@@ -706,6 +766,13 @@ fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
 /// panel's actual on-screen aspect ratio instead of a nominal one (review
 /// finding 1 — the previous nominal-`chart_aspect` camera distorted coils by
 /// up to ~25% at the shipped default window width).
+///
+/// **Camera representability gates the shaded choice too (review finding
+/// 5).** [`camera_representable`] is checked alongside [`use_shaded`]: a
+/// persistently non-finite zoom/orbit, or an extent/y_mid extreme enough to
+/// overflow the packed camera, falls back to the wireframe path exactly
+/// like an unrepresentable SCENE does — never reaching the shader with a
+/// poisoned or garbage camera.
 pub(crate) fn spring3d_element(
     pal: &'static crate::app::Palette,
     scene: SceneData,
@@ -723,7 +790,9 @@ pub(crate) fn spring3d_element(
         return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
     };
     let uniforms = sdf::scene_uniforms(&sdf_scene);
-    if !use_shaded(shader_available, uniforms.as_ref()) {
+    if !use_shaded(shader_available, uniforms.as_ref())
+        || !camera_representable(extent_mm, y_mid_mm, orbit, zoom)
+    {
         return scene_element(pal, scene, orbit);
     }
     // `use_shaded` just confirmed `uniforms.is_some()`; unwrap rather than a
@@ -989,6 +1058,33 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Review finding 5: `spring3d_element`'s camera-representability gate
+    // (folded alongside `use_shaded`) — a non-finite camera falls back to
+    // the wireframe path exactly like an unrepresentable scene does.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn camera_representable_is_false_for_non_finite_zoom_or_orbit_true_otherwise() {
+        assert!(camera_representable(80.0, 40.0, Orbit::default(), 1.0));
+        assert!(!camera_representable(
+            80.0,
+            40.0,
+            Orbit::default(),
+            f32::NAN
+        ));
+        let nan_orbit = Orbit {
+            yaw: f32::NAN,
+            pitch: 0.0,
+        };
+        assert!(!camera_representable(80.0, 40.0, nan_orbit, 1.0));
+    }
+
+    #[test]
+    fn camera_representable_is_false_for_an_extent_that_overflows_f32_on_packing() {
+        assert!(!camera_representable(1e300, 5e299, Orbit::default(), 1.0));
+    }
+
+    // ------------------------------------------------------------------
     // Review F1 fix: gamma — the shaded background must be LINEAR, not raw
     // sRGB, since the shader writes to an sRGB-format compositor target
     // (hardware re-encodes linear -> sRGB on store).
@@ -1118,7 +1214,8 @@ mod tests {
             },
             1.0,
             1.5,
-        );
+        )
+        .expect("finite, sane inputs always produce a camera");
         let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
         let inv_view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[16 + i]));
         let product = mat4_mul(&view_proj, &inv_view_proj);
@@ -1155,7 +1252,8 @@ mod tests {
         for y_mid in [extent / 2.0, 20.0] {
             let center = [0.0, y_mid, 0.0];
             for aspect in [1.777_f32, 0.5625_f32] {
-                let out = camera_uniforms(extent, y_mid, orbit, 1.0, aspect);
+                let out = camera_uniforms(extent, y_mid, orbit, 1.0, aspect)
+                    .expect("finite, sane inputs always produce a camera");
                 let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
                 for axis in 0..3 {
                     for sign in [-1.0, 1.0] {
@@ -1186,16 +1284,64 @@ mod tests {
 
     #[test]
     fn camera_uniforms_non_finite_extent_y_mid_and_aspect_do_not_produce_nan() {
-        let out = camera_uniforms(f64::NAN, f64::NAN, Orbit::default(), 1.0, f32::INFINITY);
+        // These fall back to sane internal defaults (extent/aspect -> 1.0,
+        // y_mid -> extent/2) and so still produce a `Some`, finite camera.
+        let out = camera_uniforms(f64::NAN, f64::NAN, Orbit::default(), 1.0, f32::INFINITY)
+            .expect("non-finite extent/y_mid/aspect fall back to sane defaults");
         assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
-        let out_neg = camera_uniforms(-5.0, f64::NAN, Orbit::default(), 1.0, -1.0);
+        let out_neg = camera_uniforms(-5.0, f64::NAN, Orbit::default(), 1.0, -1.0)
+            .expect("negative extent/aspect fall back to sane defaults");
         assert!(out_neg.iter().all(|v| v.is_finite()), "{out_neg:?}");
         // A non-finite y_mid alone (finite, sane extent/aspect) must also
         // fall back rather than poison the target with NaN.
-        let out_bad_y_mid = camera_uniforms(80.0, f64::INFINITY, Orbit::default(), 1.0, 1.5);
+        let out_bad_y_mid = camera_uniforms(80.0, f64::INFINITY, Orbit::default(), 1.0, 1.5)
+            .expect("non-finite y_mid alone falls back to extent/2");
         assert!(
             out_bad_y_mid.iter().all(|v| v.is_finite()),
             "{out_bad_y_mid:?}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Task/review finding 5: camera_uniforms returns None (rather than a
+    // poisoned/overflowed camera) for non-finite zoom/orbit, or when the
+    // packed output itself would overflow — the same subset-guard-bypass
+    // class scene_uniforms's finiteness sweep closes on the geometry side.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn camera_uniforms_is_none_for_non_finite_zoom_or_orbit() {
+        // `f32::clamp` on a NaN `self` returns the NaN unchanged (neither
+        // comparison against min/max is true) — so `zoom.clamp(..)` alone
+        // does NOT sanitize a NaN zoom; camera_uniforms needs its own
+        // explicit is_finite guard ahead of the clamp.
+        assert!(camera_uniforms(80.0, 40.0, Orbit::default(), f32::NAN, 1.5).is_none());
+        assert!(camera_uniforms(80.0, 40.0, Orbit::default(), f32::INFINITY, 1.5).is_none());
+        let nan_yaw = Orbit {
+            yaw: f32::NAN,
+            pitch: 0.2,
+        };
+        assert!(camera_uniforms(80.0, 40.0, nan_yaw, 1.0, 1.5).is_none());
+        let nan_pitch = Orbit {
+            yaw: 0.2,
+            pitch: f32::NAN,
+        };
+        assert!(camera_uniforms(80.0, 40.0, nan_pitch, 1.0, 1.5).is_none());
+    }
+
+    #[test]
+    fn camera_uniforms_is_none_when_a_huge_finite_extent_overflows_f32_on_packing() {
+        // Review finding 5's "camera would-be-NaN case exercised via the
+        // pure fn": extent_mm=1e300 is a FINITE f64 (so it is NOT replaced
+        // by the non-finite-extent fallback), but the eye/view/projection
+        // math scales with it, and casting the resulting huge-but-finite
+        // f64 matrix entries `as f32` overflows to `inf` — the output sweep
+        // must catch this even though every individual INPUT was finite.
+        for extent in [1e40, 1e155, 1e300] {
+            assert!(
+                camera_uniforms(extent, extent / 2.0, Orbit::default(), 1.0, 1.5).is_none(),
+                "extent={extent} must fail the output finiteness sweep"
+            );
+        }
     }
 }
