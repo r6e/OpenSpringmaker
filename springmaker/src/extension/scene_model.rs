@@ -20,7 +20,7 @@ use std::f64::consts::{PI, TAU};
 /// in the vertical plane at the attach azimuth, centered at
 /// `(coil_r, attach_h + sign·hook_r)` — one hook radius BEYOND the attach
 /// along the axis — so the whole 1.5π sweep stays on the outward side of
-/// the attach: radial `coil_r − hook_r·sin θ`, axial
+/// the attach: radial `coil_r + hook_r·sin θ`, axial
 /// `attach_h + sign·hook_r·(1 − cos θ)`. Its centerline extreme sits
 /// `2·hook_r` beyond the attach, i.e. the loop's INNER surface reaches
 /// `2·hook_r − d` past the body face — exactly the per-end hook allowance
@@ -32,6 +32,20 @@ use std::f64::consts::{PI, TAU};
 /// free-length convention. The transition at the attach keeps the
 /// documented sharp-corner limitation (the loop plane is vertical, the
 /// coil tangent azimuthal — identical in both geometry paths).
+///
+/// **Curl handedness (user finding V6 fix).** The `+ hook_r·sin θ` sign is
+/// the loop's in-plane curl direction, per Shigley Fig. 10-6(a)/10-7(b):
+/// from the attach the wire departs radially OUTWARD (the max-bending
+/// point A sits on the outermost side at mid-loop height), sweeps up over
+/// the top, and the free tip ends on the INNER side curling back toward
+/// the body — the open quarter of the sweep faces the body on the inner
+/// side ("Gap" in Fig. 10-7b). The V4 fix shipped the mirror image
+/// (`− hook_r·sin θ`: inward departure, outward tip) — positionally
+/// correct but curling the wrong way, invisible to the cross-path
+/// agreement test because BOTH paths carried the same mirror. Kept in
+/// lockstep with `viz::sdf::hook_torus_part` (its `y_rotation` bakes the
+/// same handedness); the handedness pins in both test modules are the
+/// asymmetric-sample guards.
 fn hook_arc(
     attach_angle: f64,
     attach_h: f64,
@@ -43,7 +57,7 @@ fn hook_arc(
     (0..=SAMPLES)
         .map(|i| {
             let theta = i as f64 / SAMPLES as f64 * (1.5 * PI);
-            let radial = coil_r - hook_r * theta.sin();
+            let radial = coil_r + hook_r * theta.sin();
             (
                 radial * attach_angle.cos(),
                 attach_h + sign * hook_r * (1.0 - theta.cos()),
@@ -204,6 +218,35 @@ mod tests {
             .fold(f64::NEG_INFINITY, f64::max);
         assert_relative_eq!(bottom_min, -2.0 * r1, max_relative = 1e-9);
         assert_relative_eq!(top_max, body_top + 2.0 * r1, max_relative = 1e-9);
+    }
+
+    /// Handedness pin (user finding V6: hooks curled 180° mirrored; the
+    /// centerline-agreement test only enforces cross-path CONSISTENCY, so a
+    /// consistent mirror survived it). Shigley Fig. 10-6(a)/10-7(b): from
+    /// the attach the loop departs radially OUTWARD, sweeps up over the
+    /// top, and its free tip ends on the INNER side curling back toward
+    /// the body (gap between tip and body). The mirrored curl departs
+    /// inward and tips outward — asymmetric samples fail under it.
+    #[test]
+    fn hook_arcs_depart_radially_outward_and_tip_radially_inward() {
+        let d = design();
+        let s = extension_scene(&d);
+        let coil_r = d.mean_dia.millimeters() / 2.0;
+        for hook in [&s.polylines[1], &s.polylines[2]] {
+            let radial = |p: &(f64, f64, f64)| p.0.hypot(p.2);
+            // Just past the attach (sample 1 of 24 — θ ≈ 0.2 rad): outward.
+            let early = radial(&hook.points[1]);
+            assert!(
+                early > coil_r + 1e-9,
+                "hook departs the attach radially inward (mirrored curl): {early} <= {coil_r}"
+            );
+            // The free tip (θ = 1.5π): on the inner side, toward the axis.
+            let tip = radial(hook.points.last().unwrap());
+            assert!(
+                tip < coil_r - 1e-9,
+                "hook tip points radially outward (mirrored curl): {tip} >= {coil_r}"
+            );
+        }
     }
 
     /// Wave-2 V5 (user directive: render at the specified length): the

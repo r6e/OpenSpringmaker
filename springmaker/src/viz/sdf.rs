@@ -1096,13 +1096,25 @@ pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
 /// `2·hook_r − d` past the body face, the Shigley Fig. 10-7b / Eq. 10-39
 /// hook allowance (see `hook_arc`'s doc for the full derivation; the
 /// pre-fix center sat AT the attach height with radial `coil_r − hook_r`,
-/// which curled the loop's tail `hook_r` INTO the coil bore). With this
-/// center the UNCHANGED `(y_rotation = −attach_angle, tilt = −sign·π/2)`
-/// frame maps `hook_arc`'s parameter θ onto local torus azimuth
-/// `1.5π − θ`: the sweep window `[0, 1.5π]` covers exactly the wireframe
-/// arc, with the ATTACH at the window's END (azimuth 1.5π) and the free
-/// tail at its start (azimuth 0) — same point set, opposite traversal
-/// direction, which `sd_torus_arc` (a set distance) cannot observe.
+/// which curled the loop's tail `hook_r` INTO the coil bore).
+///
+/// **Curl handedness (user finding V6 fix).** `hook_arc`'s corrected
+/// in-plane curl (`radial = coil_r + hook_r·sin θ` — outward departure,
+/// inner-side tip, per Shigley Fig. 10-6(a)/10-7(b)) is the V4 arc's
+/// mirror across the vertical line `radial = coil_r` in the loop plane —
+/// equivalently a π rotation of the loop circle about the vertical axis
+/// through the torus CENTER (which sits at radial `coil_r`). Since
+/// `y_rotation` rotates the tilted ring about exactly that axis, the
+/// mirror is `y_rotation = −attach_angle − π` with everything else
+/// unchanged: the mirrored wireframe point at parameter θ maps to
+/// torus-local `(−hook_r·sin θ, 0, −hook_r·cos θ)` — the identical local
+/// occupancy the V4 analysis proved, so the sweep window `[0, 1.5π]`
+/// covers exactly the (new) wireframe arc, ATTACH at the window's END
+/// (azimuth 1.5π), free tail at its start (verified algebraically for
+/// both signs and any attach angle; `sd_torus_arc` is a set distance and
+/// cannot observe traversal direction). The handedness pins in both test
+/// modules are the asymmetric-sample guards keeping the two paths from
+/// re-mirroring together.
 fn hook_torus_part(
     attach_angle: f64,
     attach_h: f64,
@@ -1119,7 +1131,7 @@ fn hook_torus_part(
                 attach_h + sign * hook_r,
                 coil_r * attach_angle.sin(),
             ],
-            y_rotation: -attach_angle,
+            y_rotation: -attach_angle - PI,
             tilt: -sign * FRAC_PI_2,
             major_r: hook_r,
             minor_r: wire_r,
@@ -3228,9 +3240,9 @@ mod tests {
                 (0..6).map(|i| -0.5 * PI + margin + (0.5 * PI - 2.0 * margin) * f64::from(i) / 5.0);
             for theta in beyond_tail.chain(before_attach) {
                 // The hanging-loop centerline parametrization the builders
-                // share (see `hook_torus_part`'s doc): radial
-                // `coil_r − hook_r·sinθ`, axial `attach_h + sign·hook_r·(1 − cosθ)`.
-                let radial = r - hook_r * theta.sin();
+                // share (see `hook_torus_part`'s doc; V6 curl): radial
+                // `coil_r + hook_r·sinθ`, axial `attach_h + sign·hook_r·(1 − cosθ)`.
+                let radial = r + hook_r * theta.sin();
                 let p = [
                     radial * attach_angle.cos(),
                     attach_h + sign * hook_r * (1.0 - theta.cos()),
@@ -3242,6 +3254,60 @@ mod tests {
                     "hook part {part_index} contains continuation θ={theta}: d={dist}"
                 );
             }
+        }
+    }
+
+    /// Handedness pin (user finding V6 — the SDF twin of the wireframe's
+    /// `hook_arcs_depart_radially_outward_and_tip_radially_inward`; the
+    /// centerline-agreement test only enforces cross-path consistency, so
+    /// a consistent mirror survived it). Shigley Fig. 10-6(a)/10-7(b): the
+    /// loop's occupied 1.5π sweep runs attach → radially-outward side →
+    /// top → inner-side tip; the OPEN quarter sits between the inner-side
+    /// tip and the attach. The mirrored curl occupies exactly the
+    /// complementary quadrant, so one on-circle sample per quadrant
+    /// discriminates: the outer-lower quadrant midpoint must be ON the
+    /// wire centerline, the inner-lower quadrant midpoint (0.765·hook_r
+    /// from both the tip and attach cap centers — clear of their spheres)
+    /// must be clearly outside.
+    #[test]
+    fn extension_hook_curl_matches_shigley_handedness() {
+        let d = extension_fixture();
+        let scene = extension_sdf(&d);
+        let r = d.mean_dia.millimeters() / 2.0;
+        let r1 = d.hooks.r1.millimeters();
+        let wire_r = d.wire_dia.millimeters() / 2.0;
+        let body_h = match &scene.parts[0].shape {
+            SdfPart::Helix(h) => h.pitch_mm * h.turns,
+            other => panic!("expected the body helix first, got {other:?}"),
+        };
+        let end_angle = d.active_coils * TAU;
+        let half_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+        for (part_index, attach_angle, attach_h, sign) in
+            [(1usize, 0.0, 0.0, -1.0), (2usize, end_angle, body_h, 1.0)]
+        {
+            // Outer-lower quadrant midpoint of the loop circle (θ = π/4 on
+            // the corrected parametrization): occupied by the correct curl.
+            let on_radial = r + half_sqrt2 * r1;
+            let on = [
+                on_radial * attach_angle.cos(),
+                attach_h + sign * r1 * (1.0 - half_sqrt2),
+                on_radial * attach_angle.sin(),
+            ];
+            assert!(
+                part_distance(&scene.parts[part_index].shape, on) < -0.5 * wire_r,
+                "hook {part_index}: outer-lower quadrant is EMPTY — curl is mirrored"
+            );
+            // Inner-lower quadrant midpoint: the correct curl's open gap.
+            let off_radial = r - half_sqrt2 * r1;
+            let off = [
+                off_radial * attach_angle.cos(),
+                attach_h + sign * r1 * (1.0 - half_sqrt2),
+                off_radial * attach_angle.sin(),
+            ];
+            assert!(
+                part_distance(&scene.parts[part_index].shape, off) > 0.5 * wire_r,
+                "hook {part_index}: inner-lower quadrant is OCCUPIED — curl is mirrored"
+            );
         }
     }
 
