@@ -19,6 +19,16 @@ pub enum SpringError {
         min_m: f64,
         max_m: f64,
     },
+    /// Free length below the family's physical close-wound minimum — the
+    /// solid length for compression/conical/rectangular, the close-wound
+    /// body plus both hook allowances for extension. Carries both values in
+    /// SI meters (like [`Self::DiameterOutOfRange`]) so the GUI can
+    /// re-render them in the active unit system instead of baking a unit
+    /// into the message.
+    FreeLengthBelowMinimum {
+        free_length_m: f64,
+        min_free_length_m: f64,
+    },
     /// Fatigue requested for a material with no cited endurance data.
     NoFatigueData(String),
     /// Named material is not in the loaded set.
@@ -53,6 +63,14 @@ impl fmt::Display for SpringError {
             } => write!(
                 f,
                 "wire diameter {diameter_m} m outside valid range [{min_m}, {max_m}] m"
+            ),
+            Self::FreeLengthBelowMinimum {
+                free_length_m,
+                min_free_length_m,
+            } => write!(
+                f,
+                "free length {free_length_m} m is below the close-wound minimum \
+                 {min_free_length_m} m"
             ),
             Self::NoFatigueData(m) => write!(f, "no fatigue data available for {m}"),
             Self::MaterialNotFound(m) => write!(f, "material not found: {m}"),
@@ -92,6 +110,20 @@ mod tests {
     fn is_std_error() {
         fn assert_error<E: std::error::Error>(_: &E) {}
         assert_error(&SpringError::InvalidBracket);
+    }
+
+    /// Distinct field values pin the Display ORDER (free first, minimum
+    /// second) — a swapped-field mutant renders the message inside out.
+    #[test]
+    fn free_length_below_minimum_display_names_both_values_in_order() {
+        let e = SpringError::FreeLengthBelowMinimum {
+            free_length_m: 0.0568,
+            min_free_length_m: 0.0572,
+        };
+        assert_eq!(
+            e.to_string(),
+            "free length 0.0568 m is below the close-wound minimum 0.0572 m"
+        );
     }
 
     #[test]

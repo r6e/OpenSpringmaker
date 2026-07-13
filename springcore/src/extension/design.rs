@@ -235,7 +235,9 @@ pub fn solve_forward(
     // compression solver's free < solid reject: don't let an impossible
     // free length flow silently into load-point lengths and future exports.
     // Sits after the hook-radius guards (the minimum is meaningless with an
-    // invalid r1) and names both values (wave-2 V5 user decision).
+    // invalid r1) and carries both values structured in SI meters (wave-2
+    // V5 user decision, R2 stateful-UI F1: the GUI relocalizes them per the
+    // active unit system instead of receiving baked-in millimeters).
     let min_free = crate::extension::mechanics::min_free_length(
         wire_dia,
         active,
@@ -244,12 +246,10 @@ pub fn solve_forward(
         material.youngs_modulus,
     )?;
     if free_length.meters() < min_free.meters() {
-        return Err(SpringError::InconsistentInputs(format!(
-            "free length {:.3} mm is below the close-wound minimum {:.3} mm \
-             (body close-wound + hook allowances)",
-            free_length.millimeters(),
-            min_free.millimeters()
-        )));
+        return Err(SpringError::FreeLengthBelowMinimum {
+            free_length_m: free_length.meters(),
+            min_free_length_m: min_free.meters(),
+        });
     }
 
     let index = spring_index(mean_dia, wire_dia);
@@ -648,7 +648,9 @@ mod tests {
     /// Below the close-wound minimum: the coils physically cannot be wound
     /// shorter, and a silently-accepted bogus free length would flow into
     /// every future export. Mirrors compression's free < solid reject.
-    /// The message must name BOTH values (user decision, wave-2 V5).
+    /// The error must carry BOTH values (user decision, wave-2 V5),
+    /// structured in SI meters (R2 stateful-UI F1) — exact field pins kill
+    /// swapped/dropped-field mutants.
     #[test]
     fn rejects_free_length_below_close_wound_minimum() {
         let m = crate::test_support::music_wire();
@@ -664,11 +666,13 @@ mod tests {
             crate::CurvatureCorrection::Bergstrasser,
         );
         match r {
-            Err(crate::SpringError::InconsistentInputs(msg)) => {
-                assert!(
-                    msg.contains("56.800") && msg.contains("57.213"),
-                    "message must name both the given and minimum free lengths, got: {msg}"
-                );
+            Err(crate::SpringError::FreeLengthBelowMinimum {
+                free_length_m,
+                min_free_length_m,
+            }) => {
+                assert_relative_eq!(free_length_m, 0.0568, max_relative = 1e-12);
+                // Hand literal (see `min_free_length_subtracts_hook_compliance_turns`).
+                assert_relative_eq!(min_free_length_m, 0.0572133726647001, max_relative = 1e-12);
             }
             other => panic!("free length below close-wound minimum must be rejected: {other:?}"),
         }
