@@ -131,9 +131,11 @@ fn rotate_x(v: vec3<f32>, angle: f32) -> vec3<f32> {
 // every review-hardened fix documented on sd_helix in sdf.rs: the k-index
 // clamp BEFORE forming phi (not a raw-phi clamp), the per-winding
 // Jordan-chord contraction (not a constant cos-alpha rescale), the
-// candidate_window_vertex anchor, the sub-turn terminal caps, the virtual-
-// boundary-winding branch, and phase_rad threaded through both the phase-
-// frame theta AND the terminal caps.
+// candidate_window_vertex anchor, the sub-turn terminal caps, the
+// max-of-two-bounds boundary windings (wave-2 V3 — the frozen-azimuth
+// form alone produced phantom seam bands; the clamped Jordan quadratic
+// now floors it), and phase_rad threaded through both the phase-frame
+// theta AND the terminal caps.
 // -----------------------------------------------------------------------
 
 struct HelixParams {
@@ -197,28 +199,32 @@ fn sd_helix(p: vec3<f32>, h: HelixParams) -> f32 {
         }
         let a = radial - (h.radius_mm + g * phi_c);
         let b = axial - s * phi_c;
-        var d: f32;
-        if (u_lo <= 0.0 && 0.0 <= u_hi) {
-            // Same-azimuth winding: coupled Jordan-chord quadratic.
-            let denom = planar_sq + chord_sq;
-            var u: f32 = 0.0;
-            if (denom > 0.0) {
-                u = clamp((a * g + b * s) / denom, u_lo, u_hi);
-            }
-            d = winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile_kind, h.dim0, h.dim1);
-        } else {
-            // Virtual boundary winding: exact azimuth chord at the real
-            // sub-range endpoint nearest zero + constrained planar minimum.
+        // Coupled Jordan-chord quadratic, clamped to the winding's real
+        // sub-range — valid for interior and boundary windings alike (the
+        // sub-range always sits inside [-PI, PI], where Jordan holds).
+        let denom = planar_sq + chord_sq;
+        var u: f32 = clamp(0.0, u_lo, u_hi);
+        if (denom > 0.0) {
+            u = clamp((a * g + b * s) / denom, u_lo, u_hi);
+        }
+        var d = winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile_kind, h.dim0, h.dim1);
+        if (u_lo > 0.0 || u_hi < 0.0) {
+            // Boundary winding (u = 0 outside the real sub-range): ALSO
+            // evaluate the frozen-azimuth planar form — exact at the
+            // terminal cross-sections where the Jordan bound is loose —
+            // and keep the TIGHTER of the two lower bounds (wave-2 V3
+            // fix; the frozen form alone reported phantom material at
+            // segment seams — see sd_helix's doc in sdf.rs).
             var u_nz: f32 = u_hi;
             if (u_lo > 0.0) {
                 u_nz = u_lo;
             }
             let azimuth_sq = 2.0 * radial * r_min * (1.0 - cos(u_nz));
-            var u: f32 = u_nz;
+            var u_planar: f32 = u_nz;
             if (planar_sq > 0.0) {
-                u = clamp((a * g + b * s) / planar_sq, u_lo, u_hi);
+                u_planar = clamp((a * g + b * s) / planar_sq, u_lo, u_hi);
             }
-            d = winding_distance(a - g * u, b - s * u, azimuth_sq, h.profile_kind, h.dim0, h.dim1);
+            d = max(d, winding_distance(a - g * u_planar, b - s * u_planar, azimuth_sq, h.profile_kind, h.dim0, h.dim1));
         }
         best = min(best, d);
     }

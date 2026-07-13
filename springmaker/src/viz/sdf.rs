@@ -395,12 +395,30 @@ pub(crate) struct HelixParams {
 ///   profiles) therefore never exceeds the true centerline distance minus
 ///   the wire radius — the exact tube distance — and the rendered solid is
 ///   a subset of the tube, so the bound is conservative for it a fortiori.
-/// * For a virtual boundary winding the real sub-range excludes `u = 0`,
-///   and the azimuth term is instead bounded by its EXACT value at the
-///   sub-range endpoint nearest zero (`2*radial*R_min*(1 - cos u_nz)`,
-///   monotone in `|u|` on `[-PI, PI]`), added to the constrained planar
-///   minimum. This keeps end-region queries tight (exact at the terminal
-///   cross-sections) where the Jordan bound alone is loose mid-winding.
+/// * A virtual boundary winding (real sub-range excludes `u = 0`) keeps
+///   the TIGHTER of TWO independent lower bounds (wave-2 V3 fix):
+///   (1) the same clamped Jordan quadratic — every sub-range is a subset
+///   of `[-PI, PI]` by construction, so the Jordan bound's validity is
+///   untouched by where the clamp interval sits — and (2) the
+///   frozen-azimuth planar form: the azimuth term held at its EXACT value
+///   at the sub-range endpoint nearest zero (`2*radial*R_min*(1 - cos
+///   u_nz)`, a lower bound since the true term is monotone in `|u|` on
+///   `[-PI, PI]` and `|u| >= |u_nz|` across the sub-range), added to the
+///   planar minimum constrained to the sub-range. Each is a valid lower
+///   bound of the winding's true distance, so their `max` is too — and
+///   each is tight exactly where the other is loose: the frozen form is
+///   exact at the terminal cross-sections where Jordan under-shoots by up
+///   to ~1/sqrt(2) (`sub_turn_end_reports_exterior_distance_not_phantom`
+///   pins that exactness), while the Jordan form stays sign-correct at
+///   seam azimuths where the frozen form ALONE collapsed: its planar
+///   minimizer could travel the whole sub-range at near-zero frozen
+///   azimuth cost, cancelling the axial residual and reporting NEGATIVE
+///   values up to a full coil gap outside the wire — an `s*PI`-tall
+///   vertical band of phantom material at every segment's seam azimuth,
+///   user-visible as the wire "kinking 90° up/down" at the ground ends
+///   (`boundary_winding_reports_no_phantom_just_behind_the_helix_start`
+///   pins the traced worst case, `compression_seam_band_contains_no_
+///   phantom_material` the scene-level band).
 ///
 /// **Terminal caps (finding-3 fix).** For `turns < 1` a query azimuth can
 /// lie outside the swept arc for EVERY winding; the old raw-`phi` clamp
@@ -494,27 +512,37 @@ fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
         }
         let a = radial - (h.radius_mm + g * phi_c);
         let b = axial - s * phi_c;
-        let d = if u_lo <= 0.0 && 0.0 <= u_hi {
-            // Same-azimuth winding: coupled Jordan-chord quadratic.
-            let denom = planar_sq + chord_sq;
-            let u = if denom > 0.0 {
-                ((a * g + b * s) / denom).clamp(u_lo, u_hi)
-            } else {
-                0.0
-            };
-            winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile)
+        // Coupled Jordan-chord quadratic, clamped to the winding's real
+        // sub-range — valid for interior and boundary windings alike (the
+        // sub-range always sits inside [-PI, PI], where Jordan holds).
+        let denom = planar_sq + chord_sq;
+        let u = if denom > 0.0 {
+            ((a * g + b * s) / denom).clamp(u_lo, u_hi)
         } else {
-            // Virtual boundary winding: exact azimuth chord at the real
-            // sub-range endpoint nearest zero + constrained planar minimum.
+            0.0f64.clamp(u_lo, u_hi)
+        };
+        let mut d = winding_distance(a - g * u, b - s * u, chord_sq * u * u, h.profile);
+        if u_lo > 0.0 || u_hi < 0.0 {
+            // Boundary winding (u = 0 outside the real sub-range): ALSO
+            // evaluate the frozen-azimuth planar form — exact at the
+            // terminal cross-sections where the Jordan bound is loose —
+            // and keep the TIGHTER of the two lower bounds (wave-2 V3 fix;
+            // the frozen form alone reported phantom material at segment
+            // seams — see the per-winding bound section of the doc).
             let u_nz = if u_lo > 0.0 { u_lo } else { u_hi };
             let azimuth_sq = 2.0 * radial * r_min * (1.0 - u_nz.cos());
-            let u = if planar_sq > 0.0 {
+            let u_planar = if planar_sq > 0.0 {
                 ((a * g + b * s) / planar_sq).clamp(u_lo, u_hi)
             } else {
                 u_nz
             };
-            winding_distance(a - g * u, b - s * u, azimuth_sq, h.profile)
-        };
+            d = d.max(winding_distance(
+                a - g * u_planar,
+                b - s * u_planar,
+                azimuth_sq,
+                h.profile,
+            ));
+        }
         best = best.min(d);
     }
 
@@ -3668,5 +3696,106 @@ mod tests {
             SdfPart::Helix(h) => assert!(h.taper_small_r.is_some_and(|v| v.is_nan())),
             _ => panic!("expected a Helix part"),
         }
+    }
+
+    /// Regression (wave-2 V3, user-reported "wire kinks ~90° up/down at the
+    /// ground ends"): a query azimuthally just BEHIND a helix's start
+    /// (`theta ≈ TAU − ε` after phase mapping) lands in a boundary winding
+    /// whose real sub-range excludes `u = 0`. The pre-fix formulation froze
+    /// the azimuth penalty at the sub-range endpoint nearest zero
+    /// (`azimuth_sq(u_nz)`, tiny for small `ε`) while letting the PLANAR
+    /// minimizer travel the whole sub-range up to `π` — so the axial
+    /// residual vanished at near-zero azimuth cost, and the candidate
+    /// reported `≈ sqrt(a²) − wire_r < 0` at points a full coil-gap OUTSIDE
+    /// the wire. Visually: a vertical band of phantom material at every
+    /// segment's seam azimuth (`s·π` tall), reading as the wire tip
+    /// kinking 90° upward at a ground end. This point reproduces the traced
+    /// worst case (true distance ≈ 1.75 mm; the pre-fix value was −0.79).
+    #[test]
+    fn boundary_winding_reports_no_phantom_just_behind_the_helix_start() {
+        let h = HelixParams {
+            radius_mm: 10.0,
+            taper_small_r: None,
+            pitch_mm: 5.6,
+            turns: 10.0,
+            profile: Profile::Circle { radius_mm: 1.0 },
+            axial_offset_mm: 0.0,
+            phase_rad: 0.0,
+        };
+        // Azimuth −0.02 rad (just behind the start seam), 2.82 mm up: the
+        // nearest real wire (the start cross-section at y=0..1 and the k=0
+        // winding at y≈5.6) is ≈1.75 mm away from this point's surface.
+        let p = [9.96, 2.82, -0.2];
+        let d = sd_helix(p, &h);
+        assert!(
+            d > 0.5,
+            "phantom material just behind the helix start seam: d={d}"
+        );
+        // Still conservative: never over-estimates the true distance.
+        assert!(d < 1.76, "over-estimate at the seam: d={d}");
+    }
+
+    /// Scene-level V3 regression: dense scan of the seam-azimuth band of the
+    /// compression fixture (all three body segments share one seam azimuth
+    /// by phase continuity, so this band concentrates every boundary
+    /// winding). NO scanned point may report negative SDF while sitting
+    /// measurably outside the true wire tube around the continuous
+    /// wireframe centerline. Pre-fix this failed at ~1600 of the scanned
+    /// points (worst: sd −0.79 at true distance +1.75).
+    #[test]
+    fn compression_seam_band_contains_no_phantom_material() {
+        let d = compression_fixture();
+        let scene = compression_sdf(&d);
+        let active = d.active_coils;
+        let total = d.total_coils;
+        let pitch = d.pitch.millimeters();
+        let wire = d.wire_dia.millimeters();
+        let r = d.mean_dia.millimeters() / 2.0;
+        let wire_r = wire / 2.0;
+        let height = crate::viz::coil_height_fn(active, total, pitch, wire);
+        let samples = (total * 512.0) as usize;
+        let centerline: Vec<Vec3> = (0..=samples)
+            .map(|i| {
+                let t = i as f64 / samples as f64;
+                let ang = t * total * TAU;
+                [r * ang.cos(), height(t), r * ang.sin()]
+            })
+            .collect();
+        let mut phantoms = Vec::new();
+        for xi in 0..30 {
+            for yi in 0..40 {
+                for zi in 0..30 {
+                    let p = [
+                        6.0 + xi as f64 * 0.24,
+                        1.0 + yi as f64 * 0.15,
+                        -6.0 + zi as f64 * 0.4,
+                    ];
+                    let sd = sdf_eval(&scene, p);
+                    if sd < 0.0 {
+                        let true_dist = centerline
+                            .iter()
+                            .map(|c| vlen(vsub(p, *c)))
+                            .fold(f64::INFINITY, f64::min)
+                            - wire_r;
+                        // 5% slack over the wire radius: the centerline is
+                        // sampled discretely and the SDF legitimately
+                        // fattens the level set slightly (documented
+                        // under-estimation), so only a clearly-exterior
+                        // negative counts as phantom.
+                        if true_dist > 0.05 * wire_r {
+                            phantoms.push((p, sd, true_dist));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            phantoms.is_empty(),
+            "{} phantom points in the seam band; worst: {:?}",
+            phantoms.len(),
+            phantoms
+                .iter()
+                .max_by(|a, b| (a.2 - a.1).total_cmp(&(b.2 - b.1)))
+        );
     }
 }
