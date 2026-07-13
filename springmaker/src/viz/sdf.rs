@@ -1255,10 +1255,16 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
     if coils_hostile(turns, turns) || geometry_hostile(&[r, wire]) {
         return SdfScene::default();
     }
-    // Derived pitch (`wire + max(0, stretch)/active`) needs the SAME
-    // `pitch <= 0.0` gate as `coil_geom`/`conical_sdf` (review finding 6):
-    // a finite `wire <= 0.0` passes `geometry_hostile` yet derives a
-    // zero/negative pitch, `sd_helix`'s documented precondition violation.
+    // Derived pitch (`wire + max(0, stretch)/active`) carries the SAME
+    // `pitch <= 0.0` gate as `coil_geom`/`conical_sdf` (review finding 6).
+    // For `free_length > close_wound` the pitch is STRICTLY POSITIVE even
+    // at `wire = 0` (it reduces to `(free − close_wound)/active > 0`), so
+    // that case slips the gate benignly (zero-radius profile, verified
+    // conservative — R3 input-domain F-R3-2/R-1). The gate defends the
+    // degenerate `wire = 0` + `free ≤ close_wound` sub-case, where the
+    // pitch collapses to 0 (`sd_helix`'s documented precondition
+    // violation), plus any finite non-positive derived pitch as defense
+    // in depth.
     let pitch = extension_body_pitch_mm(d);
     if geometry_hostile(&[pitch]) || pitch <= 0.0 {
         return SdfScene::default();
