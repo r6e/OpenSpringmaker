@@ -14,6 +14,54 @@
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
+/// Maximum number of [`SdfPart`]s one packed scene may carry — the shared
+/// budget [`scene_uniforms`]'s buffer sizes itself around (Task 5
+/// substitutes this literal into the WGSL source, so both sides read the
+/// identical bound from this one constant).
+///
+/// **Why 48, not the original design's 24.** Every helical body
+/// reconstructs to THREE `Helix` segments (dead/active/dead — see
+/// [`helical_body_parts`]'s doc), discovered after the original budget was
+/// set assuming one segment per body. The single-spring families top out
+/// low regardless (compression/conical: 3 parts + 2 cuts; extension/
+/// torsion: 3 body segments + 2 hook/leg parts = 5) — the assembly family
+/// is the only one that scales with a user-controlled count, and NO cap on
+/// the number of assembly members exists anywhere in the app
+/// (`Message::AsmMemberAdd` in `app.rs` pushes unconditionally; `AsmFormState`
+/// and `AssemblyInputs.members` are plain `Vec`s with no length check
+/// anywhere in `form.rs`/`solve_assembly`). A finite `MAX_PARTS` is
+/// therefore a genuine, unavoidable representability boundary, not a value
+/// that can be sized to "fit the real member cap" — there isn't one — the
+/// same shape as `MAX_RENDER_TURNS` capping the wireframe path today. 48 =
+/// 16 members × 3 segments each, comfortably above a naive 8-member
+/// assumption; the buffer this sizes
+/// (`4 + MAX_PARTS·FLOATS_PER_PART + MAX_CUTS·FLOATS_PER_CUT` floats, here
+/// 804, ~3.2KB) is cheap enough to be generous with. Past it,
+/// [`scene_uniforms`] returns `None` and the caller falls back to the
+/// wireframe placeholder — never truncation.
+pub(crate) const MAX_PARTS: usize = 48;
+/// Maximum number of [`GroundPlane`] cuts one packed scene may carry. Every
+/// current family emits at most 2 (one ground-flattened end each side);
+/// double that for headroom.
+pub(crate) const MAX_CUTS: usize = 4;
+/// Sphere-march iteration cap — Task 5's WGSL fragment shader loop bound.
+#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
+pub(crate) const MARCH_MAX_STEPS: u32 = 160;
+/// Sphere-march step-size safety factor (steps `SAFETY × |sdf|`, not the
+/// full reported distance, guarding against the [`sd_helix`]/[`cut_plane`]
+/// conservative-but-inexact regions overshooting past a thin feature).
+#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
+pub(crate) const MARCH_SAFETY: f32 = 0.8;
+/// Sphere-march surface epsilon, mm-scale.
+#[allow(dead_code)] // consumed by Task 5 (WGSL mirror)
+pub(crate) const MARCH_EPS: f32 = 1e-3;
+/// Fixed per-part float stride in the packed uniform buffer — see
+/// [`scene_uniforms`]'s doc for the exact per-`SdfPart`-kind layout within
+/// one `FLOATS_PER_PART`-wide slot.
+pub(crate) const FLOATS_PER_PART: usize = 16;
+/// Fixed per-cut float stride — see [`scene_uniforms`]'s doc.
+pub(crate) const FLOATS_PER_CUT: usize = 8;
+
 /// A point or vector in millimetres, in whatever local frame the caller
 /// established (world frame for scene composition; a part's own local
 /// frame for primitive evaluation).
@@ -1088,6 +1136,263 @@ pub(crate) fn assembly_sdf(d: &springcore::assembly::AssemblyDesign) -> SdfScene
         parts,
         cuts: Vec::new(),
     }
+}
+
+/// Pack `appearance`'s 5 floats (`base_color[0..3]`, `metallic`,
+/// `roughness`, already `f32`) into `slot[0..5]`.
+fn pack_appearance(slot: &mut [f32], appearance: Appearance) {
+    slot[0] = appearance.base_color[0];
+    slot[1] = appearance.base_color[1];
+    slot[2] = appearance.base_color[2];
+    slot[3] = appearance.metallic;
+    slot[4] = appearance.roughness;
+}
+
+/// Pack one [`ScenePart`] into a `FLOATS_PER_PART`-wide slot — see
+/// [`scene_uniforms`]'s doc for the binding per-kind layout table.
+fn pack_part(slot: &mut [f32], part: &ScenePart) {
+    match &part.shape {
+        SdfPart::Helix(h) => {
+            slot[0] = 0.0;
+            slot[1] = h.radius_mm as f32;
+            // NaN sentinel for `None` — see scene_uniforms's doc.
+            slot[2] = h.taper_small_r.map_or(f32::NAN, |v| v as f32);
+            slot[3] = h.pitch_mm as f32;
+            slot[4] = h.turns as f32;
+            let (profile_kind, dim0, dim1) = match h.profile {
+                Profile::Circle { radius_mm } => (0.0, radius_mm as f32, 0.0),
+                Profile::Rectangle {
+                    half_w_mm,
+                    half_h_mm,
+                } => (1.0, half_w_mm as f32, half_h_mm as f32),
+            };
+            slot[5] = profile_kind;
+            slot[6] = dim0;
+            slot[7] = dim1;
+            slot[8] = h.axial_offset_mm as f32;
+            slot[9] = h.phase_rad as f32;
+            pack_appearance(&mut slot[10..15], part.appearance);
+        }
+        SdfPart::TorusArc {
+            center,
+            y_rotation,
+            tilt,
+            major_r,
+            minor_r,
+            sweep,
+        } => {
+            slot[0] = 1.0;
+            slot[1] = center[0] as f32;
+            slot[2] = center[1] as f32;
+            slot[3] = center[2] as f32;
+            slot[4] = *y_rotation as f32;
+            slot[5] = *tilt as f32;
+            slot[6] = *major_r as f32;
+            slot[7] = *minor_r as f32;
+            slot[8] = *sweep as f32;
+            pack_appearance(&mut slot[9..14], part.appearance);
+        }
+        SdfPart::Capsule { a, b, radius_mm } => {
+            slot[0] = 2.0;
+            slot[1] = a[0] as f32;
+            slot[2] = a[1] as f32;
+            slot[3] = a[2] as f32;
+            slot[4] = b[0] as f32;
+            slot[5] = b[1] as f32;
+            slot[6] = b[2] as f32;
+            slot[7] = *radius_mm as f32;
+            pack_appearance(&mut slot[8..13], part.appearance);
+        }
+    }
+}
+
+/// Pack one [`GroundPlane`] into a `FLOATS_PER_CUT`-wide slot: `[0..3]`
+/// point, `[3..6]` normal, `[6..8]` pad (`0.0`, via the caller's zero-filled
+/// buffer).
+fn pack_cut(slot: &mut [f32], cut: &GroundPlane) {
+    slot[0] = cut.point[0] as f32;
+    slot[1] = cut.point[1] as f32;
+    slot[2] = cut.point[2] as f32;
+    slot[3] = cut.normal[0] as f32;
+    slot[4] = cut.normal[1] as f32;
+    slot[5] = cut.normal[2] as f32;
+}
+
+/// Fixed-stride packing of an [`SdfScene`] into a flat `f32` buffer for the
+/// WGSL uniform (Task 5 substitutes [`MAX_PARTS`]/[`FLOATS_PER_PART`]/
+/// [`MAX_CUTS`]/[`FLOATS_PER_CUT`] into the shader source, so both sides
+/// read the identical layout from these constants — the mirror-drift
+/// discipline). `None` — a representability guard, never truncation — iff
+/// `scene.parts.len() > MAX_PARTS` or `scene.cuts.len() > MAX_CUTS`.
+///
+/// **Buffer shape**, always exactly
+/// `4 + MAX_PARTS·FLOATS_PER_PART + MAX_CUTS·FLOATS_PER_CUT` floats (fixed
+/// regardless of how many parts/cuts the scene actually has — the WGSL
+/// uniform is a fixed-size array; unused slots past `n_parts`/`n_cuts` are
+/// zero-filled):
+/// - `[0]` = `parts.len()` as `f32`, `[1]` = `cuts.len()` as `f32`, `[2..4)`
+///   padding (`0.0`) — a fixed 4-float header so both sides can index the
+///   part/cut arrays at a compile-time-known offset.
+/// - `[4 .. 4 + MAX_PARTS·FLOATS_PER_PART)`: one `FLOATS_PER_PART`-float
+///   block per part SLOT. Slot layout, `kind = block[0]` (`0.0` Helix,
+///   `1.0` TorusArc, `2.0` Capsule):
+///   - **Helix** (15 of 16 floats used, 1 pad): `[1]` radius_mm, `[2]`
+///     taper_small_r (`NaN` sentinel encodes `None` — no separate presence
+///     flag needed since a real radius can never be `NaN`; see the note
+///     below), `[3]` pitch_mm, `[4]` turns, `[5]` profile_kind (`0.0`
+///     Circle / `1.0` Rectangle), `[6]` profile_dim0 (Circle: radius_mm;
+///     Rectangle: half_w_mm), `[7]` profile_dim1 (Circle: unused `0.0`;
+///     Rectangle: half_h_mm), `[8]` axial_offset_mm, `[9]` phase_rad,
+///     `[10..13)` appearance.base_color, `[13]` metallic, `[14]` roughness,
+///     `[15]` pad.
+///   - **TorusArc** (14 of 16 used, 2 pad): `[1..4)` center, `[4]`
+///     y_rotation, `[5]` tilt, `[6]` major_r, `[7]` minor_r, `[8]` sweep,
+///     `[9..12)` appearance.base_color, `[12]` metallic, `[13]` roughness,
+///     `[14..16)` pad.
+///   - **Capsule** (13 of 16 used, 3 pad): `[1..4)` a, `[4..7)` b, `[7]`
+///     radius_mm, `[8..11)` appearance.base_color, `[11]` metallic, `[12]`
+///     roughness, `[13..16)` pad.
+/// - `[4 + MAX_PARTS·FLOATS_PER_PART ..)`: one `FLOATS_PER_CUT`-float
+///   (`GroundPlane`) block per cut SLOT — see [`pack_cut`].
+///
+/// **`taper_small_r`'s `NaN` sentinel is a documented, deliberate
+/// ambiguity.** A (never legitimately constructed) `Some(f64::NAN)` would
+/// round-trip through `unpack_scene` (the test-only inverse, `#[cfg(test)]`
+/// below — not doc-linked since it doesn't exist outside test builds) as
+/// `None` — every family builder
+/// rejects non-finite geometry via `geometry_hostile` before any
+/// `HelixParams` is built, so that state cannot reach this function through
+/// the real builders; pinned by a test rather than silently assumed
+/// unreachable.
+///
+/// Every geometry value packs `as f32` (mm-scale doubles lose ~1e-7
+/// relative precision, well under any rendering-visible threshold);
+/// `Appearance`'s fields are already `f32`.
+#[allow(dead_code)] // consumed by Task 5 (WGSL uniform upload) and Task 6 (app wiring)
+pub(crate) fn scene_uniforms(scene: &SdfScene) -> Option<Vec<f32>> {
+    if scene.parts.len() > MAX_PARTS || scene.cuts.len() > MAX_CUTS {
+        return None;
+    }
+    let total = 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT;
+    let mut out = vec![0.0f32; total];
+    out[0] = scene.parts.len() as f32;
+    out[1] = scene.cuts.len() as f32;
+    for (i, part) in scene.parts.iter().enumerate() {
+        let base = 4 + i * FLOATS_PER_PART;
+        pack_part(&mut out[base..base + FLOATS_PER_PART], part);
+    }
+    let cuts_base = 4 + MAX_PARTS * FLOATS_PER_PART;
+    for (i, cut) in scene.cuts.iter().enumerate() {
+        let base = cuts_base + i * FLOATS_PER_CUT;
+        pack_cut(&mut out[base..base + FLOATS_PER_CUT], cut);
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+fn unpack_appearance(slot: &[f32]) -> Appearance {
+    Appearance {
+        base_color: [slot[0], slot[1], slot[2]],
+        metallic: slot[3],
+        roughness: slot[4],
+    }
+}
+
+/// Inverse of [`pack_part`] — test-only (never reachable from production
+/// code, which only ever needs the forward pack). `None` for an
+/// unrecognized `kind` (defensive against a malformed buffer, e.g. a
+/// revert-probed transposition landing a non-integer kind float).
+#[cfg(test)]
+fn unpack_part(slot: &[f32]) -> Option<ScenePart> {
+    let kind = slot[0] as u8;
+    let (shape, appearance_start) = match kind {
+        0 => (
+            SdfPart::Helix(HelixParams {
+                radius_mm: f64::from(slot[1]),
+                taper_small_r: if slot[2].is_nan() {
+                    None
+                } else {
+                    Some(f64::from(slot[2]))
+                },
+                pitch_mm: f64::from(slot[3]),
+                turns: f64::from(slot[4]),
+                profile: if slot[5] as u8 == 0 {
+                    Profile::Circle {
+                        radius_mm: f64::from(slot[6]),
+                    }
+                } else {
+                    Profile::Rectangle {
+                        half_w_mm: f64::from(slot[6]),
+                        half_h_mm: f64::from(slot[7]),
+                    }
+                },
+                axial_offset_mm: f64::from(slot[8]),
+                phase_rad: f64::from(slot[9]),
+            }),
+            10,
+        ),
+        1 => (
+            SdfPart::TorusArc {
+                center: [f64::from(slot[1]), f64::from(slot[2]), f64::from(slot[3])],
+                y_rotation: f64::from(slot[4]),
+                tilt: f64::from(slot[5]),
+                major_r: f64::from(slot[6]),
+                minor_r: f64::from(slot[7]),
+                sweep: f64::from(slot[8]),
+            },
+            9,
+        ),
+        2 => (
+            SdfPart::Capsule {
+                a: [f64::from(slot[1]), f64::from(slot[2]), f64::from(slot[3])],
+                b: [f64::from(slot[4]), f64::from(slot[5]), f64::from(slot[6])],
+                radius_mm: f64::from(slot[7]),
+            },
+            8,
+        ),
+        _ => return None,
+    };
+    Some(ScenePart {
+        shape,
+        appearance: unpack_appearance(&slot[appearance_start..appearance_start + 5]),
+    })
+}
+
+#[cfg(test)]
+fn unpack_cut(slot: &[f32]) -> GroundPlane {
+    GroundPlane {
+        point: [f64::from(slot[0]), f64::from(slot[1]), f64::from(slot[2])],
+        normal: [f64::from(slot[3]), f64::from(slot[4]), f64::from(slot[5])],
+    }
+}
+
+/// Inverse of [`scene_uniforms`] — test-only round-trip check (never
+/// reachable from production code). `None` for a malformed buffer (wrong
+/// total length, or a header claiming more parts/cuts than the fixed
+/// budget provides slots for).
+#[cfg(test)]
+pub(crate) fn unpack_scene(u: &[f32]) -> Option<SdfScene> {
+    let expected_len = 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT;
+    if u.len() != expected_len {
+        return None;
+    }
+    let n_parts = u[0] as usize;
+    let n_cuts = u[1] as usize;
+    if n_parts > MAX_PARTS || n_cuts > MAX_CUTS {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(n_parts);
+    for i in 0..n_parts {
+        let base = 4 + i * FLOATS_PER_PART;
+        parts.push(unpack_part(&u[base..base + FLOATS_PER_PART])?);
+    }
+    let cuts_base = 4 + MAX_PARTS * FLOATS_PER_PART;
+    let mut cuts = Vec::with_capacity(n_cuts);
+    for i in 0..n_cuts {
+        let base = cuts_base + i * FLOATS_PER_CUT;
+        cuts.push(unpack_cut(&u[base..base + FLOATS_PER_CUT]));
+    }
+    Some(SdfScene { parts, cuts })
 }
 
 #[cfg(test)]
@@ -2431,5 +2736,301 @@ mod tests {
         )
         .unwrap();
         assert_eq!(assembly_sdf(&d), SdfScene::default());
+    }
+
+    // ------------------------------------------------------------------
+    // Task 4: uniform packing representability + round-trip
+    // ------------------------------------------------------------------
+
+    fn trivial_capsule_part() -> ScenePart {
+        ScenePart {
+            shape: SdfPart::Capsule {
+                a: [0.0, 0.0, 0.0],
+                b: [1.0, 0.0, 0.0],
+                radius_mm: 0.5,
+            },
+            appearance: steel(),
+        }
+    }
+
+    #[test]
+    fn scene_uniforms_is_some_at_exactly_the_max_parts_and_cuts_budget() {
+        let scene = SdfScene {
+            parts: (0..MAX_PARTS).map(|_| trivial_capsule_part()).collect(),
+            cuts: (0..MAX_CUTS)
+                .map(|_| GroundPlane {
+                    point: [0.0, 0.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                })
+                .collect(),
+        };
+        assert!(scene_uniforms(&scene).is_some());
+    }
+
+    #[test]
+    fn scene_uniforms_is_none_one_part_past_the_budget() {
+        let scene = SdfScene {
+            parts: (0..=MAX_PARTS).map(|_| trivial_capsule_part()).collect(),
+            cuts: Vec::new(),
+        };
+        assert!(scene_uniforms(&scene).is_none());
+    }
+
+    #[test]
+    fn scene_uniforms_is_none_one_cut_past_the_budget() {
+        let scene = SdfScene {
+            parts: vec![trivial_capsule_part()],
+            cuts: (0..=MAX_CUTS)
+                .map(|_| GroundPlane {
+                    point: [0.0, 0.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                })
+                .collect(),
+        };
+        assert!(scene_uniforms(&scene).is_none());
+    }
+
+    #[test]
+    fn scene_uniforms_representable_for_every_single_body_family_fixture() {
+        assert!(scene_uniforms(&compression_sdf(&compression_fixture())).is_some());
+        assert!(scene_uniforms(&conical_sdf(&conical_fixture())).is_some());
+        assert!(scene_uniforms(&extension_sdf(&extension_fixture())).is_some());
+        assert!(scene_uniforms(&torsion_sdf(&torsion_fixture())).is_some());
+        assert!(scene_uniforms(&assembly_sdf(&two_member_assembly_fixture("nested"))).is_some());
+    }
+
+    /// `n` identical members (mirrors `two_member_assembly_fixture`'s member
+    /// 0: wire 2mm, mean 20mm, active 10 coils, free 60mm, SquaredGround —
+    /// a nonzero INTEGER dead-per-end, so every member reconstructs to the
+    /// full 3-`Helix`-segment budget) — used to stress `scene_uniforms`'s
+    /// representability guard at a REPRESENTATIVE large member count. No
+    /// real cap on assembly member count exists anywhere in the app (see
+    /// `MAX_PARTS`'s doc), so "the member cap" a first glance at the task
+    /// brief assumed does not exist; this fixture instead demonstrates the
+    /// guard at a generously large, still entirely plausible member count.
+    fn n_member_assembly_fixture(n: usize) -> springcore::assembly::AssemblyDesign {
+        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let mut f = AsmFormState::with_default_material("Music Wire");
+        f.topology = "nested".to_string();
+        f.loads = "10, 25".into();
+        f.members = (0..n)
+            .map(|_| AsmMemberForm {
+                wire_dia: "2".into(),
+                mean_dia: "20".into(),
+                active: "10".into(),
+                free_length: "60".into(),
+                ..AsmMemberForm::blank("Music Wire")
+            })
+            .collect();
+        parse_and_solve(
+            &f,
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn scene_uniforms_representable_for_a_generous_sixteen_member_assembly() {
+        // 16 members x 3 Helix segments each = 48 = MAX_PARTS exactly.
+        let d = n_member_assembly_fixture(16);
+        let scene = assembly_sdf(&d);
+        assert_eq!(scene.parts.len(), 48);
+        assert!(scene_uniforms(&scene).is_some());
+    }
+
+    #[test]
+    fn scene_uniforms_none_for_an_assembly_one_member_past_the_budget() {
+        // 17 members x 3 = 51 > MAX_PARTS: gracefully degrades to the
+        // wireframe placeholder rather than truncating or panicking.
+        let d = n_member_assembly_fixture(17);
+        let scene = assembly_sdf(&d);
+        assert_eq!(scene.parts.len(), 51);
+        assert!(scene_uniforms(&scene).is_none());
+    }
+
+    #[test]
+    fn scene_uniforms_round_trips_a_mixed_three_part_scene_with_cuts() {
+        let scene = SdfScene {
+            parts: vec![
+                ScenePart {
+                    shape: SdfPart::Helix(HelixParams {
+                        radius_mm: 12.5,
+                        taper_small_r: Some(7.25),
+                        pitch_mm: 3.1,
+                        turns: 6.5,
+                        profile: Profile::Rectangle {
+                            half_w_mm: 0.6,
+                            half_h_mm: 0.4,
+                        },
+                        axial_offset_mm: 4.0,
+                        phase_rad: 1.2,
+                    }),
+                    appearance: steel(),
+                },
+                ScenePart {
+                    shape: SdfPart::TorusArc {
+                        center: [3.0, 5.0, -2.0],
+                        y_rotation: 0.7,
+                        tilt: -0.3,
+                        major_r: 4.0,
+                        minor_r: 0.9,
+                        sweep: 4.5,
+                    },
+                    appearance: member_appearance(1),
+                },
+                ScenePart {
+                    shape: SdfPart::Capsule {
+                        a: [1.0, 2.0, 3.0],
+                        b: [4.0, 5.0, 6.0],
+                        radius_mm: 1.1,
+                    },
+                    appearance: member_appearance(2),
+                },
+            ],
+            cuts: vec![
+                GroundPlane {
+                    point: [0.0, 0.0, 0.0],
+                    normal: [0.0, -1.0, 0.0],
+                },
+                GroundPlane {
+                    point: [0.0, 40.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                },
+            ],
+        };
+        let packed = scene_uniforms(&scene).unwrap();
+        assert_eq!(
+            packed.len(),
+            4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT
+        );
+        let round_tripped = unpack_scene(&packed).unwrap();
+        assert_eq!(round_tripped.parts.len(), 3);
+        assert_eq!(round_tripped.cuts.len(), 2);
+
+        match (&scene.parts[0].shape, &round_tripped.parts[0].shape) {
+            (SdfPart::Helix(a), SdfPart::Helix(b)) => {
+                assert_relative_eq!(a.radius_mm, b.radius_mm, max_relative = 1e-6);
+                assert_relative_eq!(
+                    a.taper_small_r.unwrap(),
+                    b.taper_small_r.unwrap(),
+                    max_relative = 1e-6
+                );
+                assert_relative_eq!(a.pitch_mm, b.pitch_mm, max_relative = 1e-6);
+                assert_relative_eq!(a.turns, b.turns, max_relative = 1e-6);
+                assert_relative_eq!(a.axial_offset_mm, b.axial_offset_mm, max_relative = 1e-6);
+                assert_relative_eq!(a.phase_rad, b.phase_rad, max_relative = 1e-6);
+                match (a.profile, b.profile) {
+                    (
+                        Profile::Rectangle {
+                            half_w_mm: aw,
+                            half_h_mm: ah,
+                        },
+                        Profile::Rectangle {
+                            half_w_mm: bw,
+                            half_h_mm: bh,
+                        },
+                    ) => {
+                        assert_relative_eq!(aw, bw, max_relative = 1e-6);
+                        assert_relative_eq!(ah, bh, max_relative = 1e-6);
+                    }
+                    _ => panic!("profile kind did not round-trip"),
+                }
+            }
+            _ => panic!("part 0 kind did not round-trip"),
+        }
+        match (&scene.parts[1].shape, &round_tripped.parts[1].shape) {
+            (
+                SdfPart::TorusArc {
+                    center: ca,
+                    y_rotation: ya,
+                    tilt: ta,
+                    major_r: ma,
+                    minor_r: mia,
+                    sweep: sa,
+                },
+                SdfPart::TorusArc {
+                    center: cb,
+                    y_rotation: yb,
+                    tilt: tb,
+                    major_r: mb,
+                    minor_r: mib,
+                    sweep: sb,
+                },
+            ) => {
+                for i in 0..3 {
+                    assert_relative_eq!(ca[i], cb[i], max_relative = 1e-6);
+                }
+                assert_relative_eq!(ya, yb, max_relative = 1e-6);
+                assert_relative_eq!(ta, tb, max_relative = 1e-6);
+                assert_relative_eq!(ma, mb, max_relative = 1e-6);
+                assert_relative_eq!(mia, mib, max_relative = 1e-6);
+                assert_relative_eq!(sa, sb, max_relative = 1e-6);
+            }
+            _ => panic!("part 1 kind did not round-trip"),
+        }
+        match (&scene.parts[2].shape, &round_tripped.parts[2].shape) {
+            (
+                SdfPart::Capsule {
+                    a: orig_end0,
+                    b: orig_end1,
+                    radius_mm: ra,
+                },
+                SdfPart::Capsule {
+                    a: rt_end0,
+                    b: rt_end1,
+                    radius_mm: rb,
+                },
+            ) => {
+                for i in 0..3 {
+                    assert_relative_eq!(orig_end0[i], rt_end0[i], max_relative = 1e-6);
+                    assert_relative_eq!(orig_end1[i], rt_end1[i], max_relative = 1e-6);
+                }
+                assert_relative_eq!(ra, rb, max_relative = 1e-6);
+            }
+            _ => panic!("part 2 kind did not round-trip"),
+        }
+        for (orig, rt) in scene.parts.iter().zip(&round_tripped.parts) {
+            assert_eq!(orig.appearance, rt.appearance);
+        }
+        for (orig, rt) in scene.cuts.iter().zip(&round_tripped.cuts) {
+            for i in 0..3 {
+                assert_relative_eq!(orig.point[i], rt.point[i], max_relative = 1e-6);
+                assert_relative_eq!(orig.normal[i], rt.normal[i], max_relative = 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn scene_uniforms_some_nan_taper_collapses_to_none_on_unpack_documented_ambiguity() {
+        // f32::NAN is the `None` sentinel (see scene_uniforms's doc); a
+        // directly-constructed `Some(f64::NAN)` — never produced by any
+        // real family builder, which rejects non-finite geometry via
+        // `geometry_hostile` upstream — is indistinguishable from `None`
+        // after packing. Documented, not silently assumed unreachable.
+        let scene = SdfScene {
+            parts: vec![ScenePart {
+                shape: SdfPart::Helix(HelixParams {
+                    radius_mm: 10.0,
+                    taper_small_r: Some(f64::NAN),
+                    pitch_mm: 2.0,
+                    turns: 4.0,
+                    profile: Profile::Circle { radius_mm: 1.0 },
+                    axial_offset_mm: 0.0,
+                    phase_rad: 0.0,
+                }),
+                appearance: steel(),
+            }],
+            cuts: Vec::new(),
+        };
+        let packed = scene_uniforms(&scene).unwrap();
+        let round_tripped = unpack_scene(&packed).unwrap();
+        match &round_tripped.parts[0].shape {
+            SdfPart::Helix(h) => assert_eq!(h.taper_small_r, None),
+            _ => panic!("expected a Helix part"),
+        }
     }
 }

@@ -273,6 +273,337 @@ pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
     }
 }
 
+/// Multiplicative zoom bounds — the shaded-3D camera's `App.zoom` clamp
+/// (spec §Interaction: "`App.zoom: f32` (default 1.0, clamped to
+/// `[0.3, 4.0]`)"); shared with Task 6's app-level zoom state and
+/// [`camera_uniforms`]'s own defensive clamp.
+pub(crate) const ZOOM_MIN: f32 = 0.3;
+pub(crate) const ZOOM_MAX: f32 = 4.0;
+
+/// Zoom sensitivity: e-folding rate per unit of `scroll_delta`. Chosen so a
+/// typical single wheel/trackpad tick (`scroll_delta` ~1-3) changes zoom by
+/// a comfortable ~10-35%.
+const ZOOM_SENSITIVITY: f32 = 0.1;
+
+/// Apply a scroll-wheel delta multiplicatively: `current * e^(delta ×
+/// SENSITIVITY)` — exponential rather than `current * (1 + delta ×
+/// SENSITIVITY)` so the pre-clamp result is ALWAYS strictly positive
+/// regardless of `delta`'s sign or magnitude (no "clamped but still
+/// negative" edge case to separately guard), then clamped to [`ZOOM_MIN`],
+/// [`ZOOM_MAX`]. A non-finite delta (NaN/inf, e.g. a degenerate scroll
+/// event) leaves `current` unchanged, mirroring [`orbit_step`]'s guard.
+#[allow(dead_code)] // consumed by Task 6 (Message::Zoom wiring)
+pub(crate) fn zoom_step(current: f32, scroll_delta: f32) -> f32 {
+    if !scroll_delta.is_finite() {
+        return current;
+    }
+    (current * (scroll_delta * ZOOM_SENSITIVITY).exp()).clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// A 4x4 matrix stored COLUMN-MAJOR (`m[col*4 + row]`) — the layout WGSL's
+/// `mat4x4<f32>` expects when built from a flat float array (Task 5 mirrors
+/// this exactly): column `c` occupies `m[c*4 .. c*4+4]`.
+type Mat4 = [f64; 16];
+
+const fn mat4_identity() -> Mat4 {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+/// `a * b` (matrix product; applying the RESULT to a vector is equivalent
+/// to applying `b` first, then `a`).
+fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut out = [0.0; 16];
+    for col in 0..4 {
+        for row in 0..4 {
+            let mut sum = 0.0;
+            for k in 0..4 {
+                sum += a[k * 4 + row] * b[col * 4 + k];
+            }
+            out[col * 4 + row] = sum;
+        }
+    }
+    out
+}
+
+/// `m * v` (homogeneous column vector) — test-only (the frustum-containment
+/// pin projects world points through `view_proj` directly; production code
+/// never needs a raw matrix-vector product).
+#[cfg(test)]
+fn mat4_mul_vec4(m: &Mat4, v: [f64; 4]) -> [f64; 4] {
+    let mut out = [0.0; 4];
+    for row in 0..4 {
+        let mut sum = 0.0;
+        for col in 0..4 {
+            sum += m[col * 4 + row] * v[col];
+        }
+        out[row] = sum;
+    }
+    out
+}
+
+/// Right-handed look-at view matrix (world → view space; camera looks down
+/// its own -Z, +X right, +Y up) — the standard construction. `up` need not
+/// be exactly orthogonal to `target - eye` (re-orthogonalized via the cross
+/// products below) but must not be parallel to it; never happens here
+/// since [`PITCH_LIMIT`] (1.4 rad, 80.2°) keeps the view direction's angle
+/// to world Y strictly short of 90°.
+fn mat4_look_at(eye: [f64; 3], target: [f64; 3], up: [f64; 3]) -> Mat4 {
+    let sub = |p: [f64; 3], q: [f64; 3]| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    let cross = |p: [f64; 3], q: [f64; 3]| {
+        [
+            p[1] * q[2] - p[2] * q[1],
+            p[2] * q[0] - p[0] * q[2],
+            p[0] * q[1] - p[1] * q[0],
+        ]
+    };
+    let normalize = |v: [f64; 3]| {
+        let len = dot(v, v).sqrt();
+        [v[0] / len, v[1] / len, v[2] / len]
+    };
+    let forward = normalize(sub(target, eye));
+    let right = normalize(cross(forward, up));
+    let true_up = cross(right, forward);
+    let mut m = mat4_identity();
+    m[0] = right[0];
+    m[1] = true_up[0];
+    m[2] = -forward[0];
+    m[4] = right[1];
+    m[5] = true_up[1];
+    m[6] = -forward[1];
+    m[8] = right[2];
+    m[9] = true_up[2];
+    m[10] = -forward[2];
+    m[12] = -dot(right, eye);
+    m[13] = -dot(true_up, eye);
+    m[14] = dot(forward, eye);
+    m[15] = 1.0;
+    m
+}
+
+/// Right-handed perspective projection, wgpu/D3D NDC-depth convention
+/// (`z_ndc ∈ [0, 1]`, near → 0, far → 1 — NOT OpenGL's `[-1, 1]`, since
+/// Task 5's actual pipeline runs through `wgpu`).
+fn mat4_perspective(fov_y_rad: f64, aspect: f64, near: f64, far: f64) -> Mat4 {
+    let f_cot = 1.0 / (fov_y_rad / 2.0).tan();
+    let mut m = [0.0; 16];
+    m[0] = f_cot / aspect;
+    m[5] = f_cot;
+    m[10] = far / (near - far);
+    m[11] = -1.0;
+    m[14] = (near * far) / (near - far);
+    m
+}
+
+/// General 4x4 matrix inverse via the cofactor/adjugate expansion (the
+/// classic, widely-published closed-form construction — not specific to
+/// any one library). A near-zero determinant (a degenerate camera
+/// configuration: `near == far`, or a zero-volume frustum) is unreachable
+/// via [`camera_uniforms`]'s own inputs (FOV/near/far are all derived
+/// strictly positive with `near < far` by construction) but falls back to
+/// the identity rather than dividing by ~zero, as defense in depth.
+fn mat4_invert(m: &Mat4) -> Mat4 {
+    let mut inv = [0.0; 16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15]
+        + m[9] * m[7] * m[14]
+        + m[13] * m[6] * m[11]
+        - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15]
+        - m[8] * m[7] * m[14]
+        - m[12] * m[6] * m[11]
+        + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15]
+        + m[8] * m[7] * m[13]
+        + m[12] * m[5] * m[11]
+        - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14]
+        - m[8] * m[6] * m[13]
+        - m[12] * m[5] * m[10]
+        + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15]
+        - m[9] * m[3] * m[14]
+        - m[13] * m[2] * m[11]
+        + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15]
+        + m[8] * m[3] * m[14]
+        + m[12] * m[2] * m[11]
+        - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15]
+        - m[8] * m[3] * m[13]
+        - m[12] * m[1] * m[11]
+        + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14]
+        + m[8] * m[2] * m[13]
+        + m[12] * m[1] * m[10]
+        - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15]
+        + m[5] * m[3] * m[14]
+        + m[13] * m[2] * m[7]
+        - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15]
+        - m[4] * m[3] * m[14]
+        - m[12] * m[2] * m[7]
+        + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15]
+        + m[4] * m[3] * m[13]
+        + m[12] * m[1] * m[7]
+        - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14]
+        - m[4] * m[2] * m[13]
+        - m[12] * m[1] * m[6]
+        + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11]
+        - m[5] * m[3] * m[10]
+        - m[9] * m[2] * m[7]
+        + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11]
+        + m[4] * m[3] * m[10]
+        + m[8] * m[2] * m[7]
+        - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11]
+        - m[4] * m[3] * m[9]
+        - m[8] * m[1] * m[7]
+        + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10]
+        + m[4] * m[2] * m[9]
+        + m[8] * m[1] * m[6]
+        - m[8] * m[2] * m[5];
+
+    let det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if det.abs() < 1e-12 {
+        return mat4_identity();
+    }
+    let inv_det = 1.0 / det;
+    inv.map(|x| x * inv_det)
+}
+
+fn mat4_to_f32(m: &Mat4) -> [f32; 16] {
+    std::array::from_fn(|i| m[i] as f32)
+}
+
+/// Vertical field of view, fixed (no user FOV control — spec §Architecture:
+/// "45° vertical FOV").
+const FOV_Y_RAD: f64 = 45.0 * std::f64::consts::PI / 180.0;
+
+/// Fractions of `extent_mm` used for the near/far clip planes — generous
+/// enough that the fit-to-extent bounding sphere stays inside `[near, far]`
+/// across the FULL [`ZOOM_MIN`], [`ZOOM_MAX`] range (worst-case eye
+/// distance runs roughly `extent_mm × [0.33, 4.4]` — see [`fit_distance`]'s
+/// derivation and its doc) without either plane clipping real geometry in
+/// the common (zoom ≈ 1) case.
+const NEAR_FRACTION: f64 = 0.001;
+const FAR_FRACTION: f64 = 20.0;
+
+/// Small multiplicative margin on the fit-to-extent bounding-sphere radius
+/// so a pole landing exactly tangent to the frustum wall clears
+/// floating-point rounding (`|NDC| <= 1.0`) instead of landing a hair past
+/// it.
+const FIT_MARGIN: f64 = 1.02;
+
+/// Bounding-sphere radius that safely contains the shape [`sdf::
+/// scene_extent_mm`] actually bounds: a cylinder of radius `extent_mm/2`
+/// spanning `y ∈ [0, extent_mm]` (both hold because
+/// `extent_mm = max(2·r_max, y_span)` — see that function's doc), centered
+/// at `(0, extent_mm/2, 0)`. The worst-case corner (full radial reach AND a
+/// full axial half-span SIMULTANEOUSLY, e.g. `(extent_mm/2, 0, 0)`) sits at
+/// `extent_mm/sqrt(2)` from that center — NOT `extent_mm/2`, which would
+/// under-cover a wide, flat spring's outer coil by a factor of `sqrt(2)`.
+fn fit_sphere_radius(extent_mm: f64) -> f64 {
+    (extent_mm / std::f64::consts::SQRT_2) * FIT_MARGIN
+}
+
+/// Eye-to-target distance that fits [`fit_sphere_radius`]'s bounding sphere
+/// exactly inside a [`FOV_Y_RAD`]-tall, `aspect`-wide perspective frustum:
+/// the sphere's angular half-size as seen from the eye is `asin(R /
+/// distance)`, so `distance = R / sin(theta)` where `theta` is the MORE
+/// restrictive of the vertical and horizontal half-fields-of-view
+/// (whichever is narrower — vertical for `aspect >= 1` landscape,
+/// horizontal for `aspect < 1` portrait; `tan(fov_x/2) = aspect ×
+/// tan(fov_y/2)` is the standard aspect-derived horizontal FOV).
+fn fit_distance(extent_mm: f64, aspect: f64) -> f64 {
+    let radius = fit_sphere_radius(extent_mm);
+    let half_v = FOV_Y_RAD / 2.0;
+    let half_h = (aspect * half_v.tan()).atan();
+    let half_theta = half_v.min(half_h);
+    radius / half_theta.sin()
+}
+
+/// World-space eye position for the given orbit/zoom/extent: spherical
+/// coordinates about the scene's target `(0, extent_mm/2, 0)` (see
+/// [`fit_sphere_radius`]'s doc for why that height, not the origin) at
+/// [`fit_distance`] divided by `zoom` (`zoom > 1` moves the eye closer —
+/// magnified). `yaw` rotates about world Y, `pitch` tilts toward/away from
+/// it — the same [`Orbit`] angles the wireframe path already carries.
+fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3] {
+    let distance = fit_distance(extent_mm, aspect) / f64::from(zoom);
+    let yaw = f64::from(orbit.yaw);
+    let pitch = f64::from(orbit.pitch);
+    let dir = [
+        pitch.cos() * yaw.sin(),
+        pitch.sin(),
+        pitch.cos() * yaw.cos(),
+    ];
+    [
+        distance * dir[0],
+        extent_mm / 2.0 + distance * dir[1],
+        distance * dir[2],
+    ]
+}
+
+/// View-projection matrix + its inverse for the shaded-3D camera, packed
+/// into a fixed 32-`f32` array — Task 5's WGSL uniform reads this layout
+/// bit-for-bit: `[0..16)` = `view_proj` (world → clip, column-major, the
+/// standard WGSL `mat4x4<f32>` layout — column `c`'s four floats are
+/// `[c*4 .. c*4+4)`), `[16..32)` = its inverse. Camera: perspective, 45°
+/// vertical FOV ([`FOV_Y_RAD`]), looking at `(0, extent_mm/2, 0)` from
+/// [`eye_position`] (fit-to-extent distance divided by `zoom`), world-Y up,
+/// near/far derived from `extent_mm` ([`NEAR_FRACTION`]/[`FAR_FRACTION`]).
+///
+/// **No separate stored eye position.** Task 5's vertex shader reconstructs
+/// each pixel's world-space ray directly from the INVERSE block by
+/// unprojecting that pixel's near- and far-plane NDC points (standard
+/// technique — both lie ON the eye-to-pixel ray, so their difference gives
+/// the ray direction without the eye ever needing to be a separately stored
+/// value — see the plan's Task 5 entry, "pass NDC ray through the inverse
+/// view-proj"). This task's own "pinned eye distance" tests exercise
+/// [`eye_position`]/[`fit_distance`] directly as private helpers instead —
+/// Task 5 should NOT hunt for a third stored field; there isn't one.
+///
+/// A non-finite or non-positive `extent_mm`/`aspect` falls back to `1.0`
+/// (defense in depth — a pure fn reachable directly by tests/future
+/// callers, mirroring [`stroke_for`]'s non-finite guard); `zoom` is clamped
+/// to [`ZOOM_MIN`]/[`ZOOM_MAX`] even though the committed `App.zoom` state
+/// is expected to already be clamped by [`zoom_step`].
+#[allow(dead_code)] // consumed by Task 6 (app wiring)
+pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f32) -> [f32; 32] {
+    let extent = if extent_mm.is_finite() && extent_mm > 0.0 {
+        extent_mm
+    } else {
+        1.0
+    };
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        f64::from(aspect)
+    } else {
+        1.0
+    };
+    let zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
+    let eye = eye_position(orbit, zoom, extent, aspect);
+    let target = [0.0, extent / 2.0, 0.0];
+    let up = [0.0, 1.0, 0.0];
+    let near = extent * NEAR_FRACTION;
+    let far = (extent * FAR_FRACTION).max(near * 2.0);
+    let view = mat4_look_at(eye, target, up);
+    let proj = mat4_perspective(FOV_Y_RAD, aspect, near, far);
+    let view_proj = mat4_mul(&proj, &view);
+    let inv_view_proj = mat4_invert(&view_proj);
+    let mut out = [0.0f32; 32];
+    out[0..16].copy_from_slice(&mat4_to_f32(&view_proj));
+    out[16..32].copy_from_slice(&mat4_to_f32(&inv_view_proj));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,5 +806,186 @@ mod tests {
         assert_eq!(orbit_step(current, 1.0, f32::NAN), current);
         assert_eq!(orbit_step(current, f32::INFINITY, 0.0), current);
         assert_eq!(orbit_step(current, 0.0, f32::INFINITY), current);
+    }
+
+    // ------------------------------------------------------------------
+    // Task 4: zoom step
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn zoom_step_scales_multiplicatively_and_clamps_at_exact_bounds() {
+        assert_relative_eq!(zoom_step(1.0, 0.0), 1.0, max_relative = 1e-6); // no-op scroll
+        let up = zoom_step(1.0, 1.0);
+        assert_relative_eq!(up, ZOOM_SENSITIVITY.exp(), max_relative = 1e-6);
+        let down = zoom_step(up, -1.0);
+        assert_relative_eq!(down, 1.0, max_relative = 1e-6); // exactly undoes the prior step
+                                                             // Clamps at EXACTLY the bounds for extreme deltas (orbit_step precedent).
+        assert_eq!(zoom_step(1.0, 1000.0), ZOOM_MAX);
+        assert_eq!(zoom_step(1.0, -1000.0), ZOOM_MIN);
+    }
+
+    #[test]
+    fn zoom_step_ignores_non_finite_deltas() {
+        assert_eq!(zoom_step(1.5, f32::NAN), 1.5);
+        assert_eq!(zoom_step(1.5, f32::INFINITY), 1.5);
+        assert_eq!(zoom_step(1.5, f32::NEG_INFINITY), 1.5);
+    }
+
+    // ------------------------------------------------------------------
+    // Task 4: camera math
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn fit_distance_matches_the_independently_computed_value_at_two_aspects() {
+        // extent=100mm; hand-computed (Python) via
+        // R = 100/sqrt(2)*1.02 = 72.12489168102783,
+        // half_v = 22.5 deg exactly.
+        // aspect=1.0: half_h == half_v (symmetric) -> theta = 22.5 deg.
+        assert_relative_eq!(
+            fit_distance(100.0, 1.0),
+            188.47142463230244,
+            max_relative = 1e-9
+        );
+        // aspect=2.0 (wide): half_h = atan(2*tan(22.5deg)) = 39.639...deg >
+        // half_v, so vertical still governs -> same distance as aspect=1.0.
+        assert_relative_eq!(
+            fit_distance(100.0, 2.0),
+            188.47142463230244,
+            max_relative = 1e-9
+        );
+        // aspect=0.5 (tall/portrait): half_h = atan(0.5*tan(22.5deg)) =
+        // 11.7...deg < half_v, so horizontal governs -> a LARGER distance.
+        assert_relative_eq!(
+            fit_distance(100.0, 0.5),
+            355.6401434198882,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn eye_position_matches_the_independently_computed_pinned_vector() {
+        // extent=60mm, aspect=16/9, zoom=1.5, yaw=0.3, pitch=0.2 rad (as
+        // ACTUALLY stored — `Orbit`'s fields are `f32`, so the literals
+        // below round to the nearest f32 before this function ever sees
+        // them: yaw = 0.300000011920928..., pitch = 0.200000002980232...) —
+        // hand-computed (Python, independent of this module's Rust code,
+        // starting from those SAME f32-rounded values) via the documented
+        // formula: eye = (0, extent/2, 0) + (fit_distance(extent, aspect) /
+        // zoom) * (cos(pitch)sin(yaw), sin(pitch), cos(pitch)cos(yaw)).
+        let orbit = Orbit {
+            yaw: 0.3,
+            pitch: 0.2,
+        };
+        let eye = eye_position(orbit, 1.5, 60.0, 16.0 / 9.0);
+        assert_relative_eq!(eye[0], 21.834752933693835, max_relative = 1e-9);
+        assert_relative_eq!(eye[1], 44.97739694247343, max_relative = 1e-9);
+        assert_relative_eq!(eye[2], 70.5858173404607, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn eye_position_distance_from_target_is_fit_distance_over_zoom() {
+        let orbit = Orbit {
+            yaw: 0.4,
+            pitch: -0.35,
+        };
+        let (extent, aspect, zoom) = (80.0, 1.6, 2.0);
+        let eye = eye_position(orbit, zoom, extent, aspect);
+        let target = [0.0, extent / 2.0, 0.0];
+        let dist = ((eye[0] - target[0]).powi(2)
+            + (eye[1] - target[1]).powi(2)
+            + (eye[2] - target[2]).powi(2))
+        .sqrt();
+        assert_relative_eq!(
+            dist,
+            fit_distance(extent, aspect) / f64::from(zoom),
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn mat4_mul_with_identity_is_a_no_op() {
+        let m = mat4_look_at([10.0, 5.0, 3.0], [0.0, 2.0, 0.0], [0.0, 1.0, 0.0]);
+        let id = mat4_identity();
+        let product = mat4_mul(&m, &id);
+        for i in 0..16 {
+            assert_relative_eq!(product[i], m[i], max_relative = 1e-9);
+        }
+    }
+
+    #[test]
+    fn camera_uniforms_matrix_times_its_inverse_is_the_identity() {
+        let out = camera_uniforms(
+            120.0,
+            Orbit {
+                yaw: 0.9,
+                pitch: 0.25,
+            },
+            1.0,
+            1.5,
+        );
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
+        let inv_view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[16 + i]));
+        let product = mat4_mul(&view_proj, &inv_view_proj);
+        let identity = mat4_identity();
+        for i in 0..16 {
+            assert!(
+                (product[i] - identity[i]).abs() < 1e-2,
+                "index {i}: {} vs identity {}",
+                product[i],
+                identity[i]
+            );
+        }
+    }
+
+    #[test]
+    fn camera_uniforms_keeps_the_extent_sphere_inside_the_frustum_at_two_aspects() {
+        // Project the fit-to-extent bounding sphere's 6 world-axis poles
+        // (the TRUE, unpadded sphere the scene actually needs contained —
+        // extent/sqrt(2), not fit_sphere_radius's padded value) through the
+        // forward view-proj matrix at two very different aspect ratios
+        // (wide and tall) and confirm every pole's NDC x/y stays within
+        // [-1, 1] (a tiny epsilon absorbs f32 rounding at the tangent
+        // boundary).
+        let extent = 90.0;
+        let orbit = Orbit {
+            yaw: 0.5,
+            pitch: -0.3,
+        };
+        let center = [0.0, extent / 2.0, 0.0];
+        let true_radius = extent / std::f64::consts::SQRT_2;
+        for aspect in [1.777_f32, 0.5625_f32] {
+            let out = camera_uniforms(extent, orbit, 1.0, aspect);
+            let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut pole = center;
+                    pole[axis] += sign * true_radius;
+                    let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
+                    assert!(
+                        clip[3] > 0.0,
+                        "aspect {aspect}: pole {pole:?} landed behind the camera (w={})",
+                        clip[3]
+                    );
+                    let ndc_x = clip[0] / clip[3];
+                    let ndc_y = clip[1] / clip[3];
+                    assert!(
+                        ndc_x.abs() <= 1.0 + 1e-6,
+                        "aspect {aspect}: pole {pole:?} ndc_x={ndc_x}"
+                    );
+                    assert!(
+                        ndc_y.abs() <= 1.0 + 1e-6,
+                        "aspect {aspect}: pole {pole:?} ndc_y={ndc_y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn camera_uniforms_non_finite_extent_and_aspect_do_not_produce_nan() {
+        let out = camera_uniforms(f64::NAN, Orbit::default(), 1.0, f32::INFINITY);
+        assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
+        let out_neg = camera_uniforms(-5.0, Orbit::default(), 1.0, -1.0);
+        assert!(out_neg.iter().all(|v| v.is_finite()), "{out_neg:?}");
     }
 }
