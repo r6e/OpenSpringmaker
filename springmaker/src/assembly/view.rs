@@ -107,10 +107,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     pal,
                     crate::assembly::plot_model::assembly_chart(outcome, us),
                 ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                crate::app::VisualMode::Spring3d => crate::viz::spring3d_element(
                     pal,
                     crate::assembly::scene_model::assembly_scene(outcome),
+                    crate::viz::sdf::assembly_sdf(outcome),
                     app.orbit,
+                    app.zoom,
+                    app.shader_available,
                 ),
             };
             let toggle = visual_toggle(pal, app.results_visual);

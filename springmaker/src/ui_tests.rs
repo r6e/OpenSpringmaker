@@ -258,6 +258,15 @@ fn settings_changes_correction_and_recomputes() {
 /// equality — so within one `dir`, future snapshot stems must not be
 /// prefixes of one another (e.g. `"a"` and `"ab"`), or the lookup can find
 /// the wrong file depending on `read_dir`'s unspecified iteration order.
+///
+/// HARD RULE (Task 6, do not weaken): no `snapshot_hash` call site may
+/// build an app with `shader_available = true`. A true flag routes the
+/// Spring3d slot to the GPU `Shader` widget, whose rasterized pixels are
+/// adapter/driver-dependent — hashing them makes the pin machine-specific.
+/// `test_app()` defaults the flag to false (pinned by
+/// `test_app_defaults_to_the_deterministic_wireframe_path`), so every
+/// snapshot caller stays on the CPU wireframe/chart path; any future
+/// snapshot of a `shader_available = true` app must be rejected in review.
 fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &str) -> String {
     let mut sim = ui(app);
     let snapshot = sim
@@ -1517,6 +1526,110 @@ fn orbit_message_rerenders_without_disturbing_results() {
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
         "an orbit drag must not surface the 3D placeholder"
+    );
+}
+
+/// Scrolling the shaded 3D view (`Message::Zoom`, published by
+/// `SpringShader::update`) must update the committed zoom without disturbing
+/// the solved results or surfacing either placeholder — the wheel twin of
+/// `orbit_message_rerenders_without_disturbing_results` (`Message::Zoom`
+/// recomputes nothing; see `app.rs`'s `update`).
+#[test]
+fn zoom_message_rerenders_without_disturbing_results() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(app.outcome.is_some(), "fixture must solve before zooming");
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    let before = app.zoom;
+    app.update(Message::Zoom(3.0));
+
+    assert_ne!(
+        app.zoom, before,
+        "the committed zoom must update in response to the wheel delta"
+    );
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated after a zoom scroll"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a zoom scroll must not surface the chart placeholder"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a zoom scroll must not surface the 3D placeholder"
+    );
+}
+
+/// Task 6 invariant, asserted explicitly rather than left implicit in
+/// `App::from_store`: every test-constructed app starts with
+/// `shader_available == false` (the deterministic CPU wireframe path) and
+/// `zoom == 1.0`. This is the anchor for the snapshot HARD RULE documented
+/// on `snapshot_hash` — the whole suite, snapshot callers included, renders
+/// without a GPU `Shader` widget unless a test deliberately flips the flag
+/// (and such a test must never snapshot).
+#[test]
+fn test_app_defaults_to_the_deterministic_wireframe_path() {
+    let app = test_app();
+    assert!(!app.shader_available);
+    assert_eq!(app.zoom, 1.0);
+}
+
+/// The shaded-dispatch pin: with `shader_available = true` on a solved
+/// design, the Spring3d slot must dispatch the SHADED path. The shader
+/// widget has no queryable text, so the ui-level observable here is only
+/// "no placeholder, no chart fallback, no panic while the results stay
+/// populated" — `use_shaded_requires_adapter_and_representable_scene`
+/// (viz/mod.rs) carries the branch logic. Layout-only: this test must NEVER
+/// call `snapshot_hash` (see its HARD RULE doc); `shows`/`find` build the
+/// widget tree without rasterizing, so no GPU is touched.
+#[test]
+fn spring3d_arm_dispatches_shaded_when_available() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.shader_available = true;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated on the shaded path"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER) && !shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "a solved, representable design must not surface a 3D placeholder"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "the shaded arm must not fall through to chart_element"
+    );
+}
+
+/// Degenerate scenes must short-circuit to the placeholder BEFORE the
+/// shaded/wireframe choice: an EMPTY `SdfScene` still packs (zero parts —
+/// `scene_uniforms` returns `Some`), so without the up-front gate a capped
+/// design with `shader_available = true` would render an empty shaded
+/// background instead of the capped placeholder the wireframe path shows.
+/// Twin of `torsion_capped_body_coils_shows_placeholder_not_panic`, with
+/// the flag flipped.
+#[test]
+fn capped_body_shows_placeholder_even_when_shader_is_available() {
+    let mut app = probe_solve_torsion_with_body_coils("2001");
+    app.shader_available = true;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "the degenerate short-circuit must fire before the shaded choice"
+    );
+    assert!(
+        shows(&app, "Geometry"),
+        "the results panel must stay populated — only the 3D slot degrades"
     );
 }
 

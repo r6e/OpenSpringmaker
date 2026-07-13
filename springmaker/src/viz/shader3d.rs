@@ -41,20 +41,15 @@ pub(crate) fn instantiate_wgsl() -> String {
 /// Per-drag ephemeral canvas state — mirrors `canvas3d::DragState` exactly
 /// (last cursor position, `None` when no drag is in progress).
 #[derive(Debug, Default, PartialEq)]
-#[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
 pub(crate) struct DragState {
     last: Option<Point>,
 }
 
 /// The `shader::Program` for the shaded 3D view: carries the already-packed
-/// scene/camera/background data (computed upstream by Task 6's app wiring)
-/// and mirrors `OrbitCanvas`'s drag-to-`Message::Orbit` discipline, plus
+/// scene/camera/background data (computed upstream by `viz::
+/// spring3d_element`, its single production constructor) and mirrors
+/// `OrbitCanvas`'s drag-to-`Message::Orbit` discipline, plus
 /// wheel-to-`Message::Zoom`.
-///
-/// `#[allow(dead_code)]`: not yet constructed by any production call site —
-/// Task 6's `spring3d_element` (viz/mod.rs) is the first live caller, per
-/// this task's brief.
-#[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
 pub(crate) struct SpringShader {
     pub uniforms: Vec<f32>,
     pub camera: [f32; 32],
@@ -119,7 +114,6 @@ impl shader::Program<Message> for SpringShader {
 /// One frame's packed data, cloned out of [`SpringShader`] by `draw` — the
 /// `iced_wgpu::Primitive` half of the pair.
 #[derive(Debug)]
-#[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
 pub(crate) struct SpringPrimitive {
     uniforms: Vec<f32>,
     camera: [f32; 32],
@@ -184,7 +178,6 @@ const SCENE_STORAGE_FLOATS: usize =
 /// pipeline, its fixed-size uniform/storage buffers (sized once from the
 /// shared `sdf.rs` constants — they never need to grow), and the bind group
 /// tying them to the shader's `@group(0)` bindings.
-#[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
 pub(crate) struct SpringPipeline {
     render_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,

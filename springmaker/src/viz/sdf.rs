@@ -660,7 +660,7 @@ fn part_distance(shape: &SdfPart, p: Vec3) -> f64 {
 /// `f64::INFINITY` at index 0 (never reached in practice: callers check
 /// [`scene_extent_mm`] first, the same discipline as the wireframe's
 /// `scene_extent`/placeholder gate).
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
+#[allow(dead_code)] // CPU-side reference: exercised by the test suite (WGSL cross-checks)
 pub(crate) fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
     let mut best = f64::INFINITY;
     let mut best_index = 0usize;
@@ -677,7 +677,7 @@ pub(crate) fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
 /// Full scene distance: the part union, then every ground cut folded in via
 /// [`cut_plane`] (sequential `max` — associative/commutative, so cut order
 /// never matters).
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
+#[allow(dead_code)] // CPU-side reference: exercised by the test suite (WGSL cross-checks)
 pub(crate) fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
     let (mut d, _) = sdf_eval_part(scene, p);
     for cut in &scene.cuts {
@@ -696,7 +696,6 @@ pub(crate) fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
 /// sweep the full circle) — camera fitting (Task 4) tolerates slack; only
 /// the distance FUNCTIONS themselves (not this bound) carry the
 /// sphere-tracing conservativeness contract.
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<f64> {
     if scene.parts.is_empty() {
         return None;
@@ -909,7 +908,6 @@ fn ground_cuts(
 /// reads — so both geometry paths render the SAME spring. See
 /// [`helical_body_parts`] for why a ground-ended design needs 3 `Helix`
 /// parts, not the single helix a first glance suggests.
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
     let active = d.active_coils;
     let total = d.total_coils;
@@ -929,7 +927,6 @@ pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
 /// `small_mean_dia` across the FULL total-coil sweep (matching
 /// `conical::scene_model::conical_scene`'s `radius_at`), same dead-coil
 /// reconstruction and ground cuts as `compression_sdf`.
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn conical_sdf(d: &springcore::conical::ConicalDesign) -> SdfScene {
     let active = d.inputs.active_coils;
     let total = d.total_coils;
@@ -986,7 +983,6 @@ fn hook_torus_part(
 /// `extension::scene_model::extension_scene`'s `close_wound_coil` call)
 /// plus the two hook `TorusArc`s, each attached exactly at its body
 /// endpoint.
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfScene {
     let turns = d.active_coils;
     let r = d.mean_dia.millimeters() / 2.0;
@@ -1040,7 +1036,6 @@ pub(crate) fn extension_sdf(d: &springcore::extension::ExtensionDesign) -> SdfSc
 /// `torsion::scene_model::torsion_scene`'s `leg` closure: tangent at wire
 /// parameter `phi` is `(-sin phi, cos phi)`, legs stay at the endpoint's
 /// height).
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
     let turns = d.inputs.body_coils;
     let r = d.inputs.mean_dia.millimeters() / 2.0;
@@ -1109,7 +1104,6 @@ pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
 /// member degrades the WHOLE scene (simpler than the wireframe's nuanced
 /// per-topology partial-cascade semantics, but the same "an empty/hostile
 /// member misrepresents the design" spirit `assembly_scene` documents).
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn assembly_sdf(d: &springcore::assembly::AssemblyDesign) -> SdfScene {
     if d.members.is_empty() {
         return SdfScene::default();
@@ -1298,7 +1292,6 @@ fn pack_cut(slot: &mut [f32], cut: &GroundPlane) {
 /// Every geometry value packs `as f32` (mm-scale doubles lose ~1e-7
 /// relative precision, well under any rendering-visible threshold);
 /// `Appearance`'s fields are already `f32`.
-#[allow(dead_code)] // consumed by Task 5 (WGSL uniform upload) and Task 6 (app wiring)
 pub(crate) fn scene_uniforms(scene: &SdfScene) -> Option<Vec<f32>> {
     if scene.parts.len() > MAX_PARTS || scene.cuts.len() > MAX_CUTS {
         return None;

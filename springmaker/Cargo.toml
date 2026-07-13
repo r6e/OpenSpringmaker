@@ -23,6 +23,12 @@ plotters = { version = "0.3", default-features = false, features = [
     "ab_glyph",
 ] }
 rfd = "0.17.2"
+# Boot-time GPU probe (main.rs::shader_probe): wgpu's `request_adapter` is
+# async only for WebGPU's sake — on native it resolves immediately. pollster
+# is the smallest executor that drives a single future to completion on the
+# current thread (springmaker has no `futures` dependency to reuse, and iced
+# does not re-export an executor).
+pollster = "0.4"
 
 [dev-dependencies]
 approx = { workspace = true }

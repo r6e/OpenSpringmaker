@@ -3209,6 +3209,7 @@ dependencies = [
  "iced_test",
  "naga",
  "plotters",
+ "pollster",
  "rfd",
  "serde",
  "springcore",

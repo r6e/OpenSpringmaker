@@ -312,10 +312,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     pal,
                     crate::torsion::plot_model::torsion_chart(&outcome.design, us),
                 ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                crate::app::VisualMode::Spring3d => crate::viz::spring3d_element(
                     pal,
                     crate::torsion::scene_model::torsion_scene(&outcome.design),
+                    crate::viz::sdf::torsion_sdf(&outcome.design),
                     app.orbit,
+                    app.zoom,
+                    app.shader_available,
                 ),
             };
             let toggle = visual_toggle(pal, app.results_visual);

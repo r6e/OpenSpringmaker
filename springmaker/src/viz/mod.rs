@@ -276,8 +276,8 @@ pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
 
 /// Multiplicative zoom bounds — the shaded-3D camera's `App.zoom` clamp
 /// (spec §Interaction: "`App.zoom: f32` (default 1.0, clamped to
-/// `[0.3, 4.0]`)"); shared with Task 6's app-level zoom state and
-/// [`camera_uniforms`]'s own defensive clamp.
+/// `[0.3, 4.0]`)"); shared by [`zoom_step`] (the app-level accumulator)
+/// and [`camera_uniforms`]'s own defensive clamp.
 pub(crate) const ZOOM_MIN: f32 = 0.3;
 pub(crate) const ZOOM_MAX: f32 = 4.0;
 
@@ -293,7 +293,6 @@ const ZOOM_SENSITIVITY: f32 = 0.1;
 /// negative" edge case to separately guard), then clamped to [`ZOOM_MIN`],
 /// [`ZOOM_MAX`]. A non-finite delta (NaN/inf, e.g. a degenerate scroll
 /// event) leaves `current` unchanged, mirroring [`orbit_step`]'s guard.
-#[allow(dead_code)] // consumed by Task 6 (Message::Zoom wiring)
 pub(crate) fn zoom_step(current: f32, scroll_delta: f32) -> f32 {
     if !scroll_delta.is_finite() {
         return current;
@@ -577,7 +576,6 @@ fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, aspect: f64) -> [f64; 3
 /// callers, mirroring [`stroke_for`]'s non-finite guard); `zoom` is clamped
 /// to [`ZOOM_MIN`]/[`ZOOM_MAX`] even though the committed `App.zoom` state
 /// is expected to already be clamped by [`zoom_step`].
-#[allow(dead_code)] // consumed by Task 6 (app wiring)
 pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f32) -> [f32; 32] {
     let extent = if extent_mm.is_finite() && extent_mm > 0.0 {
         extent_mm
@@ -603,6 +601,97 @@ pub(crate) fn camera_uniforms(extent_mm: f64, orbit: Orbit, zoom: f32, aspect: f
     out[0..16].copy_from_slice(&mat4_to_f32(&view_proj));
     out[16..32].copy_from_slice(&mat4_to_f32(&inv_view_proj));
     out
+}
+
+/// Pure chooser for the results panel's 3D slot: the shaded path runs IFF
+/// a GPU adapter was found by the boot probe (`App.shader_available`) AND
+/// the scene is representable in the packed uniform budget
+/// ([`sdf::scene_uniforms`] returned `Some`). Everything else — no
+/// adapter, over-budget scene — falls back to the wireframe path.
+pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) -> bool {
+    shader_available && uniforms.is_some()
+}
+
+/// The nominal camera aspect for the shaded view: the same 760×300 frame
+/// the wireframe bitmap pipeline rasterizes at (`plot::CHART_W`/`CHART_H`).
+///
+/// **Accepted limitation (nominal, not live, bounds).** `SpringShader`
+/// carries a pre-packed camera built here at view time — its `draw` only
+/// clones it (Task 5's contract), so the shader widget's real layout bounds
+/// are not available to the camera math. The widget fills the same
+/// Fill×300 slot as the wireframe canvas; at panel widths other than
+/// 760 px the horizontal field of view is proportionally wider or narrower
+/// than exact. Fit-framing still holds for anything at least as wide as it
+/// is tall: [`fit_distance`] takes the MORE restrictive of the vertical and
+/// aspect-derived horizontal half-FOV, and the vertical (fixed) one governs
+/// for all aspects ≥ 1, so a wider-than-nominal panel only adds margin.
+fn chart_aspect() -> f32 {
+    crate::plot::CHART_W as f32 / crate::plot::CHART_H as f32
+}
+
+/// The shaded path's clear color: the same panel surface the wireframe
+/// bitmap fills, as the RGBA floats the WGSL `Camera.bg` slot expects.
+fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
+    let c = pal.panel;
+    [c.r, c.g, c.b, c.a]
+}
+
+/// The results panel's shared 3D element: shaded ray-marched view when
+/// [`use_shaded`] says so, the existing wireframe canvas otherwise.
+///
+/// **Degenerate scenes short-circuit to the placeholder BEFORE choosing.**
+/// An empty [`sdf::SdfScene`] is "representable" to `scene_uniforms` (zero
+/// parts pack fine and render pure background), so without this gate a
+/// degenerate design on the shaded path would show an empty background
+/// where the wireframe path shows the placeholder. Both geometry paths'
+/// degenerate verdicts are checked — the WIREFRAME's via the same
+/// `scene_extent` + `frame_ranges` tests `render_scene` itself performs,
+/// the SDF's via [`sdf::scene_extent_mm`] — and EITHER being degenerate
+/// shows the placeholder. The two verdicts agree for every real design
+/// (the family SDF builders and scene presenters share the same hostility
+/// rules: non-finite geometry and hostile coil counts empty both); if they
+/// ever disagree, the wireframe scene's verdict governs the WORDING via
+/// [`canvas3d`]'s `placeholder_for`, per the shipped placeholder contract.
+///
+/// The shaded widget matches the wireframe slot's sizing (Fill × the
+/// bitmap height) and builds its camera at the nominal [`chart_aspect`]
+/// (see that doc for the accepted live-bounds limitation).
+pub(crate) fn spring3d_element(
+    pal: &'static crate::app::Palette,
+    scene: SceneData,
+    sdf_scene: sdf::SdfScene,
+    orbit: Orbit,
+    zoom: f32,
+    shader_available: bool,
+) -> iced::Element<'static, crate::app::Message> {
+    let wireframe_frames = scene_extent(&scene)
+        .as_ref()
+        .and_then(render3d::frame_ranges)
+        .is_some();
+    let (true, Some(extent_mm)) = (wireframe_frames, sdf::scene_extent_mm(&sdf_scene)) else {
+        return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
+    };
+    let uniforms = sdf::scene_uniforms(&sdf_scene);
+    if !use_shaded(shader_available, uniforms.as_ref()) {
+        return scene_element(pal, scene, orbit);
+    }
+    let Some(uniforms) = uniforms else {
+        // Unreachable: `use_shaded` is true only when `uniforms` is `Some`.
+        // A typed fallback to the same wireframe path rather than an
+        // `unwrap` — the two branches are behaviorally identical, so this
+        // cannot drift from the chooser's verdict.
+        return scene_element(pal, scene, orbit);
+    };
+    let camera = camera_uniforms(extent_mm, orbit, zoom, chart_aspect());
+    let program = shader3d::SpringShader {
+        uniforms,
+        camera,
+        bg: bg_rgba(pal),
+    };
+    iced::widget::shader::Shader::new(program)
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fixed(crate::plot::CHART_H as f32))
+        .into()
 }
 
 #[cfg(test)]
@@ -830,6 +919,23 @@ mod tests {
         assert_eq!(zoom_step(1.5, f32::NAN), 1.5);
         assert_eq!(zoom_step(1.5, f32::INFINITY), 1.5);
         assert_eq!(zoom_step(1.5, f32::NEG_INFINITY), 1.5);
+    }
+
+    // ------------------------------------------------------------------
+    // Task 6: shaded/wireframe chooser
+    // ------------------------------------------------------------------
+
+    /// The full 2×2 truth table: the shaded path runs IFF a GPU adapter was
+    /// probed at boot AND the scene packed into the uniform budget. Any
+    /// other combination — no adapter, unrepresentable scene, or both —
+    /// falls back to the wireframe path.
+    #[test]
+    fn use_shaded_requires_adapter_and_representable_scene() {
+        let packed = vec![0.0f32; 4];
+        assert!(!use_shaded(false, None));
+        assert!(!use_shaded(false, Some(&packed)));
+        assert!(!use_shaded(true, None));
+        assert!(use_shaded(true, Some(&packed)));
     }
 
     // ------------------------------------------------------------------

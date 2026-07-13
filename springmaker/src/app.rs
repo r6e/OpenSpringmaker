@@ -321,15 +321,11 @@ pub enum Message {
     // control used by every family (compression, conical, extension, torsion,
     // assembly).
     Orbit(f32, f32),
-    // Shaded-3D zoom (Task 5 addition, ahead of Task 6's app-wiring plan
-    // step): the shaded shader3d::SpringShader::update publishes this from a
-    // wheel-scroll event on the shader widget, mirroring `Orbit`'s "publish
-    // the raw delta, accumulate in App::update" discipline. Task 6 adds the
-    // `App.zoom` field and wires this arm to `crate::viz::zoom_step`; until
-    // then the placeholder arm below keeps this match exhaustive (same
-    // "wire app dispatch in the form task + placeholder" shape the app has
-    // used before for a cross-task enum addition).
-    #[allow(dead_code)] // consumed by Task 6 (app wiring / spring3d_element)
+    // Shaded-3D zoom: `shader3d::SpringShader::update` publishes this from
+    // a wheel-scroll event on the shader widget, mirroring `Orbit`'s
+    // "publish the raw delta, accumulate in App::update" discipline — the
+    // single accumulation point is the `Message::Zoom` arm below, via
+    // `crate::viz::zoom_step`.
     Zoom(f32),
     Visual(VisualMode),
     // Settings screen: emitted by the correction option buttons in settings_view.
@@ -399,6 +395,23 @@ pub struct App {
     /// Committed 3D orbit angles for the results panel's `Spring3d` visual.
     /// Shared across families so the orientation follows the user.
     pub orbit: crate::viz::Orbit,
+    /// Committed multiplicative zoom for the shaded 3D camera (1.0 = the
+    /// fit-to-extent framing; clamped to `viz::ZOOM_MIN..=ZOOM_MAX`). The
+    /// `Message::Zoom` arm is the single writer, via `viz::zoom_step`, so
+    /// its non-finite guard keeps this finite by induction — the same
+    /// argument as `orbit`. Shared across families like `orbit`.
+    pub zoom: f32,
+    /// Whether a GPU adapter exists for the shaded 3D path (`main.rs`'s
+    /// boot-time `shader_probe` sets it once, mirroring how `settings_path`
+    /// and `theme_pref` are wired post-construction). `from_store` ALWAYS
+    /// defaults this to `false`, for two load-bearing reasons: (a) probing
+    /// is machine-dependent, so a probing constructor would make every
+    /// headless-Simulator test's widget tree vary with the host GPU; (b)
+    /// HARD RULE — no snapshot test may ever hash a render of an app with
+    /// `shader_available = true` (GPU `Shader` pixels are adapter/driver-
+    /// specific; see `ui_tests::snapshot_hash`'s doc). Defaulting false
+    /// keeps the entire suite on the deterministic CPU wireframe path.
+    pub shader_available: bool,
     /// Which visual (chart or 3D) occupies the results panel's shared slot.
     pub results_visual: VisualMode,
     // Screen routing
@@ -457,6 +470,8 @@ impl App {
             error: None,
             action_error: None,
             orbit: crate::viz::Orbit::default(),
+            zoom: 1.0,
+            shader_available: false,
             results_visual: VisualMode::default(),
             screen: Screen::Calculator,
             mat_form: MaterialsFormState::default(),
@@ -809,11 +824,14 @@ impl App {
                 self.orbit = crate::viz::orbit_step(self.orbit, dx, dy);
                 false
             }
-            // Placeholder: no `App.zoom` field exists yet (Task 6 adds it +
-            // the real `zoom_step` wiring). Keeping the match exhaustive lets
-            // `shader3d::SpringShader` construct/publish this message today
-            // without a dangling no-op message nobody handles.
-            Message::Zoom(_delta) => false,
+            // Same non-recompute shape as `Orbit`: `zoom_step` is the single
+            // consumer of a raw wheel delta, so its non-finite guard and
+            // clamp keep `self.zoom` finite and in-bounds by induction — no
+            // other code path can write to `self.zoom`.
+            Message::Zoom(delta) => {
+                self.zoom = crate::viz::zoom_step(self.zoom, delta);
+                false
+            }
             Message::Visual(v) => {
                 self.results_visual = v;
                 false
@@ -1553,25 +1571,78 @@ mod tests {
         assert_eq!(app.action_error.as_deref(), Some("sentinel"));
     }
 
-    /// `Message::Zoom`'s Task-5 placeholder arm (Task 6 wires the real
-    /// `App.zoom` + `zoom_step` handling) must be a true no-op: no
-    /// recompute, no side effect — so `shader3d::SpringShader::update` can
-    /// construct/publish it today without any observable app-state change
-    /// until Task 6 lands.
+    /// `Message::Zoom` mirrors `Message::Orbit`'s update-boundary contract:
+    /// delegate to `viz::zoom_step` (never duplicate its math), recompute
+    /// nothing — both the save/load `action_error` and the solve `error`
+    /// sentinels must survive (recompute clears `action_error`; a solve
+    /// clears/overwrites `error`).
     #[test]
-    fn zoom_message_placeholder_is_a_true_no_op_pending_task_6() {
+    fn zoom_message_composes_the_delta_via_zoom_step_without_recompute() {
         let mut app = test_app();
         app.action_error = Some("sentinel".into());
-        let before_orbit = app.orbit;
-        let before_visual = app.results_visual;
+        app.error = Some("solve sentinel".into());
+        let before = app.zoom;
         app.update(Message::Zoom(2.0));
-        assert_eq!(app.orbit, before_orbit);
-        assert_eq!(app.results_visual, before_visual);
         assert_eq!(
-            app.action_error.as_deref(),
-            Some("sentinel"),
-            "Zoom must not recompute (recompute clears action_error)"
+            app.zoom,
+            crate::viz::zoom_step(before, 2.0),
+            "App::update must delegate to zoom_step, not duplicate its math"
         );
+        assert_eq!(app.action_error.as_deref(), Some("sentinel"));
+        assert_eq!(app.error.as_deref(), Some("solve sentinel"));
+    }
+
+    /// `App.zoom` starts at 1.0 (unmagnified) and, because the arm routes
+    /// every delta through `zoom_step`, extreme deltas land EXACTLY on the
+    /// shared clamp bounds — the orbit pitch-clamp precedent.
+    #[test]
+    fn zoom_message_defaults_to_one_and_clamps_at_exact_bounds() {
+        let mut app = test_app();
+        assert_eq!(app.zoom, 1.0, "from_store must initialize zoom to 1.0");
+        app.update(Message::Zoom(1000.0));
+        assert_eq!(app.zoom, crate::viz::ZOOM_MAX);
+        app.update(Message::Zoom(-1000.0));
+        assert_eq!(app.zoom, crate::viz::ZOOM_MIN);
+    }
+
+    /// A non-finite wheel delta must leave the committed zoom unchanged —
+    /// `zoom_step`'s guard is the single writer's induction step keeping
+    /// `self.zoom` finite forever (the orbit NaN-delta precedent).
+    #[test]
+    fn zoom_message_ignores_a_non_finite_delta() {
+        let mut app = test_app();
+        app.update(Message::Zoom(0.5));
+        let before = app.zoom;
+        app.update(Message::Zoom(f32::NAN));
+        assert_eq!(app.zoom, before);
+        app.update(Message::Zoom(f32::INFINITY));
+        assert_eq!(app.zoom, before);
+    }
+
+    /// Wheel events publish per-event DELTAS (`SpringShader::update`), so —
+    /// exactly like the orbit compose pin — two sequential deltas must land
+    /// where one combined delta would (`zoom_step` is multiplicative:
+    /// e^0.1 · e^0.1 = e^0.2), so coalesced scroll events never drop steps.
+    #[test]
+    fn zoom_message_composes_across_repeated_updates() {
+        use approx::assert_relative_eq;
+
+        let mut sequential = test_app();
+        sequential.update(Message::Zoom(1.0));
+        sequential.update(Message::Zoom(1.0));
+
+        let mut combined = test_app();
+        combined.update(Message::Zoom(2.0));
+
+        assert_relative_eq!(sequential.zoom, combined.zoom, max_relative = 1e-6);
+    }
+
+    /// `from_store` (every test-constructed app) must default
+    /// `shader_available` to FALSE — the deterministic wireframe path. See
+    /// the field's doc for the hard rule this anchors.
+    #[test]
+    fn from_store_defaults_shader_available_to_false() {
+        assert!(!test_app().shader_available);
     }
 
     /// The regression this fix targets: publishing per-event DELTAS (rather

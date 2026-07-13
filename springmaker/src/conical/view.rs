@@ -115,10 +115,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                     pal,
                     crate::conical::plot_model::conical_chart(&outcome.design, us),
                 ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
+                crate::app::VisualMode::Spring3d => crate::viz::spring3d_element(
                     pal,
                     crate::conical::scene_model::conical_scene(&outcome.design),
+                    crate::viz::sdf::conical_sdf(&outcome.design),
                     app.orbit,
+                    app.zoom,
+                    app.shader_available,
                 ),
             };
             let toggle = visual_toggle(pal, app.results_visual);
