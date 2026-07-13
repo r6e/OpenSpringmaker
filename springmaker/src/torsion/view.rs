@@ -296,11 +296,9 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         TorResultsView::Error(msg) => results_error(pal, msg),
         TorResultsView::Empty => results_empty(pal),
         TorResultsView::Populated(p) => {
-            // The results panel's shared visual slot (`results_visual_element`
-            // — laziness preserved via closures, so exactly one load-
-            // deflection bitmap is rasterized per render: orbit drags
-            // re-render every frame, and an eagerly-built chart would be
-            // thrown away each time). Built from the outcome the Populated
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Built from the outcome the Populated
             // variant guarantees is present.
             let outcome = app
                 .tor_outcome

@@ -2795,29 +2795,14 @@ mod tests {
         for aspect in [1.777_f32, 0.5625_f32] {
             let camera = crate::viz::camera_uniforms(extent, y_mid, orbit, 1.0, aspect)
                 .expect("finite, sane inputs always produce a camera");
-            let view_proj: [f64; 16] = std::array::from_fn(|i| f64::from(camera[i]));
-            // Column-major 4x4 * homogeneous vec4, matching camera_uniforms's
-            // documented WGSL-mirroring layout.
-            let apply = |m: &[f64; 16], v: [f64; 4]| -> [f64; 4] {
-                std::array::from_fn(|row| (0..4).map(|col| m[col * 4 + row] * v[col]).sum::<f64>())
-            };
-            for axis in 0..3 {
-                for sign in [-1.0, 1.0] {
-                    let mut pole = center;
-                    pole[axis] += sign * true_radius;
-                    let clip = apply(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
-                    assert!(
-                        clip[3] > 0.0,
-                        "aspect {aspect}: pole {pole:?} behind the camera"
-                    );
-                    let ndc_x = clip[0] / clip[3];
-                    let ndc_y = clip[1] / clip[3];
-                    assert!(
-                        ndc_x.abs() <= 1.0 + 1e-6 && ndc_y.abs() <= 1.0 + 1e-6,
-                        "aspect {aspect}: pole {pole:?} outside NDC (x={ndc_x} y={ndc_y})"
-                    );
-                }
-            }
+            // Shared frustum-containment assertion (simplifier F-2): uses the
+            // production mat4_mul_vec4, not a hand-rolled projection.
+            crate::viz::assert_poles_inside_ndc(
+                &camera,
+                center,
+                true_radius,
+                &format!("aspect {aspect}"),
+            );
         }
     }
 

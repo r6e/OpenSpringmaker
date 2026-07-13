@@ -117,6 +117,17 @@ mod tests {
         MaterialStore::new(MaterialSet::load_default())
     }
 
+    /// (min y, max y) over a polyline's points — the hook-span pins fold the
+    /// y-extremes four ways otherwise (simplifier nit).
+    fn y_extremes(line: &Polyline3) -> (f64, f64) {
+        line.points
+            .iter()
+            .map(|p| p.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(y), hi.max(y))
+            })
+    }
+
     /// Golden fixture mirrored from `extension/plot_model.rs`'s `solved`
     /// fixture: wire 2mm, mean 20mm, active 10 coils, free 100mm, Fi 5N,
     /// loads 10/30N — default hook mode (r1 = D/2 = 10mm, r2 = D/4 = 5mm).
@@ -206,16 +217,8 @@ mod tests {
                 p.1
             );
         }
-        let bottom_min = bottom
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold(f64::INFINITY, f64::min);
-        let top_max = top
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold(f64::NEG_INFINITY, f64::max);
+        let (bottom_min, _) = y_extremes(bottom);
+        let (_, top_max) = y_extremes(top);
         assert_relative_eq!(bottom_min, -2.0 * r1, max_relative = 1e-9);
         assert_relative_eq!(top_max, body_top + 2.0 * r1, max_relative = 1e-9);
     }
@@ -259,16 +262,8 @@ mod tests {
         let d = design();
         let s = extension_scene(&d);
         let wire_r = d.wire_dia.millimeters() / 2.0;
-        let bottom_min = s.polylines[1]
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold(f64::INFINITY, f64::min);
-        let top_max = s.polylines[2]
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold(f64::NEG_INFINITY, f64::max);
+        let (bottom_min, _) = y_extremes(&s.polylines[1]);
+        let (_, top_max) = y_extremes(&s.polylines[2]);
         let inside_span = (top_max - wire_r) - (bottom_min + wire_r);
         assert_relative_eq!(
             inside_span,

@@ -89,13 +89,10 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         AsmResultsView::Error(msg) => results_error(pal, msg),
         AsmResultsView::Empty => results_empty(pal),
         AsmResultsView::Populated(p) => {
-            // The results panel's shared visual slot (`results_visual_element`
-            // — laziness preserved via closures, so exactly one bitmap is
-            // rasterized per render: orbit drags re-render every frame, and
-            // an eagerly-built chart would be thrown away each time). Built
-            // from the outcome the Populated variant guarantees is present.
-            // Unlike the other families, the assembly outcome IS the design
-            // — no wrapper struct to unwrap first.
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Unlike the other families, the assembly
+            // outcome IS the design — no wrapper struct to unwrap first.
             let outcome = app
                 .asm_outcome
                 .as_ref()

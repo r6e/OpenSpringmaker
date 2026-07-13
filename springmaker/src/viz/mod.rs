@@ -375,6 +375,48 @@ fn mat4_mul_vec4(m: &Mat4, v: [f64; 4]) -> [f64; 4] {
     out
 }
 
+/// Shared frustum-containment assertion (simplifier F-2 dedup): projects a
+/// bounding sphere's six world-axis poles (`center ± true_radius` on each
+/// axis) through a packed camera's forward `view_proj` (its first 16 floats)
+/// and asserts every pole lands in front of the camera and inside NDC
+/// `[-1, 1]` (a tiny epsilon absorbs f32 rounding at the tangent boundary).
+/// Uses the production [`mat4_mul_vec4`] so the containment pins exercise the
+/// SAME projection the shader consumes — no hand-rolled re-implementation to
+/// drift. Shared by this module's parametric two-aspect pin and
+/// `viz::sdf`'s end-to-end extension-hook fixture pin; `context` names the
+/// caller's varied parameters for the failure message.
+#[cfg(test)]
+pub(crate) fn assert_poles_inside_ndc(
+    camera: &[f32; 32],
+    center: [f64; 3],
+    true_radius: f64,
+    context: &str,
+) {
+    let view_proj: Mat4 = std::array::from_fn(|i| f64::from(camera[i]));
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            let mut pole = center;
+            pole[axis] += sign * true_radius;
+            let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
+            assert!(
+                clip[3] > 0.0,
+                "{context}: pole {pole:?} landed behind the camera (w={})",
+                clip[3]
+            );
+            let ndc_x = clip[0] / clip[3];
+            let ndc_y = clip[1] / clip[3];
+            assert!(
+                ndc_x.abs() <= 1.0 + 1e-6,
+                "{context}: pole {pole:?} ndc_x={ndc_x}"
+            );
+            assert!(
+                ndc_y.abs() <= 1.0 + 1e-6,
+                "{context}: pole {pole:?} ndc_y={ndc_y}"
+            );
+        }
+    }
+}
+
 /// Right-handed look-at view matrix (world → view space; camera looks down
 /// its own -Z, +X right, +Y up) — the standard construction. `up` need not
 /// be exactly orthogonal to `target - eye` (re-orthogonalized via the cross
@@ -1285,30 +1327,12 @@ mod tests {
             for aspect in [1.777_f32, 0.5625_f32] {
                 let out = camera_uniforms(extent, y_mid, orbit, 1.0, aspect)
                     .expect("finite, sane inputs always produce a camera");
-                let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
-                for axis in 0..3 {
-                    for sign in [-1.0, 1.0] {
-                        let mut pole = center;
-                        pole[axis] += sign * true_radius;
-                        let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
-                        assert!(
-                            clip[3] > 0.0,
-                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} landed behind the \
-                             camera (w={})",
-                            clip[3]
-                        );
-                        let ndc_x = clip[0] / clip[3];
-                        let ndc_y = clip[1] / clip[3];
-                        assert!(
-                            ndc_x.abs() <= 1.0 + 1e-6,
-                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} ndc_x={ndc_x}"
-                        );
-                        assert!(
-                            ndc_y.abs() <= 1.0 + 1e-6,
-                            "y_mid {y_mid} aspect {aspect}: pole {pole:?} ndc_y={ndc_y}"
-                        );
-                    }
-                }
+                assert_poles_inside_ndc(
+                    &out,
+                    center,
+                    true_radius,
+                    &format!("y_mid {y_mid} aspect {aspect}"),
+                );
             }
         }
     }
