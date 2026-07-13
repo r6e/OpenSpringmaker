@@ -74,7 +74,21 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
 /// "X is below X" — self-contradictory (R2 stateful-UI F2) — so the deficit
 /// is appended in scientific notation, which never rounds to zero for a
 /// genuinely rejected (strictly smaller) value.
+///
+/// The engine guards the SI-metre values finite, but the metre→display scale
+/// (`×1000` for mm) can push a finite-but-astronomical minimum past
+/// `f64::MAX` to ±∞ (R3 input-domain F-R3-1: e.g. `active_coils = 3e307`
+/// yields `min ≈ 1.92e305 m`, and `×1000` overflows). Rendering "…minimum
+/// inf mm" is garbage, so a non-finite converted value falls back to an
+/// out-of-range phrasing that carries no bogus number. (Display-layer,
+/// defense-in-depth fix — the finding's minimum-required remedy.)
 fn below_minimum_message(free: f64, min: f64, unit: &str) -> String {
+    if !free.is_finite() || !min.is_finite() {
+        return format!(
+            "free length is below the close-wound minimum, but the value is \
+             out of the displayable range in {unit} (input out of range)"
+        );
+    }
     let free_s = format!("{free:.3}");
     let min_s = format!("{min:.3}");
     let base =
@@ -518,6 +532,29 @@ mod tests {
             msg,
             "free length 57.213 mm is below the close-wound minimum 57.213 mm \
              (short by 3.727e-4 mm)"
+        );
+    }
+
+    /// R3 input-domain F-R3-1: a finite-but-astronomical SI minimum (the
+    /// value the compression solver emits for `active_coils = "3e307"`,
+    /// ≈1.92e305 m) overflows the metre→mm `×1000` scale to +∞
+    /// (`f64::MAX/1000 ≈ 1.798e305`). The display layer must NOT render
+    /// "…close-wound minimum inf mm"; it falls back to an out-of-range
+    /// phrasing carrying no non-finite number.
+    #[test]
+    fn format_error_below_minimum_astronomical_minimum_does_not_render_inf() {
+        let e = SpringError::FreeLengthBelowMinimum {
+            free_length_m: 0.06,         // ×1000 = 60 mm, finite
+            min_free_length_m: 1.92e305, // ×1000 = +∞ mm
+        };
+        let msg = format_error(&e, UnitSystem::Metric);
+        assert!(
+            !msg.contains("inf") && !msg.contains("NaN"),
+            "must not render a non-finite number; got: {msg}"
+        );
+        assert!(
+            msg.contains("out of") && msg.contains("range"),
+            "must fall back to an out-of-range phrasing; got: {msg}"
         );
     }
 
