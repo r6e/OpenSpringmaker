@@ -580,6 +580,36 @@ pub(crate) fn visual_toggle(
     )
 }
 
+/// The results panel's shared visual slot: chart or orbitable 3D scene,
+/// selected by `app.results_visual` — identical dispatch in every family
+/// (compression, conical, extension, torsion, assembly), collapsing five
+/// byte-identical `match` arms into one call (simplifier F1). `chart`/
+/// `scene3d` are `FnOnce` so exactly ONE visual is BUILT per render —
+/// laziness preserved: an eagerly-built chart or scene would be thrown away
+/// every frame the OTHER visual is active (orbit drags re-render every
+/// frame while the shaded/wireframe path is showing).
+pub(crate) fn results_visual_element<'a>(
+    pal: &'static Palette,
+    app: &App,
+    chart: impl FnOnce() -> Element<'a, Message>,
+    scene3d: impl FnOnce() -> (crate::viz::SceneData, crate::viz::sdf::SdfScene),
+) -> Element<'a, Message> {
+    match app.results_visual {
+        VisualMode::Chart => chart(),
+        VisualMode::Spring3d => {
+            let (scene, sdf_scene) = scene3d();
+            crate::viz::spring3d_element(
+                pal,
+                scene,
+                sdf_scene,
+                app.orbit,
+                app.zoom,
+                app.shader_available,
+            )
+        }
+    }
+}
+
 // ── Labeled input ────────────────────────────────────────────────────────────
 
 /// A labeled text input: muted label above a styled monospace input. The caller

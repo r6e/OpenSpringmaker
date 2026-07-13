@@ -89,33 +89,33 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         AsmResultsView::Error(msg) => results_error(pal, msg),
         AsmResultsView::Empty => results_empty(pal),
         AsmResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one bitmap is rasterized per render
-            // (orbit drags re-render every frame; an eagerly-built chart
-            // would be thrown away each time). Unlike the other families,
-            // the assembly outcome IS the design — no wrapper struct to
-            // unwrap first.
+            // The results panel's shared visual slot (`results_visual_element`
+            // — laziness preserved via closures, so exactly one bitmap is
+            // rasterized per render: orbit drags re-render every frame, and
+            // an eagerly-built chart would be thrown away each time). Built
+            // from the outcome the Populated variant guarantees is present.
+            // Unlike the other families, the assembly outcome IS the design
+            // — no wrapper struct to unwrap first.
             let outcome = app
                 .asm_outcome
                 .as_ref()
                 .expect("AsmResultsView::Populated implies app.asm_outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::assembly::plot_model::assembly_chart(outcome, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::spring3d_element(
-                    pal,
-                    crate::assembly::scene_model::assembly_scene(outcome),
-                    crate::viz::sdf::assembly_sdf(outcome),
-                    app.orbit,
-                    app.zoom,
-                    app.shader_available,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::assembly::plot_model::assembly_chart(outcome, us),
+                    )
+                },
+                || {
+                    (
+                        crate::assembly::scene_model::assembly_scene(outcome),
+                        crate::viz::sdf::assembly_sdf(outcome),
+                    )
+                },
+            );
             let toggle = visual_toggle(pal, app.results_visual);
 
             render_populated(pal, &p, toggle, visual)

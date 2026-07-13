@@ -347,6 +347,52 @@ fn segmented_selection_highlight_renders_differently() {
     );
 }
 
+/// P11 pin (stateful adversary, adopted as a permanent regression test):
+/// the wireframe 3D slot must render DIFFERENTLY under the dark vs. light
+/// palette — `render3d`'s stroke/background colors come from `Palette`, so
+/// an equal render across themes would mean the wireframe path silently
+/// ignores the active palette (a real risk given `OrbitCanvas`'s bitmap is
+/// cached at `view()` time and could plausibly be built from a stale/wrong
+/// palette reference). HARD RULE (per `snapshot_hash`'s doc): `shader_available`
+/// stays `false` throughout — asserted explicitly, not just inherited from
+/// `test_app`'s default — so both snapshots stay on the deterministic CPU
+/// wireframe path, never the GPU shader. Stem names are chosen so neither is
+/// a prefix of the other (`snapshot_hash`'s lookup caveat).
+#[test]
+fn wireframe_3d_slot_renders_differently_under_dark_vs_light_palette() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(
+        !app.shader_available,
+        "P11 HARD RULE: must stay on the deterministic wireframe path"
+    );
+
+    let dir = unique_temp_dir("openspringmaker-p11-palette-wireframe");
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let dark_theme = app.theme();
+    let hash_dark = snapshot_hash(&app, &dark_theme, &dir, "p11-dark-wireframe");
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    assert!(
+        !app.shader_available,
+        "P11 HARD RULE: theme switch must not flip the shader flag"
+    );
+    let light_theme = app.theme();
+    let hash_light = snapshot_hash(&app, &light_theme, &dir, "p11-light-wireframe");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        hash_dark, hash_light,
+        "the Spring3d wireframe slot rendered identically under the dark and light \
+         palettes; the wireframe renderer's stroke/background colors come from the \
+         active Palette, so equal renders mean it stopped reading it"
+    );
+}
+
 #[test]
 fn save_entry_commits_a_clone_and_closes_the_editor() {
     let mut app = test_app();

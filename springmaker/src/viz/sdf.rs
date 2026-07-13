@@ -38,7 +38,10 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 /// (`4 + MAX_PARTS·FLOATS_PER_PART + MAX_CUTS·FLOATS_PER_CUT` floats, here
 /// 804, ~3.2KB) is cheap enough to be generous with. Past it,
 /// [`scene_uniforms`] returns `None` and the caller falls back to the
-/// wireframe placeholder — never truncation.
+/// wireframe RENDER (the same orbitable polyline scene the non-shaded path
+/// always shows — proven by probe: an over-budget but otherwise valid
+/// design still has a representable wireframe scene, so it renders that,
+/// NOT the degenerate placeholder text) — never truncation.
 pub(crate) const MAX_PARTS: usize = 48;
 /// Maximum number of [`GroundPlane`] cuts one packed scene may carry. Every
 /// current family emits at most 2 (one ground-flattened end each side);
@@ -58,6 +61,17 @@ pub(crate) const MARCH_EPS: f32 = 1e-3;
 pub(crate) const FLOATS_PER_PART: usize = 16;
 /// Fixed per-cut float stride — see [`scene_uniforms`]'s doc.
 pub(crate) const FLOATS_PER_CUT: usize = 8;
+/// Float offset of the cut-slot region within [`scene_uniforms`]'s packed
+/// buffer: the 4-float header plus every part slot (simplifier F3 — hoisted
+/// so `scene_uniforms`/`unpack_scene`/the mixed-scene test fixture below
+/// all read the identical value instead of re-deriving it).
+pub(crate) const CUTS_BASE_FLOATS: usize = 4 + MAX_PARTS * FLOATS_PER_PART;
+/// Total float length of [`scene_uniforms`]'s packed buffer — the 4-float
+/// header, every part slot, then every cut slot (simplifier F3 — hoisted and
+/// aliased at every spelling: `scene_uniforms`, `unpack_scene`,
+/// `shader3d::SCENE_STORAGE_FLOATS`, and the test fixtures that build a
+/// buffer of this exact size).
+pub(crate) const SCENE_UNIFORM_FLOATS: usize = CUTS_BASE_FLOATS + MAX_CUTS * FLOATS_PER_CUT;
 /// Sentinel packed into a Helix slot's `taper_small_r` float to mean
 /// `None` (no taper) — see [`scene_uniforms`]'s doc for the decode
 /// contract. **Negative, not `NaN`.** `taper_small_r` is a physical
@@ -78,7 +92,7 @@ const NO_TAPER_SENTINEL: f32 = -1.0;
 /// A point or vector in millimetres, in whatever local frame the caller
 /// established (world frame for scene composition; a part's own local
 /// frame for primitive evaluation).
-pub(crate) type Vec3 = [f64; 3];
+type Vec3 = [f64; 3];
 
 fn vsub(u: Vec3, v: Vec3) -> Vec3 {
     [u[0] - v[0], u[1] - v[1], u[2] - v[2]]
@@ -160,11 +174,11 @@ const MEMBER_HUE_SHIFTS: [[f32; 3]; 4] = [
 /// Documented length of [`MEMBER_HUE_SHIFTS`] — exported so callers (and
 /// this module's own property test) read the real table length rather
 /// than a copied literal.
-pub(crate) const MEMBER_HUE_TABLE_LEN: usize = MEMBER_HUE_SHIFTS.len();
+const MEMBER_HUE_TABLE_LEN: usize = MEMBER_HUE_SHIFTS.len();
 
 /// Steel tinted by `index`'s hue shift, wrapping every
 /// [`MEMBER_HUE_TABLE_LEN`] members.
-pub(crate) fn member_appearance(index: usize) -> Appearance {
+fn member_appearance(index: usize) -> Appearance {
     let base = steel();
     let shift = MEMBER_HUE_SHIFTS[index % MEMBER_HUE_TABLE_LEN];
     Appearance {
@@ -183,7 +197,7 @@ pub(crate) fn member_appearance(index: usize) -> Appearance {
 /// hemispherical end caps for free. Exact everywhere, hence trivially
 /// conservative (never overestimates) — sphere-tracing may rely on it
 /// without slack.
-pub(crate) fn sd_capsule(p: Vec3, a: Vec3, b: Vec3, radius_mm: f64) -> f64 {
+fn sd_capsule(p: Vec3, a: Vec3, b: Vec3, radius_mm: f64) -> f64 {
     let seg = vsub(b, a);
     let from_a = vsub(p, a);
     let seg_len_sq = vdot(seg, seg);
@@ -217,7 +231,7 @@ pub(crate) fn sd_capsule(p: Vec3, a: Vec3, b: Vec3, radius_mm: f64) -> f64 {
 /// endpoint centerline points) is the EXACT distance to the capped arc's
 /// centerline — clamped exactly like [`sd_capsule`]'s segment clamp, not
 /// an approximation.
-pub(crate) fn sd_torus_arc(p_local: Vec3, major_r: f64, minor_r: f64, sweep: f64) -> f64 {
+fn sd_torus_arc(p_local: Vec3, major_r: f64, minor_r: f64, sweep: f64) -> f64 {
     let azimuth = p_local[2].atan2(p_local[0]).rem_euclid(TAU);
     if (0.0..=sweep).contains(&azimuth) {
         let radial = p_local[0].hypot(p_local[2]) - major_r;
@@ -234,7 +248,7 @@ pub(crate) fn sd_torus_arc(p_local: Vec3, major_r: f64, minor_r: f64, sweep: f64
 /// is the classic 2D box SDF (`length(max(q, 0)) + min(max(q.x, q.y), 0)`,
 /// `q = (|d_radial| - half_w, |d_axial| - half_h)`) — also exact, the
 /// standard construction used throughout SDF literature.
-pub(crate) fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f64 {
+fn sd_profile_2d(d_radial: f64, d_axial: f64, profile: Profile) -> f64 {
     match profile {
         Profile::Circle { radius_mm } => d_radial.hypot(d_axial) - radius_mm,
         Profile::Rectangle {
@@ -445,7 +459,7 @@ pub(crate) struct HelixParams {
 /// `conical_sdf` both reject `pitch <= 0.0` before building one; audited),
 /// but this function does not itself defend against the precondition —
 /// callers must.
-pub(crate) fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
+fn sd_helix(p: Vec3, h: &HelixParams) -> f64 {
     let axial = p[1] - h.axial_offset_mm;
     let radial = p[0].hypot(p[2]);
     let theta = (p[2].atan2(p[0]) - h.phase_rad).rem_euclid(TAU);
@@ -578,7 +592,7 @@ fn profile_cap_radius(profile: Profile) -> f64 {
 /// (where the base surface meets the plane, e.g. a ground end's rim) it
 /// UNDER-estimates the true distance to the composed boundary, which is the
 /// safe direction for sphere tracing. Away from the seam it is exact.
-pub(crate) fn cut_plane(d: f64, p: Vec3, plane_point: Vec3, plane_normal: Vec3) -> f64 {
+fn cut_plane(d: f64, p: Vec3, plane_point: Vec3, plane_normal: Vec3) -> f64 {
     d.max(vdot(vsub(p, plane_point), plane_normal))
 }
 
@@ -688,7 +702,7 @@ fn part_distance(shape: &SdfPart, p: Vec3) -> f64 {
 /// [`scene_extent_mm`] first, the same discipline as the wireframe's
 /// `scene_extent`/placeholder gate).
 #[allow(dead_code)] // CPU-side reference: exercised by the test suite (WGSL cross-checks)
-pub(crate) fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
+fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
     let mut best = f64::INFINITY;
     let mut best_index = 0usize;
     for (index, part) in scene.parts.iter().enumerate() {
@@ -705,7 +719,7 @@ pub(crate) fn sdf_eval_part(scene: &SdfScene, p: Vec3) -> (f64, usize) {
 /// [`cut_plane`] (sequential `max` — associative/commutative, so cut order
 /// never matters).
 #[allow(dead_code)] // CPU-side reference: exercised by the test suite (WGSL cross-checks)
-pub(crate) fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
+fn sdf_eval(scene: &SdfScene, p: Vec3) -> f64 {
     let (mut d, _) = sdf_eval_part(scene, p);
     for cut in &scene.cuts {
         d = cut_plane(d, p, cut.point, cut.normal);
@@ -954,31 +968,60 @@ fn ground_cuts(
     ]
 }
 
+/// The five `SpringDesign` fields every single-radius coil body needs
+/// (`active`/`total` coils, mean radius, wire, pitch), pre-validated against
+/// the coils/geometry/pitch hostility gate — shared by `compression_sdf` and
+/// `assembly_sdf`'s per-member loop (simplifier F2; every assembly member IS
+/// a `SpringDesign`, so it needs the identical reader and gate).
+struct CoilGeom {
+    active: f64,
+    total: f64,
+    r: f64,
+    wire: f64,
+    pitch: f64,
+}
+
+/// Reads [`CoilGeom`] from a `SpringDesign`'s solved fields, or `None` if
+/// the coil counts/geometry are hostile — INCLUDING `pitch <= 0.0` (review
+/// finding 6). `pitch` is a real, independent parameter for every caller of
+/// this reader (unlike extension/torsion's close-wound body, whose
+/// `pitch_mm = wire` is always positive by construction, so those families
+/// don't go through this reader at all) — see [`sd_helix`]'s doc for why
+/// `pitch_mm == 0.0` is a genuine precondition violation, not merely an
+/// unusual value. `geometry_hostile` alone doesn't catch it (`0.0` is
+/// finite), so it's checked separately.
+fn coil_geom(design: &springcore::SpringDesign) -> Option<CoilGeom> {
+    let active = design.active_coils;
+    let total = design.total_coils;
+    let r = design.mean_dia.millimeters() / 2.0;
+    let wire = design.wire_dia.millimeters();
+    let pitch = design.pitch.millimeters();
+    if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) || pitch <= 0.0 {
+        return None;
+    }
+    Some(CoilGeom {
+        active,
+        total,
+        r,
+        wire,
+        pitch,
+    })
+}
+
 /// Compression family SDF scene: reuses `SpringDesign`'s SOLVED fields
 /// (`mean_dia`, `wire_dia`, `pitch`, `active_coils`, `total_coils`,
-/// `end_type`) — the same fields `compression::scene_model::compression_scene`
-/// reads — so both geometry paths render the SAME spring. See
-/// [`helical_body_parts`] for why a ground-ended design needs 3 `Helix`
-/// parts, not the single helix a first glance suggests.
-///
-/// **`pitch <= 0.0` is hostile (review finding 6).** `pitch` is a real,
-/// independent parameter here (unlike extension/torsion's close-wound body,
-/// whose `pitch_mm = wire` is always positive by construction) — see
-/// [`sd_helix`]'s doc for why `pitch_mm == 0.0` is a genuine precondition
-/// violation, not merely an unusual value. `geometry_hostile` alone doesn't
-/// catch this (0.0 is finite), so it's checked separately.
+/// `end_type`) via [`coil_geom`] — the same fields
+/// `compression::scene_model::compression_scene` reads — so both geometry
+/// paths render the SAME spring. See [`helical_body_parts`] for why a
+/// ground-ended design needs 3 `Helix` parts, not the single helix a first
+/// glance suggests.
 pub(crate) fn compression_sdf(d: &springcore::SpringDesign) -> SdfScene {
-    let active = d.active_coils;
-    let total = d.total_coils;
-    let r = d.mean_dia.millimeters() / 2.0;
-    let wire = d.wire_dia.millimeters();
-    let pitch = d.pitch.millimeters();
-    if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) || pitch <= 0.0 {
+    let Some(g) = coil_geom(d) else {
         return SdfScene::default();
-    }
+    };
     SdfScene {
-        parts: helical_body_parts(|_| r, active, total, pitch, wire, 0.0, steel()),
-        cuts: ground_cuts(d.end_type, active, total, pitch, wire),
+        parts: helical_body_parts(|_| g.r, g.active, g.total, g.pitch, g.wire, 0.0, steel()),
+        cuts: ground_cuts(d.end_type, g.active, g.total, g.pitch, g.wire),
     }
 }
 
@@ -1154,11 +1197,12 @@ pub(crate) fn torsion_sdf(d: &springcore::torsion::TorsionDesign) -> SdfScene {
     }
 }
 
-/// Assembly family SDF scene: each member's own coil body (via
-/// [`helical_body_parts`] — every member IS a `SpringDesign`, so this reuses
-/// `compression_sdf`'s reconstruction) tinted by [`member_appearance`],
-/// Nested concentric (every member at axial offset 0) or Series stacked
-/// with the SAME running-offset/gap the wireframe uses
+/// Assembly family SDF scene: each member's own coil body (via [`coil_geom`]
+/// and [`helical_body_parts`] — every member IS a `SpringDesign`, so this
+/// reuses `compression_sdf`'s exact reconstruction AND hostility gate,
+/// `pitch <= 0.0` included per review finding 6) tinted by
+/// [`member_appearance`], Nested concentric (every member at axial offset 0)
+/// or Series stacked with the SAME running-offset/gap the wireframe uses
 /// (`assembly::scene_model::assembly_scene`'s `2 × max member wire dia`).
 ///
 /// No ground cuts: [`cut_plane`]'s half-space is GLOBAL to the whole scene
@@ -1180,26 +1224,20 @@ pub(crate) fn assembly_sdf(d: &springcore::assembly::AssemblyDesign) -> SdfScene
     let mut parts = Vec::new();
     let mut y_base = 0.0_f64;
     for (index, member) in d.members.iter().enumerate() {
-        let design = &member.design;
-        let active = design.active_coils;
-        let total = design.total_coils;
-        let r = design.mean_dia.millimeters() / 2.0;
-        let wire = design.wire_dia.millimeters();
-        let pitch = design.pitch.millimeters();
-        if coils_hostile(active, total) || geometry_hostile(&[r, wire, pitch]) {
+        let Some(g) = coil_geom(&member.design) else {
             return SdfScene::default();
-        }
+        };
         parts.extend(helical_body_parts(
-            |_| r,
-            active,
-            total,
-            pitch,
-            wire,
+            |_| g.r,
+            g.active,
+            g.total,
+            g.pitch,
+            g.wire,
             y_base,
             member_appearance(index),
         ));
         if d.topology == springcore::assembly::Topology::Series {
-            let height = crate::viz::coil_height_fn(active, total, pitch, wire)(1.0);
+            let height = crate::viz::coil_height_fn(g.active, g.total, g.pitch, g.wire)(1.0);
             y_base += height + gap;
         }
     }
@@ -1385,17 +1423,15 @@ pub(crate) fn scene_uniforms(scene: &SdfScene) -> Option<Vec<f32>> {
     if scene.parts.len() > MAX_PARTS || scene.cuts.len() > MAX_CUTS {
         return None;
     }
-    let total = 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT;
-    let mut out = vec![0.0f32; total];
+    let mut out = vec![0.0f32; SCENE_UNIFORM_FLOATS];
     out[0] = scene.parts.len() as f32;
     out[1] = scene.cuts.len() as f32;
     for (i, part) in scene.parts.iter().enumerate() {
         let base = 4 + i * FLOATS_PER_PART;
         pack_part(&mut out[base..base + FLOATS_PER_PART], part);
     }
-    let cuts_base = 4 + MAX_PARTS * FLOATS_PER_PART;
     for (i, cut) in scene.cuts.iter().enumerate() {
-        let base = cuts_base + i * FLOATS_PER_CUT;
+        let base = CUTS_BASE_FLOATS + i * FLOATS_PER_CUT;
         pack_cut(&mut out[base..base + FLOATS_PER_CUT], cut);
     }
     out.iter().all(|v| v.is_finite()).then_some(out)
@@ -1504,8 +1540,7 @@ fn unpack_cut(slot: &[f32]) -> GroundPlane {
 /// budget provides slots for).
 #[cfg(test)]
 pub(crate) fn unpack_scene(u: &[f32]) -> Option<SdfScene> {
-    let expected_len = 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT;
-    if u.len() != expected_len {
+    if u.len() != SCENE_UNIFORM_FLOATS {
         return None;
     }
     let n_parts = u[0] as usize;
@@ -1518,10 +1553,9 @@ pub(crate) fn unpack_scene(u: &[f32]) -> Option<SdfScene> {
         let base = 4 + i * FLOATS_PER_PART;
         parts.push(unpack_part(&u[base..base + FLOATS_PER_PART])?);
     }
-    let cuts_base = 4 + MAX_PARTS * FLOATS_PER_PART;
     let mut cuts = Vec::with_capacity(n_cuts);
     for i in 0..n_cuts {
-        let base = cuts_base + i * FLOATS_PER_CUT;
+        let base = CUTS_BASE_FLOATS + i * FLOATS_PER_CUT;
         cuts.push(unpack_cut(&u[base..base + FLOATS_PER_CUT]));
     }
     Some(SdfScene { parts, cuts })
@@ -1630,6 +1664,41 @@ mod tests {
         }
     }
 
+    /// Golden-section search for the minimizer of `f` over `[lo, hi]`
+    /// (assumed unimodal on that bracket) — `iters` shrink steps, each
+    /// cutting the bracket by the golden ratio. Returns the ARGUMENT at the
+    /// minimum, not the minimum value itself (callers re-apply `f`, or
+    /// whatever derived quantity they need, at the returned point).
+    /// Simplifier F6: the one golden-section implementation shared by every
+    /// test below that needs an independent numeric minimum to check a
+    /// closed-form claim against (previously duplicated verbatim).
+    fn golden_min(f: impl Fn(f64) -> f64, mut lo: f64, mut hi: f64, iters: u32) -> f64 {
+        let inv_gold = (5.0_f64.sqrt() - 1.0) / 2.0;
+        let mut mid_lo = hi - inv_gold * (hi - lo);
+        let mut mid_hi = lo + inv_gold * (hi - lo);
+        let (mut f_lo, mut f_hi) = (f(mid_lo), f(mid_hi));
+        for _ in 0..iters {
+            if f_lo < f_hi {
+                hi = mid_hi;
+                mid_hi = mid_lo;
+                f_hi = f_lo;
+                mid_lo = hi - inv_gold * (hi - lo);
+                f_lo = f(mid_lo);
+            } else {
+                lo = mid_lo;
+                mid_lo = mid_hi;
+                f_lo = f_hi;
+                mid_hi = lo + inv_gold * (hi - lo);
+                f_hi = f(mid_hi);
+            }
+        }
+        if f_lo < f_hi {
+            mid_lo
+        } else {
+            mid_hi
+        }
+    }
+
     /// Independent ground truth for the conservativeness tests: 1-D numeric
     /// minimization of the point-to-centerline distance over the full wire
     /// parameter range (dense sample, then golden-section refinement), minus
@@ -1674,28 +1743,10 @@ mod tests {
                 best_i = i;
             }
         }
-        let mut lo = max_phi * f64::from(best_i.saturating_sub(1)) / f64::from(n);
-        let mut hi = max_phi * f64::from((best_i + 1).min(n)) / f64::from(n);
-        let inv_gold = (5.0_f64.sqrt() - 1.0) / 2.0;
-        let mut mid_lo = hi - inv_gold * (hi - lo);
-        let mut mid_hi = lo + inv_gold * (hi - lo);
-        let (mut f_lo, mut f_hi) = (dist_sq(mid_lo), dist_sq(mid_hi));
-        for _ in 0..120 {
-            if f_lo < f_hi {
-                hi = mid_hi;
-                mid_hi = mid_lo;
-                f_hi = f_lo;
-                mid_lo = hi - inv_gold * (hi - lo);
-                f_lo = dist_sq(mid_lo);
-            } else {
-                lo = mid_lo;
-                mid_lo = mid_hi;
-                f_lo = f_hi;
-                mid_hi = lo + inv_gold * (hi - lo);
-                f_hi = dist_sq(mid_hi);
-            }
-        }
-        f_lo.min(f_hi).sqrt() - wire_r
+        let lo = max_phi * f64::from(best_i.saturating_sub(1)) / f64::from(n);
+        let hi = max_phi * f64::from((best_i + 1).min(n)) / f64::from(n);
+        let phi_min = golden_min(dist_sq, lo, hi, 120);
+        dist_sq(phi_min).sqrt() - wire_r
     }
 
     #[test]
@@ -1940,27 +1991,7 @@ mod tests {
 
             // Golden-section search for V(k)'s vertex over a bracket wide
             // enough to contain it regardless of where k_star lands.
-            let (mut lo, mut hi) = (k_star - 5.0, k_star + 5.0);
-            let inv_gold = (5.0_f64.sqrt() - 1.0) / 2.0;
-            let mut mid_lo = hi - inv_gold * (hi - lo);
-            let mut mid_hi = lo + inv_gold * (hi - lo);
-            let (mut f_lo, mut f_hi) = (v_of_k(mid_lo), v_of_k(mid_hi));
-            for _ in 0..200 {
-                if f_lo < f_hi {
-                    hi = mid_hi;
-                    mid_hi = mid_lo;
-                    f_hi = f_lo;
-                    mid_lo = hi - inv_gold * (hi - lo);
-                    f_lo = v_of_k(mid_lo);
-                } else {
-                    lo = mid_lo;
-                    mid_lo = mid_hi;
-                    f_lo = f_hi;
-                    mid_hi = lo + inv_gold * (hi - lo);
-                    f_hi = v_of_k(mid_hi);
-                }
-            }
-            let k_star_star = if f_lo < f_hi { mid_lo } else { mid_hi };
+            let k_star_star = golden_min(v_of_k, k_star - 5.0, k_star + 5.0, 200);
 
             assert!(
                 (k_star - k_star_star).abs() < 1e-6,
@@ -2571,8 +2602,8 @@ mod tests {
         // NOT `extent/2`, the value every caller silently assumed before
         // this fix. This is the regression the golden fixture exposes: a
         // camera built from `(extent, extent/2)` instead of the ACTUAL
-        // `(extent, y_mid)` this function now returns would mis-center the
-        // fitted view.
+        // `(extent, y_mid)` this function now returns would wrongly center
+        // the fitted view.
         let d = extension_fixture();
         let scene = extension_sdf(&d);
         let (extent, y_mid) = scene_extent_mm(&scene).expect("extension scene has finite extent");
@@ -3115,30 +3146,39 @@ mod tests {
         assert_eq!(torsion_sdf(&d), SdfScene::default());
     }
 
+    /// One assembly member's form fixture at the given wire/mean diameter,
+    /// active-coil count, and free length (mm strings), SquaredGround end
+    /// type (`AsmMemberForm::blank`'s default) — simplifier F7, shared by
+    /// every multi-member `assembly_sdf` fixture below to kill the repeated
+    /// `AsmMemberForm { .., ..blank(..) }` literal.
+    fn member_form(
+        wire_dia: &str,
+        mean_dia: &str,
+        active: &str,
+        free_length: &str,
+    ) -> crate::assembly::form::AsmMemberForm {
+        use crate::assembly::form::AsmMemberForm;
+        AsmMemberForm {
+            wire_dia: wire_dia.into(),
+            mean_dia: mean_dia.into(),
+            active: active.into(),
+            free_length: free_length.into(),
+            ..AsmMemberForm::blank("Music Wire")
+        }
+    }
+
     /// Two-member fixture mirrored from `assembly::scene_model`'s own test
     /// (wire 2/1.5mm, mean 20/16mm, active 10/8 coils, free 60mm each,
     /// SquaredGround by default — `AsmMemberForm::blank`'s default end type).
     fn two_member_assembly_fixture(topology: &str) -> springcore::assembly::AssemblyDesign {
-        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use crate::assembly::form::{parse_and_solve, AsmFormState};
         use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
         let materials = MaterialStore::new(MaterialSet::load_default());
         let mut f = AsmFormState::with_default_material("Music Wire");
         f.topology = topology.to_string();
         f.loads = "10, 25".into();
-        f.members[0] = AsmMemberForm {
-            wire_dia: "2".into(),
-            mean_dia: "20".into(),
-            active: "10".into(),
-            free_length: "60".into(),
-            ..AsmMemberForm::blank("Music Wire")
-        };
-        f.members.push(AsmMemberForm {
-            wire_dia: "1.5".into(),
-            mean_dia: "16".into(),
-            active: "8".into(),
-            free_length: "60".into(),
-            ..AsmMemberForm::blank("Music Wire")
-        });
+        f.members[0] = member_form("2", "20", "10", "60");
+        f.members.push(member_form("1.5", "16", "8", "60"));
         parse_and_solve(
             &f,
             UnitSystem::Metric,
@@ -3192,27 +3232,26 @@ mod tests {
     }
 
     #[test]
+    fn assembly_sdf_member_zero_pitch_yields_default() {
+        // Review finding 6, sibling-family sweep: every assembly member IS
+        // a `SpringDesign` (the same `coil_geom` reader `compression_sdf`
+        // uses — see that function's doc), so it has the exact same real,
+        // independent `pitch_mm` gap `sd_helix`'s doc documents.
+        let mut d = two_member_assembly_fixture("nested");
+        d.members[0].design.pitch = springcore::units::Length::from_millimeters(0.0);
+        assert_eq!(assembly_sdf(&d), SdfScene::default());
+    }
+
+    #[test]
     fn assembly_sdf_capped_member_yields_default() {
-        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use crate::assembly::form::{parse_and_solve, AsmFormState};
         use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
         let materials = MaterialStore::new(MaterialSet::load_default());
         let mut f = AsmFormState::with_default_material("Music Wire");
         f.topology = "series".to_string();
         f.loads = "10, 25".into();
-        f.members[0] = AsmMemberForm {
-            wire_dia: "2".into(),
-            mean_dia: "20".into(),
-            active: "10".into(),
-            free_length: "60".into(),
-            ..AsmMemberForm::blank("Music Wire")
-        };
-        f.members.push(AsmMemberForm {
-            wire_dia: "1.5".into(),
-            mean_dia: "16".into(),
-            active: "2001".into(),
-            free_length: "5000".into(),
-            ..AsmMemberForm::blank("Music Wire")
-        });
+        f.members[0] = member_form("2", "20", "10", "60");
+        f.members.push(member_form("1.5", "16", "2001", "5000"));
         let d = parse_and_solve(
             &f,
             UnitSystem::Metric,
@@ -3294,21 +3333,13 @@ mod tests {
     /// brief assumed does not exist; this fixture instead demonstrates the
     /// guard at a generously large, still entirely plausible member count.
     fn n_member_assembly_fixture(n: usize) -> springcore::assembly::AssemblyDesign {
-        use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+        use crate::assembly::form::{parse_and_solve, AsmFormState};
         use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
         let materials = MaterialStore::new(MaterialSet::load_default());
         let mut f = AsmFormState::with_default_material("Music Wire");
         f.topology = "nested".to_string();
         f.loads = "10, 25".into();
-        f.members = (0..n)
-            .map(|_| AsmMemberForm {
-                wire_dia: "2".into(),
-                mean_dia: "20".into(),
-                active: "10".into(),
-                free_length: "60".into(),
-                ..AsmMemberForm::blank("Music Wire")
-            })
-            .collect();
+        f.members = (0..n).map(|_| member_form("2", "20", "10", "60")).collect();
         parse_and_solve(
             &f,
             UnitSystem::Metric,
@@ -3437,10 +3468,7 @@ mod tests {
             ],
         };
         let packed = scene_uniforms(&scene).unwrap();
-        assert_eq!(
-            packed.len(),
-            4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT
-        );
+        assert_eq!(packed.len(), SCENE_UNIFORM_FLOATS);
         let round_tripped = unpack_scene(&packed).unwrap();
         assert_eq!(round_tripped.parts.len(), 3);
         assert_eq!(round_tripped.cuts.len(), 2);
@@ -3627,7 +3655,7 @@ mod tests {
         // assumption (see `scene_uniforms`'s doc). This is a property of the
         // decode primitive itself, not of whether a NaN can reach it in
         // practice (it can't, post finding-5 — see the test above).
-        let mut packed = vec![0.0f32; 4 + MAX_PARTS * FLOATS_PER_PART + MAX_CUTS * FLOATS_PER_CUT];
+        let mut packed = vec![0.0f32; SCENE_UNIFORM_FLOATS];
         packed[0] = 1.0; // one part
         packed[4] = 0.0; // kind = Helix
         packed[4 + 1] = 10.0; // radius_mm

@@ -54,7 +54,7 @@ pub(crate) struct DragState {
 /// wheel-to-`Message::Zoom`.
 ///
 /// **No pre-packed camera field (review finding 1 fix).** The camera is
-/// built fresh in [`Program::draw`] every frame from `extent_mm`/`y_mid_mm`/
+/// built fresh in `Program::draw` (below) every frame from `extent_mm`/`y_mid_mm`/
 /// `orbit`/`zoom` here PLUS the widget's live layout `Rectangle` — the only
 /// input `camera_uniforms` needs that isn't already known at `view()` time.
 /// Baking a camera here (at a nominal aspect) would drift from the panel's
@@ -205,16 +205,24 @@ impl shader::Primitive for SpringPrimitive {
 /// struct (`view_proj: mat4x4, inv_view_proj: mat4x4, bg: vec4`) expects.
 const CAMERA_UNIFORM_FLOATS: usize = 32 + 4;
 
-/// `4` header floats + `MAX_PARTS` part slots + `MAX_CUTS` cut slots — the
-/// exact float count `sdf::scene_uniforms` always returns (see its doc);
-/// derived from the shared `sdf.rs` constants, never a separate literal.
-const SCENE_STORAGE_FLOATS: usize =
-    4 + sdf::MAX_PARTS * sdf::FLOATS_PER_PART + sdf::MAX_CUTS * sdf::FLOATS_PER_CUT;
+/// The exact float count `sdf::scene_uniforms` always returns (see its
+/// doc) — aliased from `sdf.rs`'s own hoisted `SCENE_UNIFORM_FLOATS`
+/// (simplifier F3) rather than re-derived, so this buffer's size can never
+/// silently drift from the layout `scene_uniforms`/`unpack_scene` share.
+const SCENE_STORAGE_FLOATS: usize = sdf::SCENE_UNIFORM_FLOATS;
 
 /// The shared GPU state for every [`SpringPrimitive`] instance: the render
 /// pipeline, its fixed-size uniform/storage buffers (sized once from the
 /// shared `sdf.rs` constants — they never need to grow), and the bind group
 /// tying them to the shader's `@group(0)` bindings.
+///
+/// **One shaded 3D widget per frame (review F5).** `iced` caches exactly one
+/// `SpringPipeline` per `Primitive` TYPE (not per widget instance), so its
+/// single camera/scene buffer pair is implicitly shared — fine today since
+/// the results panel shows at most one `Spring3d` slot at a time (`app::
+/// VisualMode` is a single, app-wide choice), but a future layout showing
+/// two shaded widgets simultaneously (e.g. a side-by-side comparison view)
+/// would need per-instance buffers, not this shared pair.
 pub(crate) struct SpringPipeline {
     render_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
@@ -706,9 +714,15 @@ mod tests {
         let src = instantiate_wgsl();
         let module = naga::front::wgsl::parse_str(&src)
             .unwrap_or_else(|e| panic!("WGSL parse error:\n{}", e.emit_to_string(&src)));
+        // `Capabilities::default()` (review F4), not `::all()`: the shader
+        // uses none of the optional GPU capabilities (`::all()` gates —
+        // push constants, multiview, ray tracing, etc.) the default set
+        // excludes, and it validates cleanly, so the gate stays as close as
+        // possible to the real `wgpu::Device` capabilities this shader
+        // actually needs at runtime rather than a maximally permissive stand-in.
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::all(),
+            naga::valid::Capabilities::default(),
         )
         .validate(&module)
         .unwrap_or_else(|e| panic!("WGSL validation error:\n{}", e.emit_to_string(&src)));

@@ -675,7 +675,7 @@ pub(crate) fn camera_uniforms(
     out.iter().all(|v| v.is_finite()).then_some(out)
 }
 
-/// A known-safe, always-finite camera for [`shader3d::SpringShader::draw`]'s
+/// A known-safe, always-finite camera for `shader3d::SpringShader::draw`'s
 /// per-frame [`camera_uniforms`] call to fall back to on the (extremely
 /// unlikely, since `spring3d_element`'s representability probe already
 /// rejected any persistently-hostile extent/y_mid/zoom/orbit before the

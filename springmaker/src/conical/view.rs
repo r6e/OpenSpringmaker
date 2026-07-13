@@ -99,31 +99,31 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ConResultsView::Error(msg) => results_error(pal, msg),
         ConResultsView::Empty => results_empty(pal),
         ConResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one bitmap is rasterized per render
-            // (orbit drags re-render every frame; an eagerly-built chart
-            // would be thrown away each time).
+            // The results panel's shared visual slot (`results_visual_element`
+            // — laziness preserved via closures, so exactly one bitmap is
+            // rasterized per render: orbit drags re-render every frame, and
+            // an eagerly-built chart would be thrown away each time). Built
+            // from the outcome the Populated variant guarantees is present.
             let outcome = app
                 .con_outcome
                 .as_ref()
                 .expect("ConResultsView::Populated implies app.con_outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::conical::plot_model::conical_chart(&outcome.design, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::spring3d_element(
-                    pal,
-                    crate::conical::scene_model::conical_scene(&outcome.design),
-                    crate::viz::sdf::conical_sdf(&outcome.design),
-                    app.orbit,
-                    app.zoom,
-                    app.shader_available,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::conical::plot_model::conical_chart(&outcome.design, us),
+                    )
+                },
+                || {
+                    (
+                        crate::conical::scene_model::conical_scene(&outcome.design),
+                        crate::viz::sdf::conical_sdf(&outcome.design),
+                    )
+                },
+            );
             let toggle = visual_toggle(pal, app.results_visual);
 
             render_populated(pal, &p, toggle, visual)
