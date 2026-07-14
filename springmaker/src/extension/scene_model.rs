@@ -97,11 +97,13 @@ pub fn extension_scene(design: &ExtensionDesign) -> SceneData {
         points: hook_arc(0.0, 0.0, r, hook_r, -1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
+        wire_mm: wire,
     });
     scene.polylines.push(Polyline3 {
         points: hook_arc(end_angle, body_h, r, hook_r, 1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
+        wire_mm: wire,
     });
     scene
 }

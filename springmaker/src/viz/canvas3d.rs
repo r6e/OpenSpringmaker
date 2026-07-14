@@ -165,6 +165,7 @@ mod tests {
                 points: vec![(0.0, f64::NAN, 0.0), (1.0, 2.0, 3.0)],
                 role: SceneRole::Wire,
                 stroke_px: 1,
+                wire_mm: 1.0,
             }],
         }
     }

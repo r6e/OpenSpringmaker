@@ -37,8 +37,12 @@ pub enum SceneRole {
 pub struct Polyline3 {
     pub points: Vec<(f64, f64, f64)>,
     pub role: SceneRole,
-    /// Stroke width in pixels (from `stroke_for`).
+    /// Stroke width in pixels (from `stroke_for`) — 3D path only.
     pub stroke_px: u32,
+    /// True wire diameter in mm — the 2D diagram's silhouette offset needs the
+    /// real gauge (`stroke_px` is clamped to \[1,8\] and dimensionally dishonest).
+    /// The 3D renderer ignores this field.
+    pub wire_mm: f64,
 }
 
 /// The pure contract between family scene presenters and the 3D renderer.
@@ -171,6 +175,7 @@ pub fn scene_from_radius(
                 points: Vec::new(),
                 role: SceneRole::Wire,
                 stroke_px: 1,
+                wire_mm,
             }],
         };
     }
@@ -182,6 +187,7 @@ pub fn scene_from_radius(
             points,
             role: SceneRole::Wire,
             stroke_px: stroke_for(wire_mm, extent),
+            wire_mm,
         }],
     }
 }
@@ -1054,11 +1060,13 @@ mod tests {
                     points: vec![(10.0, 0.0, 0.0), (-10.0, 40.0, 3.0)],
                     role: SceneRole::Wire,
                     stroke_px: 2,
+                    wire_mm: 1.0,
                 },
                 Polyline3 {
                     points: vec![(0.0, -5.0, 12.0)],
                     role: SceneRole::Detail,
                     stroke_px: 1,
+                    wire_mm: 1.0,
                 },
             ],
         };
@@ -1073,6 +1081,7 @@ mod tests {
                 points: vec![(f64::NAN, 0.0, 0.0)],
                 role: SceneRole::Wire,
                 stroke_px: 1,
+                wire_mm: 1.0,
             }],
         };
         assert!(scene_extent(&bad).is_none());

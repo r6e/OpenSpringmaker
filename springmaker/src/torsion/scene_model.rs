@@ -42,11 +42,13 @@ pub fn torsion_scene(design: &TorsionDesign) -> SceneData {
         points: leg(start, (0.0, 1.0), l1, -1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
+        wire_mm: wire,
     });
     scene.polylines.push(Polyline3 {
         points: leg(end, (-end_angle.sin(), end_angle.cos()), l2, 1.0),
         role: SceneRole::Detail,
         stroke_px: stroke,
+        wire_mm: wire,
     });
     scene
 }
