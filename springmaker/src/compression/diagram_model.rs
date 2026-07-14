@@ -81,19 +81,7 @@ pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
             kind: DimKind::Note,
             layer: DimLayer::Coils,
             value: na,
-            label: format!(
-                "N {} active / {} total",
-                if na.is_finite() {
-                    format!("{na:.1}")
-                } else {
-                    "\u{2014}".into()
-                },
-                if nt.is_finite() {
-                    format!("{nt:.1}")
-                } else {
-                    "\u{2014}".into()
-                },
-            ),
+            label: format!("N {} active / {} total", mm(na), mm(nt)),
             at: (mid, 0.0),
         },
     ]
@@ -166,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn outer_diameter_dimension_matches_the_projected_outer_edge() {
+    fn outer_diameter_dimension_matches_the_design_field() {
         let d = design();
         let dims = dimensions(&d);
         let od = find(&dims, "OD");
@@ -182,8 +170,10 @@ mod tests {
     #[test]
     fn inner_diameter_dimension_matches_id() {
         let d = design();
-        let od = find(&dimensions(&d), "ID");
-        if let DimKind::Diameter { half, .. } = od.kind {
+        let id = find(&dimensions(&d), "ID");
+        // Mirror-drift pin: the callout number IS the design field (EXACT).
+        assert_relative_eq!(id.value, d.inner_dia.millimeters(), max_relative = 1e-9);
+        if let DimKind::Diameter { half, .. } = id.kind {
             assert_relative_eq!(2.0 * half, d.inner_dia.millimeters(), max_relative = 1e-9);
         } else {
             panic!("ID must be a Diameter dim");
@@ -210,11 +200,18 @@ mod tests {
     #[test]
     fn degenerate_design_yields_finite_labels_only() {
         let mut d = design();
-        d.mean_dia = Length::from_millimeters(f64::NAN);
+        // Mutate a field the presenter actually reads so the em-dash fallback in
+        // `mm()` is genuinely exercised (defense in depth): free_length flows into
+        // the L₀ callout's value and label.
+        d.free_length = Length::from_millimeters(f64::NAN);
         // A NaN field must not crash the presenter; labels stay finite-guarded.
         let dims = dimensions(&d);
         assert!(dims
             .iter()
             .all(|dm| dm.value.is_finite() || dm.label.contains('\u{2014}')));
+        // The L₀ callout renders the em dash "—", never "NaN".
+        let fl = find(&dims, "L\u{2080}"); // "L₀"
+        assert!(!fl.value.is_finite());
+        assert!(fl.label.contains('\u{2014}'));
     }
 }
