@@ -1704,6 +1704,39 @@ fn no_adapter_skips_building_the_sdf_scene() {
     );
 }
 
+/// Reverse-laziness pin, symmetric to `no_adapter_skips_building_the_sdf_scene`:
+/// in `VisualMode::Diagram`, `results_visual_element` must not build the
+/// chart or either 3D scene — only `diagram` runs. The panicking
+/// `chart`/`wire3d`/`sdf3d` closures below prove that; reaching the end
+/// without panicking proves the Diagram arm alone was taken. The `diagram`
+/// closure is a real (solved) design's scene+dims rather than an empty
+/// placeholder, so this also exercises the actual `diagram_element` render
+/// path, not just the laziness gate.
+#[test]
+fn diagram_mode_skips_building_the_chart_and_3d_scenes() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.update(Message::Visual(VisualMode::Diagram));
+
+    let outcome = app
+        .outcome
+        .as_ref()
+        .expect("probe_solve_compression populates app.outcome");
+    let _element = crate::widgets::results_visual_element(
+        &crate::app::DARK,
+        &app,
+        || panic!("chart must not be built on the Diagram path"),
+        || panic!("wire3d must not be built on the Diagram path"),
+        || panic!("sdf3d must not be built on the Diagram path"),
+        || {
+            crate::diagram::DiagramInput::new(
+                crate::compression::scene_model::compression_scene(&outcome.design),
+                crate::compression::diagram_model::dimensions(&outcome.design),
+            )
+        },
+    );
+}
+
 /// Compression must render a real 3D scene (not the placeholder) once its
 /// design solves and the user switches to the Spring3d visual — the same
 /// non-vacuous double pin (populated-proof label + placeholder absence) as
@@ -3038,6 +3071,15 @@ fn diagram_layer_controls_gates_on_diagram_mode_only() {
 #[test]
 fn visual_toggle_round_trips_through_diagram_mode() {
     let mut app = test_app();
+    app.update(Message::Visual(VisualMode::Diagram));
+    assert_eq!(app.results_visual, VisualMode::Diagram);
+    app.update(Message::Visual(VisualMode::Chart));
+    assert_eq!(app.results_visual, VisualMode::Chart);
+    // Widened to all three modes: Chart → Diagram was the only pair pinned
+    // above; Spring3d is the third `results_visual` slot and must round-trip
+    // through the same toggle just as cleanly.
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert_eq!(app.results_visual, VisualMode::Spring3d);
     app.update(Message::Visual(VisualMode::Diagram));
     assert_eq!(app.results_visual, VisualMode::Diagram);
     app.update(Message::Visual(VisualMode::Chart));

@@ -173,4 +173,21 @@ mod tests {
         assert_relative_eq!(fi.value, d.initial_tension.newtons(), max_relative = 1e-9);
         assert_eq!(fi.layer, crate::diagram::DimLayer::Coils);
     }
+
+    /// Mirrors compression's `degenerate_design_yields_finite_labels_only`:
+    /// a post-solve NaN on a field the presenter actually reads for a label
+    /// (`free_length` flows into the L₀ callout) must not crash the
+    /// presenter — labels stay finite-guarded (em dash, never "NaN").
+    #[test]
+    fn degenerate_design_yields_finite_labels_only() {
+        let mut d = design();
+        d.free_length = springcore::units::Length::from_millimeters(f64::NAN);
+        let dims = dimensions(&d);
+        assert!(dims
+            .iter()
+            .all(|dm| dm.value.is_finite() || dm.label.contains('\u{2014}')));
+        let fl = find(&dims, "L\u{2080}");
+        assert!(!fl.value.is_finite());
+        assert!(fl.label.contains('\u{2014}'));
+    }
 }

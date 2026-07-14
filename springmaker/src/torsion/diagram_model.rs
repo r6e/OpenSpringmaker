@@ -161,4 +161,26 @@ mod tests {
         assert!(inset.dims.iter().any(|x| (x.value - 10.0).abs() < 1e-6));
         assert!(!inset.edges.is_empty());
     }
+
+    /// Mirrors compression's `degenerate_design_yields_finite_labels_only`.
+    /// Unlike the other families, torsion's inset Angular label is built
+    /// here (not in a `dimensions()` fn), and its side dims are the FIRST
+    /// tuple element returned by `diagram()`. `body_coils` NaN would empty
+    /// the 3D scene, but `diagram()` itself is pure geometry/labels and has
+    /// no such short-circuit — a non-finite `mean_dia` poisons OD/ID (both
+    /// derived from `mean_dia ± wire`) while `body` (from `body_coils *
+    /// wire`) stays finite, so this targets the side-elevation OD/ID
+    /// callouts specifically.
+    #[test]
+    fn degenerate_design_yields_finite_side_labels_only() {
+        let mut d = design();
+        d.inputs.mean_dia = springcore::units::Length::from_millimeters(f64::NAN);
+        let (side, _inset) = diagram(&d);
+        assert!(side
+            .iter()
+            .all(|dm| dm.value.is_finite() || dm.label.contains('\u{2014}')));
+        let od = side.iter().find(|x| x.label.contains("OD")).unwrap();
+        assert!(!od.value.is_finite());
+        assert!(od.label.contains('\u{2014}'));
+    }
 }
