@@ -121,7 +121,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 || {
                     crate::diagram::DiagramInput::new(
                         crate::conical::scene_model::conical_scene(&outcome.design),
-                        Vec::new(), // dims added in the conical diagram task
+                        crate::conical::diagram_model::dimensions(&outcome.design),
                     )
                 },
             );
