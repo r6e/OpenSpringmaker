@@ -79,8 +79,7 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
     {
         match d.kind {
             DimKind::Linear { from, to } => {
-                // Enforce Linear's axial-only precondition (see `DimKind::Linear`);
-                // an off-axis segment would foreshorten on the rung.
+                // Enforce Linear's axial-only precondition (see `DimKind::Linear`).
                 debug_assert!(
                     (from.1 - to.1).abs() < 1e-9,
                     "Linear dim must be axially aligned (from.1 == to.1); an \
