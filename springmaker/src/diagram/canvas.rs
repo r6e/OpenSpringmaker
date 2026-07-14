@@ -311,6 +311,20 @@ impl canvas::Program<Message> for DiagramCanvas {
     }
 }
 
+/// Prepare the torsion end-view inset: laid out once here, off the frame,
+/// against its OWN bounds — never the main scene's. `None` (no border, no
+/// content) when there is no inset, or when its edges carry no finite point
+/// (`inset_bounds` → `None`); `draw` never sees it either way.
+fn prep_inset(inset: Option<crate::diagram::Inset>, layers: DimLayers) -> Option<PreppedInset> {
+    inset.and_then(|i| {
+        inset_bounds(&i.edges).map(|bounds| PreppedInset {
+            laid_out: layout(&i.dims, &bounds, layers),
+            edges: i.edges,
+            bounds,
+        })
+    })
+}
+
 /// Build the diagram element, or the shared placeholder for a degenerate scene.
 pub fn diagram_element(
     pal: &'static Palette,
@@ -325,17 +339,7 @@ pub fn diagram_element(
         ),
         Some(projected) => {
             let laid_out = layout(&input.dims, &projected.bounds, layers);
-            // `input.inset` (the torsion end-view): laid out once here, off
-            // the frame, against its OWN bounds — never the main scene's.
-            // Skipped (no border, no content) when its edges carry no finite
-            // point (`inset_bounds` → `None`); `draw` never sees it.
-            let inset = input.inset.and_then(|i| {
-                inset_bounds(&i.edges).map(|bounds| PreppedInset {
-                    laid_out: layout(&i.dims, &bounds, layers),
-                    edges: i.edges,
-                    bounds,
-                })
-            });
+            let inset = prep_inset(input.inset, layers);
             Canvas::new(DiagramCanvas {
                 projected,
                 laid_out,
@@ -375,6 +379,36 @@ mod tests {
         parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
             .unwrap()
             .design
+    }
+
+    #[test]
+    fn prep_inset_retains_a_valid_inset_and_drops_absent_or_degenerate_ones() {
+        let design = torsion_design();
+        let (_dims, inset) = crate::torsion::diagram_model::diagram(&design);
+        // A real torsion inset: retained, and its contents actually survive
+        // (a regression to always-`None` would fail this, not just the
+        // element-construction-only smoke test).
+        let prepped = prep_inset(Some(inset), DimLayers::default())
+            .expect("a valid inset with finite edges must be retained");
+        assert!(
+            !prepped.edges.is_empty(),
+            "retained inset must keep its edges"
+        );
+        assert!(
+            !prepped.laid_out.is_empty(),
+            "retained inset must keep its laid-out dims"
+        );
+
+        // No inset at all.
+        assert!(prep_inset(None, DimLayers::default()).is_none());
+
+        // An inset with no edges: `inset_bounds` → `None`, so the whole
+        // inset is dropped rather than fit a transform to garbage.
+        let empty = crate::diagram::Inset {
+            edges: vec![],
+            dims: vec![],
+        };
+        assert!(prep_inset(Some(empty), DimLayers::default()).is_none());
     }
 
     #[test]
