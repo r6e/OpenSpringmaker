@@ -1,6 +1,7 @@
 //! 2D engineering-diagram visual mode (ADR 0008): pure projection
 //! (`geometry`) + pure layout (`layout`) feeding the humble `canvas`.
 pub mod canvas;
+pub mod common;
 pub mod geometry;
 pub mod layout;
 

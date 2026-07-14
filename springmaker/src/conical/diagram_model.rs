@@ -1,18 +1,8 @@
 //! Pure 2D-diagram dimension presenter for the conical family. Large end at
 //! axial 0, small end at axial `free_length` (see conical scene_model).
 
-use crate::diagram::{DimKind, DimLayer, Dimension};
+use crate::diagram::{common, DimKind, DimLayer, Dimension};
 use springcore::conical::ConicalDesign;
-
-/// Format a millimetre value, or an em dash for a non-finite field so no NaN/inf
-/// ever reaches a label (defense in depth; the engine rejects these upstream).
-fn mm(v: f64) -> String {
-    if v.is_finite() {
-        format!("{v:.1}")
-    } else {
-        "\u{2014}".into() // em dash
-    }
-}
 
 pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
     let l0 = design.inputs.free_length.millimeters();
@@ -25,16 +15,7 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
     let nt = design.total_coils;
 
     vec![
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (l0, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: l0,
-            label: format!("L\u{2080} {}", mm(l0)), // L₀
-            at: (l0 / 2.0, 0.0),
-        },
+        common::free_length(l0),
         Dimension {
             kind: DimKind::Diameter {
                 at_axial: 0.0,
@@ -42,7 +23,7 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
             },
             layer: DimLayer::Diameters,
             value: large_od,
-            label: format!("large OD {}", mm(large_od)),
+            label: format!("large OD {}", common::mm(large_od)),
             at: (0.0, large_od / 2.0),
         },
         Dimension {
@@ -52,7 +33,7 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
             },
             layer: DimLayer::Diameters,
             value: large_id,
-            label: format!("large ID {}", mm(large_id)),
+            label: format!("large ID {}", common::mm(large_id)),
             at: (0.0, large_id / 2.0),
         },
         Dimension {
@@ -62,7 +43,7 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
             },
             layer: DimLayer::Diameters,
             value: small_od,
-            label: format!("small OD {}", mm(small_od)),
+            label: format!("small OD {}", common::mm(small_od)),
             at: (l0, small_od / 2.0),
         },
         Dimension {
@@ -72,35 +53,11 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
             },
             layer: DimLayer::Diameters,
             value: small_id,
-            label: format!("small ID {}", mm(small_id)),
+            label: format!("small ID {}", common::mm(small_id)),
             at: (l0, small_id / 2.0),
         },
-        Dimension {
-            kind: DimKind::Note,
-            layer: DimLayer::Diameters,
-            value: wire,
-            label: format!("wire \u{2300}{}", mm(wire)),
-            at: (l0 / 2.0, large_od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Note,
-            layer: DimLayer::Coils,
-            value: na,
-            label: format!(
-                "N {} active / {} total",
-                if na.is_finite() {
-                    format!("{na:.1}")
-                } else {
-                    "\u{2014}".into()
-                },
-                if nt.is_finite() {
-                    format!("{nt:.1}")
-                } else {
-                    "\u{2014}".into()
-                }
-            ),
-            at: (l0 / 2.0, 0.0),
-        },
+        common::wire_note(wire, (l0 / 2.0, large_od / 2.0)),
+        common::coil_note(na, nt, (l0 / 2.0, 0.0)),
     ]
 }
 
