@@ -79,10 +79,8 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
     {
         match d.kind {
             DimKind::Linear { from, to } => {
-                // `Linear` is axial-only (see `DimKind::Linear`): the rung uses
-                // only the x-extent, so a non-horizontal segment would render a
-                // line of length `l·|cosθ|`, disagreeing with the label. Fail
-                // fast on future misuse rather than draw a foreshortened line.
+                // Enforce Linear's axial-only precondition (see `DimKind::Linear`);
+                // an off-axis segment would foreshorten on the rung.
                 debug_assert!(
                     (from.1 - to.1).abs() < 1e-9,
                     "Linear dim must be axially aligned (from.1 == to.1); an \

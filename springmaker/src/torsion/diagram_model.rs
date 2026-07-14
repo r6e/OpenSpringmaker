@@ -43,13 +43,9 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
     };
     // Included leg angle from the drawn leg directions (fractional turn → degrees).
     let included = end_angle.to_degrees().rem_euclid(360.0);
-    // Leg lengths are text-only `Note`s, NOT `Linear` ladder dims: `layout`
-    // draws a `Linear` line using only the axial (x) extent, so a leg at azimuth
-    // θ would render a dimension line of length `l·|cosθ|` — foreshortened off
-    // axis, collapsing to zero at 90° (leg2's default) — while the label reads
-    // the true `l`. The leg edge is already stroked here, so a Note at the leg
-    // midpoint honestly labels the already-drawn length. See the presenter test
-    // `leg_length_callouts_are_notes_...` and `annotate-rendered-geometry`.
+    // Leg lengths are `Note`s, not `Linear`: legs are off-axis and `Linear` is
+    // axial-only (see `DimKind::Linear`). The leg edge is already stroked here,
+    // so a `Note` at the leg midpoint honestly labels the drawn length.
     let inset_dims = vec![
         Dimension {
             kind: DimKind::Note,
@@ -140,27 +136,28 @@ mod tests {
         assert!(!inset.edges.is_empty());
     }
 
-    /// The two leg-length callouts must be text-only `DimKind::Note`s, never
-    /// `DimKind::Linear`. `layout` places a `Linear` dim on a horizontal ladder
-    /// rung using ONLY the axial (x) extent of `from→to`, so a leg pointing at
-    /// azimuth θ would draw a dimension line of length `l·|cosθ|` —
-    /// foreshortened off-axis, collapsing to zero at 90° (leg2's default) —
-    /// while the label reads the true `l`. That is precisely the
-    /// drawn-geometry-vs-label disagreement this whole feature guards against.
-    /// A `Note` renders text-only (no line), so nothing can foreshorten; the
-    /// leg edge is already stroked, so the note honestly labels it. Asserting
-    /// the kind is `Note` (angle-independent) is the whole lock — reverting
-    /// either leg to `Linear` fails this `assert_eq!` → RED.
+    /// Locks the fix: both leg callouts must be `Note`, not the axial-only
+    /// `Linear` (see `DimKind::Linear`) — else the ladder layout foreshortens a
+    /// non-axial leg. Reverting either leg to `Linear` fails the `assert_eq!`.
+    /// Also locks each note's anchor to the midpoint of its DRAWN leg edge (the
+    /// annotate-rendered-geometry discipline), so the label can't drift off the
+    /// leg it labels.
     #[test]
     fn leg_length_callouts_are_notes_so_no_line_can_foreshorten_the_leg() {
         let (_side, inset) = diagram(&design());
-        for label in ["L\u{2081}", "L\u{2082}"] {
+        // edges[0]/[1] are the drawn leg1/leg2 edges; L₁/L₂ pair with them in order.
+        for (label, edge) in ["L\u{2081}", "L\u{2082}"].iter().zip(&inset.edges) {
             let dm = inset.dims.iter().find(|x| x.label.contains(label)).unwrap();
             assert_eq!(
                 dm.kind,
                 DimKind::Note,
                 "{label} leg length must be a text Note (no foreshortening line)"
             );
+            // The note text sits on the drawn leg: at == midpoint of the edge.
+            let (p0, p1) = (edge.points[0], edge.points[1]);
+            let mid = ((p0.0 + p1.0) / 2.0, (p0.1 + p1.1) / 2.0);
+            assert_relative_eq!(dm.at.0, mid.0, max_relative = 1e-9);
+            assert_relative_eq!(dm.at.1, mid.1, max_relative = 1e-9);
         }
     }
 
