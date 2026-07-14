@@ -25,6 +25,12 @@ fn arrow_dir(from: P2, to: P2) -> f64 {
     (to.1 - from.1).atan2(to.0 - from.0)
 }
 
+/// Two arrowheads at the ends of a dimension line, each pointing inward toward
+/// the opposite end (the standard "arrows meeting in the middle" convention).
+fn end_arrows(a: P2, b: P2) -> Vec<(P2, f64)> {
+    vec![(a, arrow_dir(b, a)), (b, arrow_dir(a, b))]
+}
+
 /// Place every visible dimension's drawable primitives in model mm. Purely
 /// geometric: no frame/screen coordinates enter here (ADR 0008) — the humble
 /// canvas (Task 4) applies the single affine afterward.
@@ -48,7 +54,7 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
                         (from, a), // extension line from geometry
                         (to, b),   // extension line from geometry
                     ],
-                    arrows: vec![(a, arrow_dir(b, a)), (b, arrow_dir(a, b))],
+                    arrows: end_arrows(a, b),
                     arc: None,
                     text: (((a.0 + b.0) / 2.0, r), d.label.clone()),
                 });
@@ -61,7 +67,7 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
                 diameter_rung += 1;
                 out.push(LayoutedDim {
                     lines: vec![(a, b), (b, (text_x, half))],
-                    arrows: vec![(a, arrow_dir(b, a)), (b, arrow_dir(a, b))],
+                    arrows: end_arrows(a, b),
                     arc: None,
                     text: ((text_x, half), d.label.clone()),
                 });
@@ -157,23 +163,34 @@ mod tests {
 
     #[test]
     fn diameter_dims_span_the_full_envelope_and_place_text_to_the_side() {
+        // half = 8.0 is deliberately distinct from bounds().radial_max (11.0) so
+        // the span assertion proves layout() uses the dim's own `half` (design
+        // OD/2), not the projected envelope bounds.
         let dims = vec![Dimension {
             kind: DimKind::Diameter {
                 at_axial: 30.0,
-                half: 11.0,
+                half: 8.0,
             },
             layer: DimLayer::Diameters,
-            value: 22.0,
-            label: "OD 22.0".into(),
-            at: (30.0, 11.0),
+            value: 16.0,
+            label: "OD 16.0".into(),
+            at: (30.0, 8.0),
         }];
         let out = layout(&dims, &bounds(), DimLayers::default());
         assert_eq!(out.len(), 1);
         // The diameter line spans -half..+half in radial at its axial station.
-        let spans_full = out[0].lines.iter().any(|(a, b)| {
-            (a.1 - (-11.0)).abs() < 1e-6 && (b.1 - 11.0).abs() < 1e-6 && (a.0 - b.0).abs() < 1e-6
+        let spans_half = out[0].lines.iter().any(|(a, b)| {
+            (a.1 - (-8.0)).abs() < 1e-6 && (b.1 - 8.0).abs() < 1e-6 && (a.0 - b.0).abs() < 1e-6
         });
-        assert!(spans_full, "diameter line must span the full envelope");
+        assert!(
+            spans_half,
+            "diameter line must span the dim's own half, not the envelope"
+        );
+        // Text is parked to the side of the envelope, past its axial extent.
+        assert!(
+            out[0].text.0 .0 > bounds().axial_max,
+            "diameter text must be placed to the side of the envelope"
+        );
     }
 
     #[test]
@@ -194,5 +211,58 @@ mod tests {
         let (_, r, _, sweep) = out[0].arc.expect("angular dim carries an arc");
         assert_relative_eq!(r, 8.0, max_relative = 1e-9);
         assert_relative_eq!(sweep, 90.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn note_dims_are_text_only_at_their_anchor() {
+        let dims = vec![Dimension {
+            kind: DimKind::Note,
+            layer: DimLayer::Coils,
+            value: 10.0,
+            label: "N 10 active / 12 total".into(),
+            at: (25.0, 3.0),
+        }];
+        let out = layout(&dims, &bounds(), DimLayers::default());
+        assert_eq!(out.len(), 1);
+        // A note draws no geometry — only its text, parked at the dim's anchor.
+        assert!(out[0].lines.is_empty());
+        assert!(out[0].arrows.is_empty());
+        assert!(out[0].arc.is_none());
+        assert_eq!(out[0].text.0, (25.0, 3.0));
+        assert_eq!(out[0].text.1, "N 10 active / 12 total");
+    }
+
+    #[test]
+    fn all_layers_off_produces_no_layouted_dims() {
+        let dims = vec![
+            linear("L\u{2080}", DimLayer::Lengths, 60.0),
+            Dimension {
+                kind: DimKind::Diameter {
+                    at_axial: 30.0,
+                    half: 8.0,
+                },
+                layer: DimLayer::Diameters,
+                value: 16.0,
+                label: "OD 16.0".into(),
+                at: (30.0, 8.0),
+            },
+            Dimension {
+                kind: DimKind::Note,
+                layer: DimLayer::Coils,
+                value: 10.0,
+                label: "N 10".into(),
+                at: (25.0, 0.0),
+            },
+        ];
+        let out = layout(
+            &dims,
+            &bounds(),
+            DimLayers {
+                lengths: false,
+                diameters: false,
+                coils: false,
+            },
+        );
+        assert!(out.is_empty());
     }
 }
