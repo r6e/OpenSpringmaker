@@ -1631,15 +1631,19 @@ pub fn mm(v: f64) -> String {
 
 /// Coil-count note: "N {active} active / {total} total" in the Coils layer.
 pub fn coil_note(active: f64, total: f64, at: P2) -> Dimension {
-    let f = |x: f64| if x.is_finite() { format!("{x:.1}") } else { "\u{2014}".into() };
     Dimension { kind: DimKind::Note, layer: DimLayer::Coils, value: active,
-        label: format!("N {} active / {} total", f(active), f(total)), at }
+        label: format!("N {} active / {} total", mm(active), mm(total)), at }
 }
 
 /// Wire-diameter note in the Diameters layer.
+///
+/// SYMBOL-FIRST label ("⌀2.0 wire"): compression's landed test searches
+/// `find(&dims, "⌀")` with `starts_with`, so the diameter symbol MUST lead.
+/// This also unifies the label with conical (whose previous "wire ⌀" drift is
+/// untested and folds into this shared convention).
 pub fn wire_note(wire: f64, at: P2) -> Dimension {
     Dimension { kind: DimKind::Note, layer: DimLayer::Diameters, value: wire,
-        label: format!("wire \u{2300}{}", mm(wire)), at }
+        label: format!("\u{2300}{} wire", mm(wire)), at }
 }
 
 /// A free-length linear dimension along the axis, `[0, l0]`.
