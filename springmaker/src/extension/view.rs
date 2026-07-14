@@ -297,31 +297,38 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ExtResultsView::Error(msg) => results_error(pal, msg),
         ExtResultsView::Empty => results_empty(pal),
         ExtResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one bitmap is rasterized per render
-            // (orbit drags re-render every frame; an eagerly-built chart
-            // would be thrown away each time).
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Built from the outcome the Populated
+            // variant guarantees is present.
             let outcome = app
                 .ext_outcome
                 .as_ref()
                 .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::extension::plot_model::extension_chart(&outcome.design, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
-                    pal,
-                    crate::extension::scene_model::extension_scene(&outcome.design),
-                    app.orbit,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::extension::plot_model::extension_chart(&outcome.design, us),
+                    )
+                },
+                || crate::extension::scene_model::extension_scene(&outcome.design),
+                || crate::viz::sdf::extension_sdf(&outcome.design),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::extension::scene_model::extension_scene(&outcome.design),
+                        crate::extension::diagram_model::dimensions(&outcome.design),
+                    )
+                },
+            );
             let toggle = visual_toggle(pal, app.results_visual);
+            // The layer-toggle row is only meaningful (and only shown) while
+            // the 2D diagram is the active visual.
+            let layer_controls = crate::widgets::diagram_layer_controls(pal, app);
 
-            render_populated(pal, &p, toggle, visual)
+            render_populated(pal, &p, toggle, layer_controls, visual)
         }
     };
 
@@ -331,11 +338,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Assemble the populated results column from the presenter data plus the
-/// chart/3D toggle and the selected visual.
+/// chart/3D toggle, the optional 2D layer-toggle row, and the selected
+/// visual.
 fn render_populated<'a>(
     pal: &'static Palette,
     p: &ExtPopulatedResults,
     toggle: Element<'a, Message>,
+    layer_controls: Option<Element<'a, Message>>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let mut col = column![
@@ -348,9 +357,12 @@ fn render_populated<'a>(
         render_ext_load_table(pal, &p.load_table),
         section_divider(pal),
         toggle,
-        visual,
     ]
     .spacing(SP_ROW);
+    if let Some(controls) = layer_controls {
+        col = col.push(controls);
+    }
+    col = col.push(visual);
     if let Some(rows) = &p.min_weight {
         col = col.push(divided_result_section(pal, "Min-weight optimisation", rows));
     }

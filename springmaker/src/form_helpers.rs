@@ -12,9 +12,10 @@ pub(crate) const MM_PER_M: f64 = 1000.0;
 
 /// Render a [`SpringError`] with length values expressed in `units`.
 ///
-/// `DiameterOutOfRange` bakes SI metres into its `Display` impl. This
-/// function converts those lengths to the active unit system before
-/// formatting so US-customary users see inches rather than metres.
+/// `DiameterOutOfRange` and `FreeLengthBelowMinimum` bake SI metres into
+/// their `Display` impls. This function converts those lengths to the
+/// active unit system before formatting so US-customary users see inches
+/// rather than metres.
 ///
 /// All other variants have unit-neutral messages, so we fall through to
 /// `err.to_string()`.
@@ -38,9 +39,25 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
                 format!("wire diameter {d:.3} in is outside the valid range [{lo:.3}, {hi:.3}] in")
             }
         },
+        SpringError::FreeLengthBelowMinimum {
+            free_length_m,
+            min_free_length_m,
+        } => match units {
+            UnitSystem::Metric => below_minimum_message(
+                Length::from_meters(*free_length_m).millimeters(),
+                Length::from_meters(*min_free_length_m).millimeters(),
+                "mm",
+            ),
+            UnitSystem::Us => below_minimum_message(
+                Length::from_meters(*free_length_m).inches(),
+                Length::from_meters(*min_free_length_m).inches(),
+                "in",
+            ),
+        },
         SpringError::Member { index, source } => {
             let inner = match source.as_ref() {
-                SpringError::DiameterOutOfRange { .. } => format_error(source, units),
+                SpringError::DiameterOutOfRange { .. }
+                | SpringError::FreeLengthBelowMinimum { .. } => format_error(source, units),
                 SpringError::InconsistentInputs(m) => m.clone(),
                 other => other.to_string(),
             };
@@ -48,6 +65,40 @@ pub fn format_error(err: &SpringError, units: UnitSystem) -> String {
         }
         // All other variants carry unit-neutral messages.
         other => other.to_string(),
+    }
+}
+
+/// The free-length-below-minimum message in one display unit. When the two
+/// values round to the SAME 3-decimal rendering (a free length within half
+/// a display quantum below the minimum), the plain message would read
+/// "X is below X" — self-contradictory (R2 stateful-UI F2) — so the deficit
+/// is appended in scientific notation, which never rounds to zero for a
+/// genuinely rejected (strictly smaller) value.
+///
+/// The engine guards the SI-metre values finite, but the metre→display scale
+/// (`×1000` for mm) can push a finite-but-astronomical minimum past
+/// `f64::MAX` to ±∞ (R3 input-domain F-R3-1: e.g. `active_coils = 3e307`
+/// yields `min ≈ 1.92e305 m`, and `×1000` overflows). Rendering "…minimum
+/// inf mm" is garbage, so a non-finite converted value falls back to an
+/// out-of-range phrasing that carries no bogus number. (Display-layer,
+/// defense-in-depth fix — the finding's minimum-required remedy.)
+fn below_minimum_message(free: f64, min: f64, unit: &str) -> String {
+    if !free.is_finite() || !min.is_finite() {
+        // No number is shown in this fallback, so the unit is omitted — naming
+        // it produced the ungrammatical "…range in in" in US mode (R4
+        // stateful-UI). The value is out of the displayable range in any unit.
+        return "free length is below the close-wound minimum, but the value is \
+                out of the displayable range (input out of range)"
+            .to_string();
+    }
+    let free_s = format!("{free:.3}");
+    let min_s = format!("{min:.3}");
+    let base =
+        format!("free length {free_s} {unit} is below the close-wound minimum {min_s} {unit}");
+    if free_s == min_s {
+        format!("{base} (short by {:.3e} {unit})", min - free)
+    } else {
+        base
     }
 }
 
@@ -446,6 +497,102 @@ mod tests {
             max_relative = 1e-9
         );
         assert!(non_negative_moment_nmm("fatigue min", "nan", UnitSystem::Metric).is_err());
+    }
+
+    /// R2 stateful-UI F1: the structured below-minimum reject renders in
+    /// the ACTIVE unit system — mm for metric, inches for US — instead of
+    /// the engine's SI meters (or the old baked-in millimeters).
+    #[test]
+    fn format_error_relocalizes_free_length_below_minimum() {
+        // The V5 fixture values: free 56.8 mm, minimum 57.2133726647001 mm.
+        let e = SpringError::FreeLengthBelowMinimum {
+            free_length_m: 0.0568,
+            min_free_length_m: 0.0572133726647001,
+        };
+        assert_eq!(
+            format_error(&e, UnitSystem::Metric),
+            "free length 56.800 mm is below the close-wound minimum 57.213 mm"
+        );
+        // 56.8 mm = 2.23622... in; 57.21337... mm = 2.25249... in.
+        assert_eq!(
+            format_error(&e, UnitSystem::Us),
+            "free length 2.236 in is below the close-wound minimum 2.252 in"
+        );
+    }
+
+    /// R2 stateful-UI F2: a free length within half a display quantum below
+    /// the minimum rounds to the SAME 3-decimal string — the message must
+    /// then surface the deficit rather than read "X is below X".
+    #[test]
+    fn format_error_below_minimum_boundary_rounding_shows_the_deficit() {
+        let e = SpringError::FreeLengthBelowMinimum {
+            free_length_m: 0.0572130,
+            min_free_length_m: 0.0572133726647001,
+        };
+        let msg = format_error(&e, UnitSystem::Metric);
+        assert_eq!(
+            msg,
+            "free length 57.213 mm is below the close-wound minimum 57.213 mm \
+             (short by 3.727e-4 mm)"
+        );
+    }
+
+    /// R3 input-domain F-R3-1: a finite-but-astronomical SI minimum (the
+    /// value the compression solver emits for `active_coils = "3e307"`,
+    /// ≈1.92e305 m) overflows the metre→mm `×1000` scale to +∞
+    /// (`f64::MAX/1000 ≈ 1.798e305`). The display layer must NOT render
+    /// "…close-wound minimum inf mm"; it falls back to an out-of-range
+    /// phrasing carrying no non-finite number.
+    #[test]
+    fn format_error_below_minimum_astronomical_minimum_does_not_render_inf() {
+        // The metre→display scale overflows f64 at different magnitudes per
+        // unit (×1000 for mm past ~1.8e305; ×39.37 for inches past ~4.6e306).
+        // Use a minimum past BOTH thresholds so the non-finite fallback fires
+        // in either unit — otherwise US mode renders a huge finite number, not
+        // the fallback, and would not exercise the grammar guard.
+        let e = SpringError::FreeLengthBelowMinimum {
+            free_length_m: 0.06,        // finite in both units
+            min_free_length_m: 1.0e308, // ×1000 and ×39.37 both overflow to +∞
+        };
+        for units in [UnitSystem::Metric, UnitSystem::Us] {
+            let msg = format_error(&e, units);
+            assert!(
+                !msg.contains("inf") && !msg.contains("NaN"),
+                "must not render a non-finite number ({units:?}); got: {msg}"
+            );
+            assert!(
+                msg.contains("out of") && msg.contains("range"),
+                "must fall back to an out-of-range phrasing ({units:?}); got: {msg}"
+            );
+            // The fallback omits the unit — it must never render the
+            // ungrammatical "in in" that naming the "in" unit produced (R4).
+            assert!(
+                !msg.contains(" in in"),
+                "US-mode fallback double-preposition regressed; got: {msg}"
+            );
+        }
+    }
+
+    /// Member-wrapped below-minimum errors (an assembly member's free <
+    /// solid reject) relocalize exactly like member-wrapped diameter errors.
+    #[test]
+    fn format_error_relocalizes_a_member_below_minimum_error() {
+        let e = SpringError::Member {
+            index: 1,
+            source: Box::new(SpringError::FreeLengthBelowMinimum {
+                free_length_m: 0.020,
+                min_free_length_m: 0.024,
+            }),
+        };
+        assert_eq!(
+            format_error(&e, UnitSystem::Metric),
+            "member 2: free length 20.000 mm is below the close-wound minimum 24.000 mm"
+        );
+        let us = format_error(&e, UnitSystem::Us);
+        assert!(
+            us.starts_with("member 2: free length 0.787 in"),
+            "got: {us}"
+        );
     }
 
     #[test]

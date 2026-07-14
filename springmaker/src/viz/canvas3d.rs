@@ -119,7 +119,10 @@ pub(crate) const SCENE_PLACEHOLDER_CAPPED: &str =
 /// post-solve NaN-coil mutation "capped" rather than "check inputs" — a
 /// non-finite coil count also empties the body. Accepted: every REACHABLE
 /// path to an empty body today is the render cap, not a NaN coil count.
-fn placeholder_for(scene: &SceneData) -> &'static str {
+///
+/// `pub(crate)` for `viz::spring3d_element`'s degenerate short-circuit,
+/// which must pick the SAME wording this module's `None` path does.
+pub(crate) fn placeholder_for(scene: &SceneData) -> &'static str {
     if super::coil_body_is_empty(scene) {
         SCENE_PLACEHOLDER_CAPPED
     } else {
@@ -162,6 +165,7 @@ mod tests {
                 points: vec![(0.0, f64::NAN, 0.0), (1.0, 2.0, 3.0)],
                 role: SceneRole::Wire,
                 stroke_px: 1,
+                wire_mm: 1.0,
             }],
         }
     }
