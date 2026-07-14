@@ -313,12 +313,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                         crate::torsion::plot_model::torsion_chart(&outcome.design, us),
                     )
                 },
-                || {
-                    (
-                        crate::torsion::scene_model::torsion_scene(&outcome.design),
-                        crate::viz::sdf::torsion_sdf(&outcome.design),
-                    )
-                },
+                || crate::torsion::scene_model::torsion_scene(&outcome.design),
+                || crate::viz::sdf::torsion_sdf(&outcome.design),
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

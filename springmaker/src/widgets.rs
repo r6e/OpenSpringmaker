@@ -584,20 +584,32 @@ pub(crate) fn visual_toggle(
 /// selected by `app.results_visual` — identical dispatch in every family
 /// (compression, conical, extension, torsion, assembly), collapsing five
 /// byte-identical `match` arms into one call (simplifier F1). `chart`/
-/// `scene3d` are `FnOnce` so exactly ONE visual is BUILT per render —
-/// laziness preserved: an eagerly-built chart or scene would be thrown away
-/// every frame the OTHER visual is active (orbit drags re-render every
-/// frame while the shaded/wireframe path is showing).
+/// `wire3d`/`sdf3d` are `FnOnce` so only the geometry actually needed is
+/// BUILT per render — laziness preserved: an eagerly-built chart or scene
+/// would be thrown away every frame the OTHER visual is active (orbit drags
+/// re-render every frame while the shaded/wireframe path is showing).
+///
+/// The wireframe and SDF scenes are separate closures because `sdf3d` is
+/// invoked ONLY when a GPU adapter is present (`app.shader_available`): on a
+/// GPU-less machine the shaded path is unreachable, so building the SDF scene
+/// would allocate geometry `spring3d_element` immediately discards (Copilot
+/// perf note). An empty [`crate::viz::sdf::SdfScene`] is passed instead.
 pub(crate) fn results_visual_element<'a>(
     pal: &'static Palette,
     app: &App,
     chart: impl FnOnce() -> Element<'a, Message>,
-    scene3d: impl FnOnce() -> (crate::viz::SceneData, crate::viz::sdf::SdfScene),
+    wire3d: impl FnOnce() -> crate::viz::SceneData,
+    sdf3d: impl FnOnce() -> crate::viz::sdf::SdfScene,
 ) -> Element<'a, Message> {
     match app.results_visual {
         VisualMode::Chart => chart(),
         VisualMode::Spring3d => {
-            let (scene, sdf_scene) = scene3d();
+            let scene = wire3d();
+            let sdf_scene = if app.shader_available {
+                sdf3d()
+            } else {
+                crate::viz::sdf::SdfScene::default()
+            };
             crate::viz::spring3d_element(
                 pal,
                 scene,

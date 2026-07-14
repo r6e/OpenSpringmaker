@@ -1679,6 +1679,29 @@ fn capped_body_shows_placeholder_even_when_shader_is_available() {
     );
 }
 
+/// Perf (Copilot review, PR #69): on a GPU-less machine the shaded path is
+/// unreachable, so `results_visual_element` must NOT invoke `sdf3d` — building
+/// the SDF scene would allocate geometry `spring3d_element` immediately
+/// discards. The `sdf3d` closure here panics if called; reaching the end
+/// without panicking proves it was skipped (and the panicking `chart` proves
+/// the Chart arm was not taken either — only `wire3d` runs).
+#[test]
+fn no_adapter_skips_building_the_sdf_scene() {
+    let mut app = test_app();
+    app.shader_available = false;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    let _element = crate::widgets::results_visual_element(
+        &crate::app::DARK,
+        &app,
+        || panic!("chart must not be built on the Spring3d path"),
+        || crate::viz::SceneData {
+            polylines: Vec::new(),
+        },
+        || panic!("sdf3d must not be built when shader_available is false"),
+    );
+}
+
 /// Compression must render a real 3D scene (not the placeholder) once its
 /// design solves and the user switches to the Spring3d visual — the same
 /// non-vacuous double pin (populated-proof label + placeholder absence) as

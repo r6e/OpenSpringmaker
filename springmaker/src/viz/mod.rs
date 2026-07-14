@@ -835,6 +835,9 @@ fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
 /// rules: non-finite geometry and hostile coil counts empty both); if they
 /// ever disagree, the wireframe scene's verdict governs the WORDING via
 /// [`canvas3d`]'s `placeholder_for`, per the shipped placeholder contract.
+/// (That both-verdicts gate is the adapter-present path; with no adapter the
+/// caller passes an empty `sdf_scene` and the body's early-out applies only
+/// the wireframe verdict — see there.)
 ///
 /// The shaded widget matches the wireframe slot's sizing (Fill × the bitmap
 /// height); it carries the scene's raw `extent_mm`/`y_mid_mm` plus
@@ -863,17 +866,24 @@ pub(crate) fn spring3d_element(
         .as_ref()
         .and_then(render3d::frame_ranges)
         .is_some();
+    // No GPU adapter is the whole-session wireframe case on a GPU-less machine.
+    // Decide from the WIREFRAME scene alone and never consult `sdf_scene` —
+    // callers pass `SdfScene::default()` on this path, so no SDF geometry is
+    // built, extent-measured, or packed only to be discarded (Copilot perf
+    // note). The wireframe verdict already governs the placeholder wording, so
+    // real designs — whose two geometry paths' degenerate verdicts agree —
+    // render identically to the both-verdicts gate below.
+    if !shader_available {
+        return if wireframe_frames {
+            scene_element(pal, scene, orbit)
+        } else {
+            crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene))
+        };
+    }
     let (true, Some((extent_mm, y_mid_mm))) = (wireframe_frames, sdf::scene_extent_mm(&sdf_scene))
     else {
         return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
     };
-    // A missing GPU adapter is the whole-session wireframe case on a GPU-less
-    // machine — return before packing `scene_uniforms`, which `use_shaded`
-    // below would only discard (Copilot perf note). Pure early-out: the
-    // adapter∧scene∧camera verdict below is unchanged.
-    if !shader_available {
-        return scene_element(pal, scene, orbit);
-    }
     let uniforms = sdf::scene_uniforms(&sdf_scene);
     if !use_shaded(shader_available, uniforms.as_ref())
         || !camera_representable(extent_mm, y_mid_mm, orbit, zoom)

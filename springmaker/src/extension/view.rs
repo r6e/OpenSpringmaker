@@ -314,12 +314,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                         crate::extension::plot_model::extension_chart(&outcome.design, us),
                     )
                 },
-                || {
-                    (
-                        crate::extension::scene_model::extension_scene(&outcome.design),
-                        crate::viz::sdf::extension_sdf(&outcome.design),
-                    )
-                },
+                || crate::extension::scene_model::extension_scene(&outcome.design),
+                || crate::viz::sdf::extension_sdf(&outcome.design),
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

@@ -116,12 +116,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                         crate::conical::plot_model::conical_chart(&outcome.design, us),
                     )
                 },
-                || {
-                    (
-                        crate::conical::scene_model::conical_scene(&outcome.design),
-                        crate::viz::sdf::conical_sdf(&outcome.design),
-                    )
-                },
+                || crate::conical::scene_model::conical_scene(&outcome.design),
+                || crate::viz::sdf::conical_sdf(&outcome.design),
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

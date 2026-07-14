@@ -283,12 +283,8 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                         crate::compression::plot_model::compression_chart(&outcome.design, us),
                     )
                 },
-                || {
-                    (
-                        crate::compression::scene_model::compression_scene(&outcome.design),
-                        crate::viz::sdf::compression_sdf(&outcome.design),
-                    )
-                },
+                || crate::compression::scene_model::compression_scene(&outcome.design),
+                || crate::viz::sdf::compression_sdf(&outcome.design),
             );
             let toggle = visual_toggle(pal, app.results_visual);
 
