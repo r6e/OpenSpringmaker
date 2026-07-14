@@ -771,7 +771,7 @@ Expected: FAIL — `layout` not found.
 //! ladders below the envelope; diameter dims span the envelope and sit to its
 //! right; angular dims carry an arc. The humble canvas applies the only affine.
 
-use crate::diagram::{Bounds, DimKind, DimLayer, DimLayers, Dimension, P2};
+use crate::diagram::{Bounds, DimKind, DimLayers, Dimension, P2};
 
 pub struct LayoutedDim {
     pub lines: Vec<(P2, P2)>,
@@ -850,7 +850,6 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
             }
         }
     }
-    let _ = DimLayer::Lengths; // (all variants exercised via `active.shows`)
     out
 }
 ```
