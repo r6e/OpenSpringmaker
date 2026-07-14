@@ -6,17 +6,30 @@ use crate::viz::{close_wound_coil, coil_body_is_empty, Polyline3, SceneData, Sce
 use springcore::torsion::TorsionDesign;
 use std::f64::consts::TAU;
 
-pub fn torsion_scene(design: &TorsionDesign) -> SceneData {
+/// The close-wound body only — no legs. The main side-elevation diagram
+/// projects this (not [`torsion_scene`]): the legs belong solely in the
+/// end-on inset (`torsion/diagram_model.rs::diagram`), and under the
+/// drop-z side-elevation projection a leg can extend radially past the body
+/// envelope, inflating the main view's bounds and rescaling the whole
+/// drawing. The 3D wire3d/sdf3d paths still want the full body+legs scene,
+/// so they call [`torsion_scene`] instead.
+pub fn torsion_body_scene(design: &TorsionDesign) -> SceneData {
     let r = design.inputs.mean_dia.millimeters() / 2.0;
     let wire = design.inputs.wire_dia.millimeters();
     let turns = design.inputs.body_coils;
-    let mut scene = close_wound_coil(r, turns, wire);
+    close_wound_coil(r, turns, wire)
+}
+
+pub fn torsion_scene(design: &TorsionDesign) -> SceneData {
+    let mut scene = torsion_body_scene(design);
     // Capped/hostile coil count → empty body: the legs below attach at the
     // body's endpoints (`points[0]`/`.last()`), which would panic on an
     // empty Vec. Return the bodyless scene — extent None → placeholder.
     if coil_body_is_empty(&scene) {
         return scene;
     }
+    let wire = design.inputs.wire_dia.millimeters();
+    let turns = design.inputs.body_coils;
     // Decision: size the leg strokes off the body-only stroke rather than
     // recomputing against the full body+legs extent (see task report) — the
     // difference is cosmetic and stroke_for clamps to [1, 8] px anyway.
@@ -165,5 +178,58 @@ mod tests {
         d.inputs.body_coils = f64::NAN;
         let s = torsion_scene(&d);
         assert!(crate::viz::scene_extent(&s).is_none());
+    }
+
+    /// BLOCK-A regression: the main side elevation must project the BODY
+    /// ONLY, not `torsion_scene`'s full body+legs. Under the drop-z side
+    /// projection, `leg2`'s radial extent is `r·cosθ − l2·sinθ`; for a
+    /// non-integer `body_coils` (the normal case) and legs ≳ the coil
+    /// radius, that extends past the body envelope and would rescale the
+    /// whole drawing. `body_coils 5.75` + `leg1/leg2 30` mirrors the repro
+    /// in the review finding (mean 20, wire 2 → radial `[-11, 30]` on the
+    /// leaking full scene vs. `[-11, 11]` on the body-only scene).
+    #[test]
+    fn body_only_scene_excludes_legs_from_the_side_elevation() {
+        let materials = store();
+        let form = TorFormState {
+            wire_dia: "2".to_string(),
+            mean_dia: "20".to_string(),
+            body_coils: "5.75".to_string(),
+            leg1: "30".to_string(),
+            leg2: "30".to_string(),
+            moments: "500, 1000".to_string(),
+            ..Default::default()
+        };
+        let d = parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
+            .unwrap()
+            .design;
+
+        let body =
+            crate::diagram::project_silhouette(&torsion_body_scene(&d)).expect("finite body");
+        let full = crate::diagram::project_silhouette(&torsion_scene(&d)).expect("finite scene");
+
+        // Body-only radial envelope is tight to roughly OD/2 (mean/2 + wire).
+        let od_half = d.inputs.mean_dia.millimeters() / 2.0 + d.inputs.wire_dia.millimeters();
+        assert!(
+            body.bounds.radial_max <= od_half,
+            "body radial_max {} exceeds OD/2 {}",
+            body.bounds.radial_max,
+            od_half
+        );
+        assert!(
+            body.bounds.radial_min >= -od_half,
+            "body radial_min {} exceeds -OD/2 {}",
+            body.bounds.radial_min,
+            -od_half
+        );
+
+        // The full body+legs scene WOULD have leaked past the body envelope —
+        // confirms the fix (projecting body-only) actually matters here.
+        assert!(
+            full.bounds.radial_max > body.bounds.radial_max + 5.0,
+            "full radial_max {} did not exceed body radial_max {} by >5mm; fixture no longer reproduces the leak",
+            full.bounds.radial_max,
+            body.bounds.radial_max
+        );
     }
 }

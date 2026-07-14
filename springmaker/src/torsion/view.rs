@@ -318,7 +318,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 || {
                     let (dims, inset) = crate::torsion::diagram_model::diagram(&outcome.design);
                     crate::diagram::DiagramInput::new(
-                        crate::torsion::scene_model::torsion_scene(&outcome.design),
+                        crate::torsion::scene_model::torsion_body_scene(&outcome.design),
                         dims,
                     )
                     .with_inset(inset)
