@@ -1514,25 +1514,33 @@ mod tests {
 
     #[test]
     fn large_and_small_od_anchor_to_the_projected_ends() {
-        let d = design();
+        let d = design(); // large mean 20, small 12, wire 2, free 60, active 10 → total 12 (integer)
         let dims = dimensions(&d);
         let large = find(&dims, "large OD");
         let small = find(&dims, "small OD");
+        // Presenter ↔ design: EXACT.
         assert_relative_eq!(large.value, d.large_outer_dia.millimeters(), max_relative = 1e-9);
         assert_relative_eq!(small.value, d.small_outer_dia.millimeters(), max_relative = 1e-9);
-        // Mirror-drift: the outer silhouette at each end matches its OD/2.
-        let p = project_silhouette(&conical_scene(&d)).unwrap();
-        // Large end at axial_min, small end at axial_max.
-        let at = |x: f64| p.edges.iter().flat_map(|e| e.points.iter())
-            .filter(|q| (q.0 - x).abs() < 1e-6).map(|q| q.1.abs())
-            .fold(f64::NEG_INFINITY, f64::max);
-        assert_relative_eq!(at(p.bounds.axial_min), d.large_outer_dia.millimeters() / 2.0, max_relative = 1e-6);
-        assert_relative_eq!(at(p.bounds.axial_max), d.small_outer_dia.millimeters() / 2.0, max_relative = 1e-6);
-        if let DimKind::Diameter { at_axial, .. } = large.kind {
-            assert_relative_eq!(at_axial, 0.0, epsilon = 1e-9);
-        } else { panic!("large OD must be a Diameter dim"); }
+        // Anchors: large OD at the large end (axial 0), small OD at the free length; halves == OD/2.
+        let DimKind::Diameter { at_axial: la, half: lhalf } = large.kind else { panic!("large OD must be a Diameter") };
+        let DimKind::Diameter { at_axial: sa, half: shalf } = small.kind else { panic!("small OD must be a Diameter") };
+        assert_relative_eq!(la, 0.0, epsilon = 1e-9);
+        assert_relative_eq!(sa, d.inputs.free_length.millimeters(), max_relative = 1e-9);
+        assert_relative_eq!(2.0 * lhalf, d.large_outer_dia.millimeters(), max_relative = 1e-9);
+        assert_relative_eq!(2.0 * shalf, d.small_outer_dia.millimeters(), max_relative = 1e-9);
         assert_eq!(large.layer, DimLayer::Diameters);
         assert_eq!(small.layer, DimLayer::Diameters);
+        // Mirror-drift vs geometry (EXACT, drop-z-robust): the silhouette
+        // edge-MIDPOINT equals the centerline radius (the ±wire/2 offset cancels),
+        // independent of the discrete perpendicular. At the first sample (large
+        // end, θ=0) it is the large mean/2; at the last sample (small end,
+        // θ=total·2π with integer total → cos≈1) the small mean/2. This is the
+        // exact tie; the envelope PEAK is only sampling-approximate under drop-z.
+        let p = project_silhouette(&conical_scene(&d)).unwrap();
+        let last = p.edges[0].points.len() - 1;
+        let mid = |i: usize| (p.edges[0].points[i].1 + p.edges[1].points[i].1) / 2.0;
+        assert_relative_eq!(mid(0), d.inputs.large_mean_dia.millimeters() / 2.0, max_relative = 1e-9);
+        assert_relative_eq!(mid(last), d.inputs.small_mean_dia.millimeters() / 2.0, max_relative = 1e-9);
     }
 
     #[test]
