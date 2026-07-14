@@ -295,8 +295,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let toggle = visual_toggle(pal, app.results_visual);
             // The layer-toggle row is only meaningful (and only shown) while
             // the 2D diagram is the active visual.
-            let layer_controls = (app.results_visual == crate::app::VisualMode::Diagram)
-                .then(|| crate::widgets::diagram_layer_toggle(pal, app.diagram_layers));
+            let layer_controls = crate::widgets::diagram_layer_controls(pal, app);
 
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only

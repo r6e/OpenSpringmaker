@@ -631,6 +631,22 @@ pub(crate) fn results_visual_element<'a>(
     }
 }
 
+/// The 2D-diagram layer-toggle row, gated to Diagram mode — `None` in
+/// Chart/Spring3d so every family can push it unconditionally without
+/// repeating the `app.results_visual == VisualMode::Diagram` gate.
+/// `app.diagram_layers` is a single global `App` field (not reset on family
+/// switch), so this must be reachable from all five families — otherwise a
+/// layer hidden on one family's diagram (e.g. Coils, which carries the
+/// torsion inset's leg-angle dim) stays hidden with no affordance to restore
+/// it after switching to a family whose view never rendered the toggle.
+pub(crate) fn diagram_layer_controls(
+    pal: &'static Palette,
+    app: &App,
+) -> Option<Element<'static, Message>> {
+    (app.results_visual == VisualMode::Diagram)
+        .then(|| diagram_layer_toggle(pal, app.diagram_layers))
+}
+
 /// The 2D-diagram layer toggles (lengths / diameters / coils). Rendered above
 /// the canvas in Diagram mode only. Each button flips exactly its own group —
 /// unlike `segmented`'s single-select `on_press` omission on the selected

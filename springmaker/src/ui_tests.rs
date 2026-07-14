@@ -3008,6 +3008,27 @@ fn diagram_layer_toggle_flips_exactly_its_group() {
     }
 }
 
+/// `diagram_layer_controls` is the shared gate every family's view calls to
+/// decide whether to render the layer-toggle row above its diagram canvas
+/// (BLOCK-B fix: previously only compression rendered it, stranding a
+/// hidden layer with no affordance to restore it after switching families).
+/// `Element` is opaque, so this pins the `Some`/`None` gate itself rather
+/// than the widget contents.
+#[test]
+fn diagram_layer_controls_gates_on_diagram_mode_only() {
+    let mut app = test_app();
+    let pal = app.pal();
+
+    app.results_visual = VisualMode::Diagram;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_some());
+
+    app.results_visual = VisualMode::Chart;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_none());
+
+    app.results_visual = VisualMode::Spring3d;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_none());
+}
+
 // --------------------------------------------------------------------------
 // 2D diagram — VisualMode::Diagram wiring (Task 5). The Diagram*/diagram_*
 // message and state round trips are pinned above (Task 4); this pins the
