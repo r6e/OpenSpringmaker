@@ -2949,3 +2949,34 @@ fn calculator_results_still_render_after_switching_to_light_theme() {
         "the light-theme render must not fall back to the empty-state placeholder"
     );
 }
+
+// --------------------------------------------------------------------------
+// 2D diagram — view-only messages (Task 4). `DiagramZoom`/`DiagramPan` mirror
+// the `Zoom`/`Orbit` non-recompute discipline via the single-writer step
+// helpers; `DiagramLayer` flips exactly the toggled group. `VisualMode::
+// Diagram` and the results dispatch land in Task 5 — these arms are wired
+// now only because `DiagramCanvas` (Task 4) publishes the messages.
+// --------------------------------------------------------------------------
+
+#[test]
+fn diagram_zoom_and_pan_do_not_recompute_and_stay_finite() {
+    let mut app = test_app();
+    let before = app.diagram_view;
+    app.update(Message::DiagramZoom(2.0));
+    app.update(Message::DiagramPan(5.0, -3.0));
+    assert!(app.diagram_view.zoom.is_finite() && app.diagram_view.zoom > 0.0);
+    assert_ne!(app.diagram_view, before);
+    // A non-finite delta is a no-op (single-writer guard).
+    let held = app.diagram_view;
+    app.update(Message::DiagramZoom(f32::NAN));
+    assert_eq!(app.diagram_view, held);
+}
+
+#[test]
+fn diagram_layer_toggle_flips_exactly_its_group() {
+    let mut app = test_app();
+    assert!(app.diagram_layers.coils);
+    app.update(Message::DiagramLayer(crate::diagram::DimLayer::Coils));
+    assert!(!app.diagram_layers.coils);
+    assert!(app.diagram_layers.lengths && app.diagram_layers.diameters);
+}

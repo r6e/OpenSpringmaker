@@ -1,15 +1,18 @@
 //! 2D engineering-diagram visual mode (ADR 0008): pure projection
 //! (`geometry`) + pure layout (`layout`) feeding the humble `canvas`.
+pub mod canvas;
 pub mod geometry;
 pub mod layout;
 
-// Re-exports consumed by a later diagram task (layout + humble canvas); Task 1
-// ships the projection API ahead of its first caller.
-#[allow(unused_imports)]
+use crate::viz::SceneData;
+
+// Re-export consumed by the humble canvas (`canvas::diagram_element`).
 pub use geometry::{project_silhouette, Bounds, Edge2, Projected, P2};
-// Re-export consumed by the humble canvas in Task 4.
-#[allow(unused_imports)]
+// Re-export consumed by the humble canvas (`canvas::diagram_element`).
 pub use layout::{layout, LayoutedDim};
+// Re-export consumed by the results dispatch in Task 5.
+#[allow(unused_imports)]
+pub use canvas::{diagram_element, DiagramCanvas};
 
 /// Which toggleable layer a dimension belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +58,6 @@ pub struct Dimension {
 
 /// Which dimension layers are currently shown (app state; toggled in the UI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by the UI toggle in Task 5
 pub struct DimLayers {
     pub lengths: bool,
     pub diameters: bool,
@@ -81,5 +83,79 @@ impl DimLayers {
             DimLayer::Diameters => self.diameters,
             DimLayer::Coils => self.coils,
         }
+    }
+}
+
+/// View transform for the diagram (app state). `zoom` multiplies the
+/// fit-to-canvas baseline; `pan` translates in screen px. Default = fit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DiagramView {
+    pub zoom: f32,
+    pub pan: iced::Vector,
+}
+
+impl Default for DiagramView {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            pan: iced::Vector::ZERO,
+        }
+    }
+}
+
+/// Zoom clamp bounds (mirrors the 3D `viz::zoom_step` discipline: a single
+/// writer, finiteness-guarded, clamped).
+const ZOOM_MIN: f32 = 0.2;
+const ZOOM_MAX: f32 = 8.0;
+
+/// Single writer for `DiagramView::zoom`. A non-finite delta is a no-op; the
+/// result is clamped so no other code can push zoom out of range.
+pub fn zoom_step(view: DiagramView, delta: f32) -> DiagramView {
+    if !delta.is_finite() {
+        return view;
+    }
+    let zoom = (view.zoom * (1.0 + delta * 0.1)).clamp(ZOOM_MIN, ZOOM_MAX);
+    DiagramView { zoom, ..view }
+}
+
+/// Single writer for `DiagramView::pan`. Non-finite deltas are no-ops.
+pub fn pan_step(view: DiagramView, dx: f32, dy: f32) -> DiagramView {
+    if !dx.is_finite() || !dy.is_finite() {
+        return view;
+    }
+    DiagramView {
+        pan: view.pan + iced::Vector::new(dx, dy),
+        ..view
+    }
+}
+
+/// Optional secondary end-on projection (torsion legs; Task 9). Empty for
+/// other families.
+#[allow(dead_code)] // consumed by the torsion end-view inset in Task 9
+pub struct Inset {
+    pub edges: Vec<Edge2>,
+    pub dims: Vec<Dimension>,
+}
+
+/// Everything the diagram needs for one family, built lazily by the caller.
+#[allow(dead_code)] // consumed by the results dispatch in Task 5
+pub struct DiagramInput {
+    pub scene: SceneData,
+    pub dims: Vec<Dimension>,
+    pub inset: Option<Inset>,
+}
+
+#[allow(dead_code)] // consumed by the results dispatch in Task 5
+impl DiagramInput {
+    pub fn new(scene: SceneData, dims: Vec<Dimension>) -> Self {
+        Self {
+            scene,
+            dims,
+            inset: None,
+        }
+    }
+    pub fn with_inset(mut self, inset: Inset) -> Self {
+        self.inset = Some(inset);
+        self
     }
 }
