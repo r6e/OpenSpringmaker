@@ -25,8 +25,11 @@ fn arrow_dir(from: P2, to: P2) -> f64 {
     (to.1 - from.1).atan2(to.0 - from.0)
 }
 
-/// Two arrowheads at the ends of a dimension line, each pointing inward toward
-/// the opposite end (the standard "arrows meeting in the middle" convention).
+/// Two arrowheads at the ends of a dimension line. Each stores the direction
+/// pointing *away* from the opposite end; `draw_dims` reverses the barbs (`+π`)
+/// so each head renders pointing outward toward its extension line — the
+/// standard engineering-drawing convention (arrowheads sit at the dimension-line
+/// ends pointing outward, not meeting in the middle).
 fn end_arrows(a: P2, b: P2) -> Vec<(P2, f64)> {
     vec![(a, arrow_dir(b, a)), (b, arrow_dir(a, b))]
 }
@@ -158,6 +161,26 @@ mod tests {
             value: to,
             label: label.into(),
             at: (to / 2.0, 0.0),
+        }
+    }
+
+    #[test]
+    fn end_arrows_point_outward_away_from_the_opposite_end() {
+        // Regression guard for the "outward" doc claim (which rests on a hand
+        // trace through `draw_dims`, not a render test): each stored direction
+        // must point AWAY from the other endpoint, i.e. its unit vector has a
+        // negative dot with the vector toward that endpoint. `draw_dims`'s `+π`
+        // barb reversal then renders the head outward toward the extension line.
+        let a = (0.0, 0.0);
+        let b = (10.0, 0.0);
+        for &(anchor, dir) in &end_arrows(a, b) {
+            let other = if anchor == a { b } else { a };
+            let toward = (other.0 - anchor.0, other.1 - anchor.1);
+            let dot = dir.cos() * toward.0 + dir.sin() * toward.1;
+            assert!(
+                dot < 0.0,
+                "arrow at {anchor:?} must point away from {other:?}, got dot={dot}"
+            );
         }
     }
 

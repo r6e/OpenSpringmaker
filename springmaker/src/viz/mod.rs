@@ -121,6 +121,36 @@ pub fn stroke_for(wire_mm: f64, extent_mm: f64) -> u32 {
 /// Helix sampling density shared by every family scene.
 const SAMPLES_PER_TURN: usize = 32;
 
+/// Whether a coil COUNT pair is too degenerate to render — non-finite/negative
+/// `active`, or `total` outside `(0, MAX_RENDER_TURNS]`. The range check rejects
+/// a NaN/±inf `total` too (`contains` is false for all three); `active` needs
+/// its own finiteness test since `+inf < 0.0` and `NaN < 0.0` are both false.
+/// The shared coil-count primitive: [`coil_body_hostile`] composes it with a
+/// pitch guard for the wireframe helix, and `sdf::coils_hostile` delegates to it
+/// so the two geometry paths can't drift on the count verdict (they did once —
+/// e1d8527). Private to `viz`; `sdf` (a child module) reaches it via `super::`,
+/// the same way it reads `MAX_RENDER_TURNS`.
+fn coil_counts_hostile(active: f64, total: f64) -> bool {
+    !active.is_finite()
+        || active < 0.0
+        || !(0.0..=MAX_RENDER_TURNS).contains(&total)
+        || total <= 0.0
+}
+
+/// Whether a coil body's solved parameters make it unrenderable — the verdict
+/// `scene_from_radius` bails on (empty body → placeholder) and that
+/// `coil_render_height` returns `0.0` for: degenerate coil counts
+/// ([`coil_counts_hostile`]) OR a non-finite/non-positive pitch. The pitch terms
+/// mirror BOTH the SDF builders' `geometry_hostile(&[pitch])` finiteness check
+/// AND their SEPARATE `pitch <= 0.0` gate (R3 general note: e1d8527's "mirrors
+/// exactly" was imprecise — the SDF `pitch <= 0.0` gate is distinct from
+/// `geometry_hostile`, so a finite non-positive pitch slipped this path and
+/// rendered a flat/inverted coil where the SDF showed a placeholder; both now
+/// degrade to placeholder together).
+fn coil_body_hostile(active: f64, total: f64, pitch_mm: f64) -> bool {
+    coil_counts_hostile(active, total) || !pitch_mm.is_finite() || pitch_mm <= 0.0
+}
+
 /// Build the standard one-wire coil scene every helical family shares:
 /// `coil_height_fn` over the solved coil counts (dead end coils flattened to
 /// wire pitch), a [`SAMPLES_PER_TURN`]-per-turn helix with the given radius
@@ -150,23 +180,7 @@ pub fn scene_from_radius(
     pitch_mm: f64,
     wire_mm: f64,
 ) -> SceneData {
-    // The range check rejects a NaN/±inf total too (`contains` is false for
-    // all three); active needs its own finiteness test since `+inf < 0.0`
-    // and `NaN < 0.0` are both false. `total <= 0.0` mirrors the SDF
-    // `coils_hostile` verdict; the two pitch terms mirror BOTH the SDF
-    // builders' `geometry_hostile(&[pitch])` finiteness check AND their
-    // SEPARATE `pitch <= 0.0` gate (R3 general note: e1d8527's "mirrors
-    // exactly" was imprecise — the SDF `pitch <= 0.0` gate is distinct from
-    // `geometry_hostile`, so a finite non-positive pitch slipped THIS path
-    // and rendered a flat/inverted coil where the SDF showed a placeholder;
-    // both now degrade to placeholder together).
-    let coils_hostile = !active.is_finite()
-        || active < 0.0
-        || !(0.0..=MAX_RENDER_TURNS).contains(&total)
-        || total <= 0.0
-        || !pitch_mm.is_finite()
-        || pitch_mm <= 0.0;
-    if coils_hostile {
+    if coil_body_hostile(active, total, pitch_mm) {
         // Same shape as the normal path (exactly one Wire polyline, here
         // with no points) so the documented one-polyline invariant holds
         // for every caller and `coil_body_is_empty` reads it uniformly.
@@ -190,6 +204,22 @@ pub fn scene_from_radius(
             wire_mm,
         }],
     }
+}
+
+/// The axial height a coil body renders to — `coil_height_fn` at the top of the
+/// coil (`t = 1.0`), the y-extent its helix reaches. Returns `0.0` for a
+/// degenerate body via the shared [`coil_body_hostile`] guard, so callers can't
+/// panic on NaN/negative coils (`coil_height_fn`'s `clamp(0.0, active)` would).
+/// `assembly_scene` draws each member to this exact height (its helix's last
+/// point y = `coil_height_fn(..)(1.0)`, radius-independent), so the 2D-diagram
+/// presenter anchors callouts on it — matching the drawn bodies where
+/// `free_length` would not (rendered height differs from free length for every
+/// end type except `SquaredGround`). O(1): no helix is built.
+pub(crate) fn coil_render_height(active: f64, total: f64, pitch_mm: f64, wire_mm: f64) -> f64 {
+    if coil_body_hostile(active, total, pitch_mm) {
+        return 0.0;
+    }
+    coil_height_fn(active, total, pitch_mm, wire_mm)(1.0)
 }
 
 /// Close-wound coil body (torsion's body; extension moved to the
@@ -327,9 +357,25 @@ const ZOOM_SENSITIVITY: f32 = 0.1;
 /// the SAME line-equivalent unit `ScrollDelta::Lines` already reports
 /// natively before either reaches [`zoom_step`]. Named beside
 /// `ZOOM_SENSITIVITY` (simplifier F8) since the two constants together
-/// define the whole wheel-to-zoom-rate pipeline; `shader3d::SpringShader::
-/// update` is the sole reader.
+/// define the whole wheel-to-zoom-rate pipeline. Read only through
+/// [`wheel_lines`], which both the 3D shader (`shader3d::SpringShader::update`)
+/// and the 2D diagram canvas (`diagram::canvas`) call.
 pub(crate) const WHEEL_PIXELS_PER_LINE: f32 = 16.0;
+
+/// A wheel delta as line-equivalent units for zoom. `Lines` (mouse wheels) pass
+/// through unchanged; `Pixels` (trackpads, ~an order of magnitude larger per
+/// notch) divide by [`WHEEL_PIXELS_PER_LINE`] so trackpad and wheel zoom share
+/// one sensitivity. The single normalization stage for both the 3D and 2D views,
+/// so neither jumps to the zoom clamp on the first trackpad swipe. (Only this
+/// stage is shared — the downstream `zoom_step`s differ: `viz::zoom_step` is
+/// exponential over `[0.3, 4.0]`, `diagram::zoom_step` linear over `[0.2, 8.0]`.)
+/// `x` never drives zoom.
+pub(crate) fn wheel_lines(delta: &iced::mouse::ScrollDelta) -> f32 {
+    match delta {
+        iced::mouse::ScrollDelta::Lines { y, .. } => *y,
+        iced::mouse::ScrollDelta::Pixels { y, .. } => *y / WHEEL_PIXELS_PER_LINE,
+    }
+}
 
 /// Apply a scroll-wheel delta multiplicatively: `current * e^(delta ×
 /// SENSITIVITY)` — exponential rather than `current * (1 + delta ×
@@ -1032,6 +1078,39 @@ mod tests {
         // Plain ends (total == active): pure linear ramp.
         let plain = coil_height_fn(10.0, 10.0, 5.0, 1.0);
         assert_relative_eq!(plain(0.5), 25.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn coil_render_height_matches_the_body_top_and_survives_hostile_input() {
+        // A valid body renders to exactly coil_height_fn(..)(1.0) — the last
+        // helix point's axial coordinate, radius-independent.
+        assert_relative_eq!(
+            coil_render_height(8.0, 10.0, 5.0, 1.0),
+            42.0,
+            max_relative = 1e-12
+        );
+        // Hostile coil counts / pitch route through scene_from_radius's guard to
+        // an empty body → 0.0, never a panic (coil_height_fn's clamp would panic
+        // on NaN active if called directly).
+        assert_eq!(coil_render_height(f64::NAN, 10.0, 5.0, 1.0), 0.0);
+        assert_eq!(coil_render_height(-1.0, 10.0, 5.0, 1.0), 0.0);
+        assert_eq!(coil_render_height(8.0, 10.0, 0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn wheel_lines_normalizes_pixels_to_line_equivalent() {
+        use iced::mouse::ScrollDelta;
+        // Mouse wheels (`Lines`) pass through unchanged.
+        assert_eq!(wheel_lines(&ScrollDelta::Lines { x: 0.0, y: 2.0 }), 2.0);
+        // Trackpads (`Pixels`) divide by WHEEL_PIXELS_PER_LINE (16): 32px → 2
+        // lines — the same unit `Lines` reports; the shared normalization stage
+        // for both the 2D and 3D views (their zoom_steps differ downstream).
+        assert_eq!(wheel_lines(&ScrollDelta::Pixels { x: 0.0, y: 32.0 }), 2.0);
+        assert_eq!(
+            wheel_lines(&ScrollDelta::Pixels { x: 9.0, y: 16.0 }),
+            1.0,
+            "x component is ignored; only y drives zoom"
+        );
     }
 
     #[test]

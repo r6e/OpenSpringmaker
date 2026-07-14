@@ -1,7 +1,10 @@
 //! Shared dimension-presenter helpers used by the helical families.
 use crate::diagram::{DimKind, DimLayer, Dimension, P2};
 
-/// Format a millimetre value; em dash for non-finite (no NaN/inf label).
+/// Format a finite scalar to one decimal place; em dash for non-finite (so no
+/// `NaN`/`inf` ever reaches a label). Named for its commonest use — millimetre
+/// callouts — but the same one-decimal, non-finite-guarded formatting also
+/// backs dimensionless coil counts and forces (N).
 pub fn mm(v: f64) -> String {
     if v.is_finite() {
         format!("{v:.1}")

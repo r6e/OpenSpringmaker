@@ -15,7 +15,7 @@ use crate::app::Message;
 
 #[cfg(test)]
 use super::zoom_step;
-use super::{camera_uniforms, fallback_camera, sdf, Orbit, WHEEL_PIXELS_PER_LINE};
+use super::{camera_uniforms, fallback_camera, sdf, wheel_lines, Orbit};
 
 /// Raw WGSL source, unmodified — [`instantiate_wgsl`] substitutes every
 /// `{{PLACEHOLDER}}` token below before it reaches `wgpu::ShaderSource::Wgsl`.
@@ -109,11 +109,9 @@ impl shader::Program<Message> for SpringShader {
                 // `ZOOM_SENSITIVITY` is the single rate applied to it
                 // (review finding 2: a second scaling factor here used to
                 // compound with that rate). `Pixels` converts to the same
-                // line-equivalent unit via `WHEEL_PIXELS_PER_LINE`.
-                let lines = match *delta {
-                    mouse::ScrollDelta::Lines { y, .. } => y,
-                    mouse::ScrollDelta::Pixels { y, .. } => y / WHEEL_PIXELS_PER_LINE,
-                };
+                // line-equivalent unit via `WHEEL_PIXELS_PER_LINE` (shared with
+                // the 2D diagram canvas through `wheel_lines`).
+                let lines = wheel_lines(delta);
                 // `.and_capture()` (review finding 3): without it the outer
                 // results-panel `scrollable` ALSO scrolls on every
                 // wheel-zoom tick, since an `Ignored` status bubbles the

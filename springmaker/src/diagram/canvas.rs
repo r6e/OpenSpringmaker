@@ -211,11 +211,7 @@ impl canvas::Program<Message> for DiagramCanvas {
         match event {
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 cursor.position_in(bounds)?; // only when the cursor is over us
-                let d = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => {
-                        *y
-                    }
-                };
+                let d = crate::viz::wheel_lines(delta);
                 Some(canvas::Action::publish(Message::DiagramZoom(d)).and_capture())
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -360,6 +356,7 @@ mod tests {
     use super::*;
     use crate::diagram::{zoom_step, DiagramView};
     use crate::torsion::form::{parse_and_solve, TorFormState};
+    use canvas::Program; // brings the `update` method into scope for the wheel tests
     use springcore::{MaterialSet, MaterialStore, UnitSystem};
 
     /// Fixture mirroring `torsion::diagram_model`'s own tests: body 5.25
@@ -379,6 +376,78 @@ mod tests {
         parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
             .unwrap()
             .design
+    }
+
+    /// A minimal canvas: `update`'s wheel/drag arms read only event/bounds/
+    /// cursor, never the geometry fields, so an empty projection suffices.
+    fn empty_canvas() -> DiagramCanvas {
+        DiagramCanvas {
+            projected: Projected {
+                edges: Vec::new(),
+                bounds: Bounds {
+                    axial_min: 0.0,
+                    axial_max: 1.0,
+                    radial_min: 0.0,
+                    radial_max: 1.0,
+                },
+            },
+            laid_out: Vec::new(),
+            view: DiagramView::default(),
+            wire: Color::BLACK,
+            dim: Color::BLACK,
+            inset: None,
+        }
+    }
+
+    /// The diagram canvas normalizes trackpad `Pixels` wheel deltas exactly like
+    /// the 3D view (both via the shared `wheel_lines`): 32 px → 2.0 line-
+    /// equivalent units, published as `DiagramZoom` and CAPTURED so the outer
+    /// results `scrollable` doesn't also scroll mid-zoom. Before the fix this
+    /// arm passed raw pixels through, over-zooming trackpads ~16×.
+    #[test]
+    fn wheel_scrolled_pixels_publishes_normalized_zoom_and_captures() {
+        let bounds = Rectangle::new(Point::ORIGIN, iced::Size::new(100.0, 100.0));
+        let action = empty_canvas().update(
+            &mut DragState::default(),
+            &Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: 0.0, y: 32.0 },
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(50.0, 50.0)),
+        );
+        let (message, _redraw, status) = action
+            .expect("wheel over the canvas must publish an action")
+            .into_inner();
+        match message {
+            Some(Message::DiagramZoom(d)) => {
+                assert!((d - 2.0).abs() < 1e-6, "32px / 16 = 2.0 lines, got {d}")
+            }
+            other => panic!("expected DiagramZoom, got {other:?}"),
+        }
+        assert_eq!(
+            status,
+            iced::event::Status::Captured,
+            "wheel-zoom must capture, or the outer scrollable also scrolls"
+        );
+    }
+
+    /// The wheel arm fires only when the cursor is over the canvas; otherwise it
+    /// bubbles (returns `None`) so the surrounding scrollable handles it.
+    #[test]
+    fn wheel_scrolled_outside_the_canvas_publishes_nothing() {
+        let bounds = Rectangle::new(Point::ORIGIN, iced::Size::new(100.0, 100.0));
+        let action = empty_canvas().update(
+            &mut DragState::default(),
+            &Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: 0.0, y: 32.0 },
+            }),
+            bounds,
+            mouse::Cursor::Available(Point::new(500.0, 500.0)), // outside bounds
+        );
+        assert!(
+            action.is_none(),
+            "wheel outside the canvas must not publish"
+        );
     }
 
     #[test]

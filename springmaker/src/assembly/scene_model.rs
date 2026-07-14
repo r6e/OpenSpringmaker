@@ -13,13 +13,20 @@
 use crate::viz::{coil_body_is_empty, scene_from_radius, SceneData, SceneRole};
 use springcore::assembly::{AssemblyDesign, Topology};
 
+/// Axial gap inserted between stacked Series members: `2 × max member wire dia`.
+/// The single source of truth for the stacking pitch — both the 3D scene
+/// (`assembly_scene`) and the 2D-diagram presenter (`diagram_model`) advance
+/// members by this exact gap, so callouts line up with the drawn bodies.
+pub(crate) fn series_stack_gap(design: &AssemblyDesign) -> f64 {
+    2.0 * design
+        .members
+        .iter()
+        .map(|m| m.design.wire_dia.millimeters())
+        .fold(0.0_f64, f64::max)
+}
+
 pub fn assembly_scene(design: &AssemblyDesign) -> SceneData {
-    let gap = 2.0
-        * design
-            .members
-            .iter()
-            .map(|m| m.design.wire_dia.millimeters())
-            .fold(0.0_f64, f64::max);
+    let gap = series_stack_gap(design);
 
     let mut polylines = Vec::with_capacity(design.members.len());
     let mut y_base = 0.0_f64;
