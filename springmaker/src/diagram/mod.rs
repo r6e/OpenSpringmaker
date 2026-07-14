@@ -1,11 +1,15 @@
 //! 2D engineering-diagram visual mode (ADR 0008): pure projection
 //! (`geometry`) + pure layout (`layout`) feeding the humble `canvas`.
 pub mod geometry;
+pub mod layout;
 
 // Re-exports consumed by a later diagram task (layout + humble canvas); Task 1
 // ships the projection API ahead of its first caller.
 #[allow(unused_imports)]
 pub use geometry::{project_silhouette, Bounds, Edge2, Projected, P2};
+// Re-export consumed by the humble canvas in Task 4.
+#[allow(unused_imports)]
+pub use layout::{layout, LayoutedDim};
 
 /// Which toggleable layer a dimension belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,4 +51,35 @@ pub struct Dimension {
     pub value: f64,
     pub label: String,
     pub at: P2,
+}
+
+/// Which dimension layers are currently shown (app state; toggled in the UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // consumed by the UI toggle in Task 5
+pub struct DimLayers {
+    pub lengths: bool,
+    pub diameters: bool,
+    pub coils: bool,
+}
+
+impl Default for DimLayers {
+    fn default() -> Self {
+        Self {
+            lengths: true,
+            diameters: true,
+            coils: true,
+        }
+    }
+}
+
+impl DimLayers {
+    /// Whether a dimension's layer is currently visible.
+    #[allow(dead_code)] // consumed by the layout engine in Task 3
+    pub fn shows(&self, layer: DimLayer) -> bool {
+        match layer {
+            DimLayer::Lengths => self.lengths,
+            DimLayer::Diameters => self.diameters,
+            DimLayer::Coils => self.coils,
+        }
+    }
 }
