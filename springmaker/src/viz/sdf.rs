@@ -902,18 +902,17 @@ pub(crate) fn scene_extent_mm(scene: &SdfScene) -> Option<(f64, f64)> {
         .then_some((extent, y_mid))
 }
 
-/// Whether a coil count is too hostile to render — mirrors
-/// `scene_from_radius`'s guard (non-finite/negative `active`, or `total`
-/// outside `[0, MAX_RENDER_TURNS]`), plus `total <= 0.0`: unlike the
-/// wireframe (whose radius closures are constant per family), a tapered
-/// [`helical_body_parts`] reconstruction divides by `total` to place each
-/// segment's start/end fraction, so a zero total must bail here rather than
-/// produce a NaN taper endpoint.
+/// Whether a coil count is too hostile to render — the shared
+/// [`super::coil_counts_hostile`] verdict (non-finite/negative `active`, or
+/// `total` outside `(0, MAX_RENDER_TURNS]`). Kept as a named sdf-local wrapper
+/// because it carries a distinct rationale: unlike the wireframe (whose radius
+/// closures are constant per family), a tapered [`helical_body_parts`]
+/// reconstruction divides by `total` to place each segment's start/end
+/// fraction, so a zero total must bail here rather than produce a NaN taper
+/// endpoint. Delegating keeps the count verdict single-sourced with the helix
+/// path.
 fn coils_hostile(active: f64, total: f64) -> bool {
-    !active.is_finite()
-        || active < 0.0
-        || !(0.0..=super::MAX_RENDER_TURNS).contains(&total)
-        || total <= 0.0
+    super::coil_counts_hostile(active, total)
 }
 
 /// Whether any of a design's own solved geometry fields (radius/wire/pitch —

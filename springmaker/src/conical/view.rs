@@ -118,10 +118,19 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::conical::scene_model::conical_scene(&outcome.design),
                 || crate::viz::sdf::conical_sdf(&outcome.design),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::conical::scene_model::conical_scene(&outcome.design),
+                        crate::conical::diagram_model::dimensions(&outcome.design),
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
+            // The layer-toggle row is only meaningful (and only shown) while
+            // the 2D diagram is the active visual.
+            let layer_controls = crate::widgets::diagram_layer_controls(pal, app);
 
-            render_populated(pal, &p, toggle, visual)
+            render_populated(pal, &p, toggle, layer_controls, visual)
         }
     };
 
@@ -131,16 +140,17 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Render the populated conical results: hero rate → Geometry → load table →
-/// chart/3D toggle → selected visual → footer note. Status is handled by the
-/// calculator's shared status panel (as siblings do — see
-/// `calculator::status_panel`).
+/// chart/3D toggle → optional 2D layer-toggle row → selected visual → footer
+/// note. Status is handled by the calculator's shared status panel (as
+/// siblings do — see `calculator::status_panel`).
 fn render_populated<'a>(
     pal: &'static Palette,
     p: &ConPopulatedResults,
     toggle: Element<'a, Message>,
+    layer_controls: Option<Element<'a, Message>>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    column![
+    let mut col = column![
         section_heading(pal, "Results"),
         section_divider(pal),
         render_governing_rate(pal, "Spring rate", &p.governing_rate),
@@ -150,11 +160,16 @@ fn render_populated<'a>(
         render_con_load_table(pal, &p.load_table),
         section_divider(pal),
         toggle,
-        visual,
-        divided_note(pal, CON_LINEAR_MODEL_NOTE),
     ]
-    .spacing(SP_ROW)
-    .into()
+    .spacing(SP_ROW);
+
+    if let Some(controls) = layer_controls {
+        col = col.push(controls);
+    }
+    col = col.push(visual);
+    col = col.push(divided_note(pal, CON_LINEAR_MODEL_NOTE));
+
+    col.into()
 }
 
 /// The load-point table. Mirrors compression's `render_load_table` exactly.

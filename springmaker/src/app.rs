@@ -271,6 +271,7 @@ pub enum VisualMode {
     #[default]
     Chart,
     Spring3d,
+    Diagram,
 }
 
 /// All UI events.
@@ -328,6 +329,14 @@ pub enum Message {
     // `crate::viz::zoom_step`.
     Zoom(f32),
     Visual(VisualMode),
+    /// 2D-diagram wheel-zoom delta (published by `DiagramCanvas::update`),
+    /// accumulated by the `DiagramZoom` arm via `diagram::zoom_step`.
+    DiagramZoom(f32),
+    /// 2D-diagram drag-pan delta (dx, dy) in px, accumulated via `diagram::pan_step`.
+    DiagramPan(f32, f32),
+    /// Toggle one 2D-diagram dimension layer.
+    #[allow(dead_code)] // constructed by the layer-toggle row in Task 5
+    DiagramLayer(crate::diagram::DimLayer),
     // Settings screen: emitted by the correction option buttons in settings_view.
     SetCorrection(CurvatureCorrection),
     // Settings screen: theme preference (System/Light/Dark) picker.
@@ -414,6 +423,13 @@ pub struct App {
     pub shader_available: bool,
     /// Which visual (chart or 3D) occupies the results panel's shared slot.
     pub results_visual: VisualMode,
+    /// Committed 2D-diagram view transform (zoom/pan). The `DiagramZoom`/
+    /// `DiagramPan` arms are the single writers, via `diagram::zoom_step`/
+    /// `pan_step`, mirroring `orbit`/`zoom` above.
+    pub diagram_view: crate::diagram::DiagramView,
+    /// Which 2D-diagram dimension layers are shown; toggled per-layer by
+    /// `Message::DiagramLayer`.
+    pub diagram_layers: crate::diagram::DimLayers,
     // Screen routing
     pub screen: Screen,
     // Materials editor
@@ -473,6 +489,8 @@ impl App {
             zoom: 1.0,
             shader_available: false,
             results_visual: VisualMode::default(),
+            diagram_view: crate::diagram::DiagramView::default(),
+            diagram_layers: crate::diagram::DimLayers::default(),
             screen: Screen::Calculator,
             mat_form: MaterialsFormState::default(),
             editing: None,
@@ -834,6 +852,26 @@ impl App {
             }
             Message::Visual(v) => {
                 self.results_visual = v;
+                false
+            }
+            // Same non-recompute shape as `Zoom`/`Orbit`: `zoom_step`/`pan_step`
+            // are the single writers (finiteness-guarded), so the view stays valid
+            // by induction. Layer toggles are pure view state.
+            Message::DiagramZoom(delta) => {
+                self.diagram_view = crate::diagram::zoom_step(self.diagram_view, delta);
+                false
+            }
+            Message::DiagramPan(dx, dy) => {
+                self.diagram_view = crate::diagram::pan_step(self.diagram_view, dx, dy);
+                false
+            }
+            Message::DiagramLayer(layer) => {
+                let l = &mut self.diagram_layers;
+                match layer {
+                    crate::diagram::DimLayer::Lengths => l.lengths = !l.lengths,
+                    crate::diagram::DimLayer::Diameters => l.diameters = !l.diameters,
+                    crate::diagram::DimLayer::Coils => l.coils = !l.coils,
+                }
                 false
             }
 

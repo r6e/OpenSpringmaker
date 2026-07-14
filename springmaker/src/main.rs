@@ -3,6 +3,7 @@ mod assembly;
 mod calculator;
 mod compression;
 mod conical;
+mod diagram;
 mod extension;
 mod form_helpers;
 mod materials_form;

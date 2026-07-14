@@ -108,10 +108,19 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::assembly::scene_model::assembly_scene(outcome),
                 || crate::viz::sdf::assembly_sdf(outcome),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::assembly::scene_model::assembly_scene(outcome),
+                        crate::assembly::diagram_model::dimensions(outcome),
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
+            // The layer-toggle row is only meaningful (and only shown) while
+            // the 2D diagram is the active visual.
+            let layer_controls = crate::widgets::diagram_layer_controls(pal, app);
 
-            render_populated(pal, &p, toggle, visual)
+            render_populated(pal, &p, toggle, layer_controls, visual)
         }
     };
     container(panel_container(pal, inner))
@@ -131,6 +140,7 @@ fn render_populated<'a>(
     pal: &'static Palette,
     p: &AsmPopulatedResults,
     toggle: Element<'a, Message>,
+    layer_controls: Option<Element<'a, Message>>,
     visual: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let mut col = column![
@@ -143,9 +153,13 @@ fn render_populated<'a>(
         render_asm_load_table(pal, &p.assembly_loads),
         section_divider(pal),
         toggle,
-        visual,
     ]
     .spacing(SP_ROW);
+
+    if let Some(controls) = layer_controls {
+        col = col.push(controls);
+    }
+    col = col.push(visual);
 
     for member in &p.members {
         col = col.push(section_divider(pal));

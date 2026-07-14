@@ -285,8 +285,17 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::compression::scene_model::compression_scene(&outcome.design),
                 || crate::viz::sdf::compression_sdf(&outcome.design),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::compression::scene_model::compression_scene(&outcome.design),
+                        crate::compression::diagram_model::dimensions(&outcome.design),
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
+            // The layer-toggle row is only meaningful (and only shown) while
+            // the 2D diagram is the active visual.
+            let layer_controls = crate::widgets::diagram_layer_controls(pal, app);
 
             // The presenter decides whether a fatigue chart exists (it stays
             // hidden with the fatigue rows on min-weight runs); the view only
@@ -295,7 +304,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
             let fatigue_chart =
                 fatigue_chart_data(outcome, us).map(|d| crate::plot::chart_element(pal, d));
 
-            render_populated(pal, &p, toggle, visual, fatigue_chart)
+            render_populated(pal, &p, toggle, layer_controls, visual, fatigue_chart)
         }
     };
 
@@ -305,11 +314,13 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
 }
 
 /// Assemble the populated results column from the presenter data plus the
-/// chart/3D toggle and the selected visual.
+/// chart/3D/2D toggle, the optional 2D layer-toggle row, and the selected
+/// visual.
 fn render_populated<'a>(
     pal: &'static Palette,
     p: &PopulatedResults,
     toggle: Element<'a, Message>,
+    layer_controls: Option<Element<'a, Message>>,
     visual: Element<'a, Message>,
     fatigue_chart: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
@@ -323,9 +334,13 @@ fn render_populated<'a>(
         render_load_table(pal, &p.load_table),
         section_divider(pal),
         toggle,
-        visual,
     ]
     .spacing(SP_ROW);
+
+    if let Some(controls) = layer_controls {
+        col = col.push(controls);
+    }
+    col = col.push(visual);
 
     match &p.fatigue {
         FatigueView::Hidden => {}

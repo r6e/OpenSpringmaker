@@ -104,6 +104,7 @@ mod tests {
                 points: helix(|_| 10.0, |t| t * 50.0, 6.0, 32),
                 role: SceneRole::Wire,
                 stroke_px: 3,
+                wire_mm: 1.0,
             }],
         }
     }
@@ -288,6 +289,7 @@ mod tests {
                 points: vec![(1.0, -1e308, 0.0), (1.0, 1e308, 0.0)],
                 role: SceneRole::Wire,
                 stroke_px: 1,
+                wire_mm: 1.0,
             }],
         };
         assert!(render_scene(&DARK, &scene, Orbit::default()).is_none());
