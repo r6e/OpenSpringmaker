@@ -261,4 +261,36 @@ mod tests {
             "no laid-out dim may carry a non-finite coordinate to the canvas"
         );
     }
+
+    /// Parity with compression/conical (input-domain panel finding): each
+    /// member's OD/wire station routes through `member_rendered_height` →
+    /// `coil_render_height`, and Series ACCUMULATES member heights + gaps
+    /// (`axial += member_h + gap`). A NaN in one member's coil geometry must keep
+    /// EVERY member's station finite — `coil_render_height` guards → 0.0 and
+    /// `series_stack_gap`'s max-fold ignores the NaN wire — so a poisoned member
+    /// can't drop the whole downstream stack's callouts. Swept over both
+    /// topologies (Series exercises the accumulator).
+    #[test]
+    fn degenerate_member_coil_geometry_yields_finite_station_anchors() {
+        use springcore::units::Length;
+        let check = |field: &str, topology: &str, mutate: fn(&mut SpringDesign)| {
+            let mut d = build(topology, "squared_ground", TWO_MEMBERS);
+            mutate(&mut d.members[0].design);
+            let dims = dimensions(&d);
+            for i in 0..d.members.len() {
+                let at = find(&dims, &format!("m{} OD", i + 1)).at;
+                assert!(
+                    at.0.is_finite() && at.1.is_finite(),
+                    "NaN {field} on member 0 ({topology}): m{} OD anchor non-finite",
+                    i + 1
+                );
+            }
+        };
+        for topology in ["series", "nested"] {
+            check("active", topology, |m| m.active_coils = f64::NAN);
+            check("wire", topology, |m| {
+                m.wire_dia = Length::from_millimeters(f64::NAN)
+            });
+        }
+    }
 }

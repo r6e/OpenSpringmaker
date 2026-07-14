@@ -154,9 +154,13 @@ mod tests {
         let fl = find(&dims, "L\u{2080}");
         // (1) EXACT: presenter value == design free_length.
         assert_relative_eq!(fl.value, d.free_length.millimeters(), max_relative = 1e-9);
-        // (2) EXACT (purely algebraic): the presenter's Linear span == free_length.
-        //     |top_inner - bottom_inner| = body_h + 4·r1 - wire, and
-        //     body_h = free_length - 4·r1 + wire, so the span is free_length exactly.
+        // (2) EXACT above the clamp band: the presenter's Linear span == free_length.
+        //     |top_inner - bottom_inner| = body_h + 4·r1 - wire. body_h is now the
+        //     DRAWN height (coil_render_height over extension_body_pitch_mm); above
+        //     the rate-equivalent close-wound length it COINCIDES with the raw
+        //     relation free_length - 4·r1 + wire, so the span is free_length exactly.
+        //     This fixture (free_length 100) sits there; inside the clamp band L₀ is
+        //     a reference dim (span = drawn hooks > value) — see the clamp-band test.
         if let crate::diagram::DimKind::Linear { from, to } = fl.kind {
             assert_relative_eq!(
                 (to.0 - from.0).abs(),
@@ -265,5 +269,33 @@ mod tests {
         for label in ["OD", "ID", "wire", "active"] {
             assert_relative_eq!(find(&dims, label).at.0, center, max_relative = 1e-9);
         }
+    }
+
+    /// Parity with compression/conical (input-domain panel finding): the body
+    /// callouts now route through `coil_render_height` via the derived
+    /// `extension_body_pitch_mm` (which divides by `active_coils`), so a NaN in
+    /// the coil-geometry fields must keep the BODY callouts (OD/ID/wire/coil, all
+    /// at `body_h/2`) finite — the guards return 0.0. SCOPED to the body callouts:
+    /// L₀/hook-opening anchor on `bottom_inner`/`top_inner`, which go non-finite
+    /// under NaN `wire`/`r1` by design (the drop-z L₀ dim is dropped downstream by
+    /// `layout`'s finiteness gate), so this must NOT assert those.
+    #[test]
+    fn degenerate_coil_geometry_yields_finite_body_callout_anchors() {
+        use springcore::extension::ExtensionDesign;
+        use springcore::units::Length;
+        let check = |field: &str, mutate: fn(&mut ExtensionDesign)| {
+            let mut d = design();
+            mutate(&mut d);
+            let dims = dimensions(&d);
+            for label in ["OD", "ID", "wire", "active"] {
+                let at = find(&dims, label).at;
+                assert!(
+                    at.0.is_finite() && at.1.is_finite(),
+                    "NaN {field}: {label} anchor non-finite"
+                );
+            }
+        };
+        check("active", |d| d.active_coils = f64::NAN);
+        check("wire", |d| d.wire_dia = Length::from_millimeters(f64::NAN));
     }
 }
