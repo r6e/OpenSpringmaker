@@ -1,6 +1,10 @@
 //! Shared dimension-presenter helpers used by the helical families.
 use crate::diagram::{DimKind, DimLayer, Dimension, P2};
 
+/// U+2014 EM DASH — the label placeholder for any non-finite value, so no
+/// `NaN`/`inf` ever reaches a rendered label. Shared by [`mm`] and [`degrees`].
+const EM_DASH: &str = "\u{2014}";
+
 /// Format a finite scalar to one decimal place; em dash for non-finite (so no
 /// `NaN`/`inf` ever reaches a label). Named for its commonest use — millimetre
 /// callouts — but the same one-decimal, non-finite-guarded formatting also
@@ -9,7 +13,19 @@ pub fn mm(v: f64) -> String {
     if v.is_finite() {
         format!("{v:.1}")
     } else {
-        "\u{2014}".into()
+        EM_DASH.into()
+    }
+}
+
+/// Format a finite angle as whole degrees with a `°` suffix; em dash for
+/// non-finite (the same "no NaN/inf in labels" discipline as [`mm`], at the
+/// zero-decimal precision that reads best for an angle). The lengths helper
+/// [`mm`] uses one decimal, so degrees gets its own guarded formatter.
+pub fn degrees(v: f64) -> String {
+    if v.is_finite() {
+        format!("{v:.0}\u{00b0}")
+    } else {
+        EM_DASH.into()
     }
 }
 
@@ -73,4 +89,25 @@ pub fn axial_length(to: f64, label: String) -> Dimension {
 /// A free-length linear dimension along the axis, `[0, l0]`.
 pub fn free_length(l0: f64) -> Dimension {
     axial_length(l0, format!("L\u{2080} {}", mm(l0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mm_formats_finite_and_em_dashes_non_finite() {
+        assert_eq!(mm(2.0), "2.0");
+        assert_eq!(mm(f64::NAN), "\u{2014}");
+        assert_eq!(mm(f64::INFINITY), "\u{2014}");
+    }
+
+    #[test]
+    fn degrees_formats_whole_degrees_and_em_dashes_non_finite() {
+        assert_eq!(degrees(90.0), "90\u{00b0}");
+        assert_eq!(degrees(0.0), "0\u{00b0}");
+        assert_eq!(degrees(f64::NAN), "\u{2014}");
+        assert_eq!(degrees(f64::INFINITY), "\u{2014}");
+        assert_eq!(degrees(f64::NEG_INFINITY), "\u{2014}");
+    }
 }

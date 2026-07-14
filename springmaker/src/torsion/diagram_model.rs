@@ -70,7 +70,7 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
             },
             layer: DimLayer::Coils,
             value: included,
-            label: format!("{included:.0}\u{00b0}"),
+            label: common::degrees(included),
             at: (0.0, 0.0),
         },
     ];
@@ -181,6 +181,33 @@ mod tests {
         let od = side.iter().find(|x| x.label.contains("OD")).unwrap();
         assert!(!od.value.is_finite());
         assert!(od.label.contains('\u{2014}'));
+    }
+
+    /// The inset Angular leg-angle label must obey the presenter's shared "no
+    /// NaN/inf in labels" discipline (`common::mm`/`common::degrees`), not
+    /// `format!` a raw `included`: `diagram()` should never BUILD a "NaN°"
+    /// label for a non-finite `body_coils` (post-solve mutation). This is
+    /// presenter-output hygiene, not a render leak — at render `layout` drops
+    /// the whole Angular dim (label included) because its `sweep_deg` is the
+    /// same non-finite `included`. Asserts on `diagram()`'s output.
+    /// Revert-probe: restore `format!("{included:.0}°")` → RED (label "NaN°").
+    #[test]
+    fn degenerate_body_coils_em_dashes_the_angular_label() {
+        let mut d = design();
+        d.inputs.body_coils = f64::NAN;
+        let (_side, inset) = diagram(&d);
+        let angle = inset
+            .dims
+            .iter()
+            .find(|x| matches!(x.kind, DimKind::Angular { .. }))
+            .unwrap();
+        assert!(!angle.value.is_finite());
+        assert!(
+            angle.label.contains('\u{2014}'),
+            "non-finite leg angle must em-dash, got {:?}",
+            angle.label
+        );
+        assert!(!angle.label.contains("NaN"));
     }
 
     /// Lock (not fix): the side-elevation body callouts (OD/ID/wire/coil) sit at
