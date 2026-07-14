@@ -4,6 +4,7 @@
 //! ladders below the envelope; diameter dims span the envelope and sit to its
 //! right; angular dims carry an arc. The humble canvas applies the only affine.
 
+use crate::diagram::geometry::finite2;
 use crate::diagram::{Bounds, DimKind, DimLayers, Dimension, P2};
 
 /// A dimension resolved to drawable primitives, all in model mm. Consumed by
@@ -30,15 +31,49 @@ fn end_arrows(a: P2, b: P2) -> Vec<(P2, f64)> {
     vec![(a, arrow_dir(b, a)), (b, arrow_dir(a, b))]
 }
 
+/// Whether a dimension's drawable geometry is entirely finite. A presenter
+/// em-dash-guards a degenerate design field in the *label* (`common::mm`) but
+/// leaves the coordinate anchors raw, so a non-finite field can still reach a
+/// `Linear`/`Diameter`/`Note` anchor here. Such a dim cannot be drawn — a
+/// NaN/inf point would flow into the canvas `Path` and can panic the
+/// tessellator — so `layout` drops it. Mirrors the finiteness gate in
+/// `geometry::{project_silhouette, bounds_of}` via the shared [`finite2`].
+///
+/// When a fully-degenerate field feeds both the label and the anchor (e.g.
+/// `common::axial_length`'s `L₀ —` at `(NaN/2, 0)`), dropping the dim also
+/// drops its em-dash label — accepted, because such a field is unreachable
+/// through `solve` (the engine's output-finiteness guards reject non-finite
+/// dimensional results), so this only fires on synthetic post-solve mutation.
+fn geometry_is_finite(d: &Dimension) -> bool {
+    match d.kind {
+        DimKind::Linear { from, to } => finite2(from) && finite2(to),
+        DimKind::Diameter { at_axial, half } => at_axial.is_finite() && half.is_finite(),
+        DimKind::Angular {
+            vertex,
+            start_deg,
+            sweep_deg,
+            radius,
+        } => {
+            finite2(vertex) && start_deg.is_finite() && sweep_deg.is_finite() && radius.is_finite()
+        }
+        DimKind::Note => finite2(d.at),
+    }
+}
+
 /// Place every visible dimension's drawable primitives in model mm. Purely
 /// geometric: no frame/screen coordinates enter here (ADR 0008) — the humble
-/// canvas applies the single affine afterward.
+/// canvas applies the single affine afterward. Dims whose geometry is
+/// non-finite are dropped before the ladder counters advance, so they leave no
+/// phantom gap in the rung spacing.
 pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<LayoutedDim> {
     let mut out = Vec::new();
     let mut length_rung = 0usize; // ladder index for axial length dims
     let mut diameter_rung = 0usize;
 
-    for d in dims.iter().filter(|d| active.shows(d.layer)) {
+    for d in dims
+        .iter()
+        .filter(|d| active.shows(d.layer) && geometry_is_finite(d))
+    {
         match d.kind {
             DimKind::Linear { from, to } => {
                 // Drop the dimension line onto a ladder rung below the envelope.
@@ -262,5 +297,129 @@ mod tests {
             },
         );
         assert!(out.is_empty());
+    }
+
+    use crate::diagram::test_support::layouted_dim_is_finite;
+
+    #[test]
+    fn non_finite_geometry_dims_are_dropped_across_every_kind() {
+        let nan = f64::NAN;
+        let dims = vec![
+            // Linear with a non-finite endpoint (degenerate free length).
+            Dimension {
+                kind: DimKind::Linear {
+                    from: (0.0, 0.0),
+                    to: (nan, 0.0),
+                },
+                layer: DimLayer::Lengths,
+                value: nan,
+                label: "L\u{2080} \u{2014}".into(),
+                at: (0.0, 0.0),
+            },
+            // Diameter with a non-finite half (degenerate OD).
+            Dimension {
+                kind: DimKind::Diameter {
+                    at_axial: 30.0,
+                    half: nan,
+                },
+                layer: DimLayer::Diameters,
+                value: nan,
+                label: "OD \u{2014}".into(),
+                at: (30.0, 0.0),
+            },
+            // Angular with a non-finite radius.
+            Dimension {
+                kind: DimKind::Angular {
+                    vertex: (0.0, 0.0),
+                    start_deg: 0.0,
+                    sweep_deg: 90.0,
+                    radius: f64::INFINITY,
+                },
+                layer: DimLayer::Coils,
+                value: 90.0,
+                label: "90\u{00b0}".into(),
+                at: (0.0, 0.0),
+            },
+            // Note anchored at a non-finite point.
+            Dimension {
+                kind: DimKind::Note,
+                layer: DimLayer::Coils,
+                value: 5.0,
+                label: "note".into(),
+                at: (nan, 0.0),
+            },
+        ];
+        let out = layout(&dims, &bounds(), DimLayers::default());
+        assert!(
+            out.is_empty(),
+            "every non-finite-geometry dim must be dropped, got {} laid-out",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn a_dropped_non_finite_dim_leaves_no_phantom_ladder_gap() {
+        // A non-finite Linear dim sits between two finite ones. Because it is
+        // filtered BEFORE the ladder counter advances, the two survivors land
+        // on the first two rungs — no gap where the dropped dim would have sat.
+        let dims = vec![
+            linear("L\u{2080}", DimLayer::Lengths, 60.0),
+            Dimension {
+                kind: DimKind::Linear {
+                    from: (0.0, 0.0),
+                    to: (f64::NAN, 0.0),
+                },
+                layer: DimLayer::Lengths,
+                value: f64::NAN,
+                label: "bad".into(),
+                at: (0.0, 0.0),
+            },
+            linear("L\u{209B}", DimLayer::Lengths, 26.0),
+        ];
+        let out = layout(&dims, &bounds(), DimLayers::default());
+        assert_eq!(out.len(), 2);
+        // Consecutive rungs (RUNG_STEP apart) — no skipped rung for the drop.
+        let gap = (out[0].text.0 .1 - out[1].text.0 .1).abs();
+        assert_relative_eq!(gap, RUNG_STEP, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn every_laid_out_dim_has_finite_coordinates() {
+        // A mixed batch of every kind (all finite) yields only finite output.
+        let dims = vec![
+            linear("L\u{2080}", DimLayer::Lengths, 60.0),
+            Dimension {
+                kind: DimKind::Diameter {
+                    at_axial: 30.0,
+                    half: 8.0,
+                },
+                layer: DimLayer::Diameters,
+                value: 16.0,
+                label: "OD 16.0".into(),
+                at: (30.0, 8.0),
+            },
+            Dimension {
+                kind: DimKind::Angular {
+                    vertex: (0.0, 0.0),
+                    start_deg: 0.0,
+                    sweep_deg: 90.0,
+                    radius: 8.0,
+                },
+                layer: DimLayer::Coils,
+                value: 90.0,
+                label: "90\u{00b0}".into(),
+                at: (0.0, 0.0),
+            },
+            Dimension {
+                kind: DimKind::Note,
+                layer: DimLayer::Coils,
+                value: 10.0,
+                label: "N 10".into(),
+                at: (25.0, 3.0),
+            },
+        ];
+        let out = layout(&dims, &bounds(), DimLayers::default());
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().all(layouted_dim_is_finite));
     }
 }

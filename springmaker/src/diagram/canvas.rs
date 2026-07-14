@@ -9,6 +9,7 @@
 use std::f64::consts::PI;
 
 use crate::app::{Message, Palette};
+use crate::diagram::geometry::retain_finite_edges;
 use crate::diagram::{
     bounds_of, layout, project_silhouette, Bounds, DiagramView, DimLayers, Edge2, LayoutedDim,
     Projected, P2,
@@ -302,14 +303,23 @@ impl canvas::Program<Message> for DiagramCanvas {
 }
 
 /// Prepare the torsion end-view inset: laid out once here, off the frame,
-/// against its OWN bounds — never the main scene's. `None` (no border, no
-/// content) when there is no inset, or when its edges carry no finite point
-/// (`inset_bounds` → `None`); `draw` never sees it either way.
+/// against its OWN bounds — never the main scene's. Non-finite edge points are
+/// dropped first (`retain_finite_edges`), so a mixed inset is compacted rather
+/// than passed through, and an edge reduced below two points is removed.
+/// Returns `None` (no border, no content) when there is no inset, or when no
+/// drawable edge survives (`inset_bounds` → `None`); `draw` never sees it
+/// either way.
 fn prep_inset(inset: Option<crate::diagram::Inset>, layers: DimLayers) -> Option<PreppedInset> {
     inset.and_then(|i| {
-        inset_bounds(&i.edges).map(|bounds| PreppedInset {
+        // Strip non-finite points before sizing OR storing the edges, so both
+        // the fit bounds and what `draw_edges` strokes are finite — the inset's
+        // parity of `project_silhouette`'s point filter (inset legs are built
+        // outside the projection, in `torsion::diagram_model`). `layout`
+        // already guards the inset dims.
+        let edges = retain_finite_edges(i.edges);
+        inset_bounds(&edges).map(|bounds| PreppedInset {
             laid_out: layout(&i.dims, &bounds, layers),
-            edges: i.edges,
+            edges,
             bounds,
         })
     })
@@ -399,6 +409,34 @@ mod tests {
             dims: vec![],
         };
         assert!(prep_inset(Some(empty), DimLayers::default()).is_none());
+    }
+
+    #[test]
+    fn prep_inset_strips_non_finite_edge_points_before_drawing() {
+        use crate::diagram::geometry::finite2;
+        // An inset leg edge carrying a NaN point (finite elsewhere): the inset
+        // is NOT dropped (a finite point survives), but the edges handed to
+        // `draw_edges` must be finite — no NaN into `Path`. The inset-side
+        // parity of `project_silhouette`'s point filter; without it, the leg
+        // edge would reach `draw_edges` with `line_to(NaN)`.
+        let inset = crate::diagram::Inset {
+            edges: vec![Edge2 {
+                points: vec![(0.0, 0.0), (f64::NAN, f64::NAN), (5.0, 3.0)],
+                role: crate::viz::SceneRole::Detail,
+            }],
+            dims: vec![],
+        };
+        let prepped = prep_inset(Some(inset), DimLayers::default())
+            .expect("a finite point survives, so the inset is retained");
+        assert!(
+            prepped
+                .edges
+                .iter()
+                .flat_map(|e| &e.points)
+                .all(|&p| finite2(p)),
+            "prep_inset must strip non-finite edge points"
+        );
+        assert!(!prepped.edges.is_empty());
     }
 
     #[test]

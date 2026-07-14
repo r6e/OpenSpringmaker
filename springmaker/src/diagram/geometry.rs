@@ -7,6 +7,14 @@ use crate::viz::{self, SceneData};
 
 pub type P2 = (f64, f64);
 
+/// Whether both coordinates of a projected point are finite. Shared by
+/// `bounds_of` (the silhouette/inset bounds) and `layout::geometry_is_finite`
+/// (the dimension guard) so the two finiteness checks cannot drift apart —
+/// the 2D analogue of `viz::finite3` (and the reason `plot::plottable` exists).
+pub(crate) fn finite2(p: P2) -> bool {
+    p.0.is_finite() && p.1.is_finite()
+}
+
 pub struct Edge2 {
     pub points: Vec<P2>,
     // Deliberate public API surface: carried through from the 3D scene's
@@ -66,7 +74,7 @@ pub fn bounds_of(edges: &[Edge2]) -> Option<Bounds> {
         radial_max: f64::NEG_INFINITY,
     };
     for (a, r) in edges.iter().flat_map(|e| e.points.iter().copied()) {
-        if !a.is_finite() || !r.is_finite() {
+        if !finite2((a, r)) {
             continue;
         }
         b.axial_min = b.axial_min.min(a);
@@ -83,13 +91,27 @@ pub fn project_silhouette(scene: &SceneData) -> Option<Projected> {
 
     let mut edges = Vec::with_capacity(scene.polylines.len() * 2);
     for line in &scene.polylines {
-        // Skip empty (capped) bodies; scene_extent already vetoed a fully
-        // degenerate scene, but a mixed scene could carry an empty polyline.
-        if line.points.len() < 2 {
+        // Project, dropping any non-finite point. `scene_extent`/`bounds_of`
+        // only veto an *entirely* non-finite scene; a mixed one could otherwise
+        // carry a NaN/inf point straight into `draw_edges`'s `Path` (which can
+        // panic the tessellator) — the silhouette-side parity of `layout`'s
+        // dimension finiteness guard. Filtering here also stops one bad point
+        // poisoning its neighbours' `normal_at` tangents. Unreachable through a
+        // real solve (every family finiteness-guards its scene fields), so this
+        // is defense in depth; for an all-finite body it is a no-op.
+        let center: Vec<P2> = line
+            .points
+            .iter()
+            .copied()
+            .map(to_2d)
+            .filter(|&p| finite2(p))
+            .collect();
+        let wire_r = line.wire_mm / 2.0;
+        // A non-finite gauge or a body left with fewer than two finite points
+        // (also the empty/capped case) cannot draw a silhouette — skip it.
+        if !wire_r.is_finite() || center.len() < 2 {
             continue;
         }
-        let center: Vec<P2> = line.points.iter().copied().map(to_2d).collect();
-        let wire_r = line.wire_mm / 2.0;
         let mut outer = Vec::with_capacity(center.len());
         let mut inner = Vec::with_capacity(center.len());
         for i in 0..center.len() {
@@ -110,6 +132,28 @@ pub fn project_silhouette(scene: &SceneData) -> Option<Projected> {
 
     let bounds = bounds_of(&edges)?;
     Some(Projected { edges, bounds })
+}
+
+/// Drop every non-finite point from each edge, then drop any edge left with
+/// fewer than two points. The built-edge analogue of `project_silhouette`'s
+/// centerline filter, for `Edge2`s constructed OUTSIDE the projection (the
+/// torsion end-on inset legs, built in `torsion::diagram_model`): `bounds_of`
+/// only *skips* non-finite points when sizing the box, it does not remove them
+/// from the point vectors that `draw_edges` later strokes, so a mixed inset
+/// could carry a NaN/inf straight into a `Path`. Runs in `prep_inset` so the
+/// inset gets the same finiteness parity the main silhouette has. No-op for a
+/// finite inset (unreachable through a real solve; defense in depth).
+pub(crate) fn retain_finite_edges(edges: Vec<Edge2>) -> Vec<Edge2> {
+    edges
+        .into_iter()
+        .filter_map(|e| {
+            let points: Vec<P2> = e.points.into_iter().filter(|&p| finite2(p)).collect();
+            (points.len() >= 2).then_some(Edge2 {
+                points,
+                role: e.role,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -204,6 +248,101 @@ mod tests {
         d.mean_dia = Length::from_millimeters(f64::NAN);
         let scene = compression_scene(&d);
         assert!(project_silhouette(&scene).is_none());
+    }
+
+    fn polyline(points: Vec<(f64, f64, f64)>, wire_mm: f64) -> crate::viz::Polyline3 {
+        crate::viz::Polyline3 {
+            points,
+            role: crate::viz::SceneRole::Wire,
+            stroke_px: 1,
+            wire_mm,
+        }
+    }
+
+    #[test]
+    fn mixed_scene_drops_non_finite_points_but_keeps_the_polyline() {
+        // A finite body plus a polyline carrying one NaN point (finite gauge):
+        // `scene_extent`/`bounds_of` still return `Some` off the finite points,
+        // so without the per-point filter the NaN would reach `draw_edges`'s
+        // `Path`. The bad point must be dropped, the two surviving points still
+        // drawn, and EVERY emitted edge coordinate finite.
+        let scene = crate::viz::SceneData {
+            polylines: vec![
+                polyline(
+                    vec![(0.0, 0.0, 0.0), (2.0, 5.0, 0.0), (0.0, 10.0, 0.0)],
+                    2.0,
+                ),
+                polyline(
+                    vec![(0.0, 0.0, 0.0), (f64::NAN, 5.0, 0.0), (0.0, 10.0, 0.0)],
+                    2.0,
+                ),
+            ],
+        };
+        let p = project_silhouette(&scene).expect("the finite body keeps the scene renderable");
+        // Both polylines contribute (2 edges each): the degenerate one is
+        // compacted to its 2 finite points, not discarded wholesale.
+        assert_eq!(p.edges.len(), 4);
+        assert!(
+            p.edges
+                .iter()
+                .flat_map(|e| &e.points)
+                .all(|&pt| finite2(pt)),
+            "every silhouette edge point must be finite"
+        );
+    }
+
+    #[test]
+    fn mixed_scene_skips_a_non_finite_wire_gauge_polyline() {
+        // A finite body plus a polyline whose wire gauge is NaN: its offset
+        // points would all be NaN, so the whole polyline is skipped. The scene
+        // still renders off the finite body, with only finite edges.
+        let scene = crate::viz::SceneData {
+            polylines: vec![
+                polyline(
+                    vec![(0.0, 0.0, 0.0), (2.0, 5.0, 0.0), (0.0, 10.0, 0.0)],
+                    2.0,
+                ),
+                polyline(
+                    vec![(0.0, 0.0, 0.0), (2.0, 5.0, 0.0), (0.0, 10.0, 0.0)],
+                    f64::NAN,
+                ),
+            ],
+        };
+        let p = project_silhouette(&scene).expect("the finite body keeps the scene renderable");
+        assert_eq!(
+            p.edges.len(),
+            2,
+            "the NaN-gauge polyline must contribute nothing"
+        );
+        assert!(p
+            .edges
+            .iter()
+            .flat_map(|e| &e.points)
+            .all(|&pt| finite2(pt)));
+    }
+
+    #[test]
+    fn retain_finite_edges_strips_non_finite_points_and_drops_thin_edges() {
+        let edge = |pts: Vec<P2>| Edge2 {
+            points: pts,
+            role: crate::viz::SceneRole::Detail,
+        };
+        let edges = vec![
+            // One NaN point dropped; the two finite points survive.
+            edge(vec![(0.0, 0.0), (f64::NAN, 1.0), (2.0, 2.0)]),
+            // Reduced below two finite points → the whole edge is dropped.
+            edge(vec![(f64::INFINITY, 0.0), (1.0, 1.0)]),
+            // Fully finite → unchanged.
+            edge(vec![(3.0, 3.0), (4.0, 4.0)]),
+        ];
+        let out = retain_finite_edges(edges);
+        assert_eq!(out.len(), 2, "the thin (one-finite-point) edge is dropped");
+        assert_eq!(
+            out[0].points.len(),
+            2,
+            "the NaN point is removed, not the edge"
+        );
+        assert!(out.iter().flat_map(|e| &e.points).all(|&p| finite2(p)));
     }
 }
 

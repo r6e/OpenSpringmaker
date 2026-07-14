@@ -157,7 +157,25 @@ impl DiagramInput {
 /// conical, extension, torsion, assembly).
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::Dimension;
+    use super::geometry::finite2;
+    use super::{Dimension, LayoutedDim};
+
+    /// Whether every coordinate a `LayoutedDim` hands the canvas — line
+    /// endpoints, arrowhead anchors + direction, the arc vertex/params, and
+    /// the text anchor — is finite. A single NaN/inf reaching the tessellator
+    /// can panic it, so the layout finiteness guard's job is to make this hold
+    /// for every produced dim. Shared by `layout` and family `diagram_model`
+    /// test modules so the invariant is asserted one way.
+    pub fn layouted_dim_is_finite(d: &LayoutedDim) -> bool {
+        d.lines.iter().all(|(a, b)| finite2(*a) && finite2(*b))
+            && d.arrows
+                .iter()
+                .all(|(a, dir)| finite2(*a) && dir.is_finite())
+            && d.arc.is_none_or(|(v, r, s, sw)| {
+                finite2(v) && r.is_finite() && s.is_finite() && sw.is_finite()
+            })
+            && finite2(d.text.0)
+    }
 
     /// Find the first dimension whose label contains `needle`, panicking
     /// with the full label list on a miss. NOT for compression, whose

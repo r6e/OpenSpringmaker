@@ -123,4 +123,40 @@ mod tests {
         assert!(!fl.value.is_finite());
         assert!(fl.label.contains('\u{2014}'));
     }
+
+    /// The exact path Copilot flagged: `assembly_scene` ignores `free_length`,
+    /// so a design with a non-finite `free_length` still projects a renderable
+    /// scene, yet `dimensions` anchors the overall L₀ callout at
+    /// `(free_length/2, 0)` — a non-finite coordinate. `layout` must drop such
+    /// a dim so no NaN reaches the canvas `Path`. Assert on the OUTPUT: every
+    /// coordinate of every laid-out dim is finite (not merely that the input
+    /// was filtered).
+    #[test]
+    fn degenerate_free_length_never_reaches_layout_with_non_finite_geometry() {
+        use crate::diagram::geometry::finite2;
+        use crate::diagram::test_support::layouted_dim_is_finite;
+        use crate::diagram::{layout, Bounds, DimLayers};
+
+        let mut d = two_member("nested");
+        d.free_length = springcore::units::Length::from_millimeters(f64::NAN);
+        let dims = dimensions(&d);
+        // Precondition: the presenter really does emit a non-finite anchor for
+        // the degenerate field (otherwise this test would pass vacuously).
+        assert!(
+            dims.iter().any(|dm| !finite2(dm.at)),
+            "degenerate free_length should produce a non-finite dim anchor"
+        );
+
+        let bounds = Bounds {
+            axial_min: 0.0,
+            axial_max: 60.0,
+            radial_min: -11.0,
+            radial_max: 11.0,
+        };
+        let out = layout(&dims, &bounds, DimLayers::default());
+        assert!(
+            out.iter().all(layouted_dim_is_finite),
+            "no laid-out dim may carry a non-finite coordinate to the canvas"
+        );
+    }
 }
