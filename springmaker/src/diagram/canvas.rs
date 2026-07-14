@@ -9,7 +9,7 @@ use std::f64::consts::PI;
 
 use crate::app::{Message, Palette};
 use crate::diagram::{
-    layout, project_silhouette, Bounds, DiagramView, DimLayers, LayoutedDim, Projected, P2,
+    layout, project_silhouette, Bounds, DiagramView, DimLayers, Edge2, LayoutedDim, Projected, P2,
 };
 use iced::alignment::Vertical;
 use iced::mouse;
@@ -58,6 +58,66 @@ pub fn fit_transform(bounds: &Bounds, w: f32, h: f32, view: DiagramView) -> Tran
     Transform { scale, offset }
 }
 
+/// Bounding envelope over an inset's edges (model mm) — the pure, testable
+/// seam (ADR 0008) behind the corner `fit_transform` in `draw`. Mirrors the
+/// finiteness guard in `project_silhouette`: non-finite points are skipped;
+/// `None` when no finite point exists (an empty or fully degenerate inset),
+/// so the caller can skip drawing it rather than fit a transform to garbage.
+fn inset_bounds(edges: &[Edge2]) -> Option<Bounds> {
+    let mut b = Bounds {
+        axial_min: f64::INFINITY,
+        axial_max: f64::NEG_INFINITY,
+        radial_min: f64::INFINITY,
+        radial_max: f64::NEG_INFINITY,
+    };
+    for (a, r) in edges.iter().flat_map(|e| e.points.iter().copied()) {
+        if !a.is_finite() || !r.is_finite() {
+            continue;
+        }
+        b.axial_min = b.axial_min.min(a);
+        b.axial_max = b.axial_max.max(a);
+        b.radial_min = b.radial_min.min(r);
+        b.radial_max = b.radial_max.max(r);
+    }
+    (b.axial_min.is_finite() && b.axial_max.is_finite()).then_some(b)
+}
+
+/// A corner sub-rectangle for the inset, anchored bottom-right, sized as a
+/// fixed fraction of the canvas with a fixed margin. `None` when the canvas
+/// is too small for the box to clear `fit_transform`'s own internal margin
+/// (which would otherwise degenerate to a near-zero scale) — the caller
+/// skips drawing the inset rather than render a garbled sliver.
+fn inset_sub_rect(canvas_w: f32, canvas_h: f32) -> Option<Rectangle> {
+    const FRACTION: f32 = 0.34;
+    const MARGIN: f32 = 8.0;
+    // Must clear `fit_transform`'s own 2×40px internal margin with headroom.
+    const MIN_SIZE: f32 = 90.0;
+    let width = canvas_w * FRACTION;
+    let height = canvas_h * FRACTION;
+    if width < MIN_SIZE || height < MIN_SIZE {
+        return None;
+    }
+    let x = canvas_w - width - MARGIN;
+    let y = canvas_h - height - MARGIN;
+    if x < 0.0 || y < 0.0 {
+        return None;
+    }
+    Some(Rectangle {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+/// The inset's projected edges and laid-out dims, prepared once off the
+/// frame (`diagram_element`) so `draw` only applies a transform and strokes.
+struct PreppedInset {
+    edges: Vec<Edge2>,
+    laid_out: Vec<LayoutedDim>,
+    bounds: Bounds,
+}
+
 #[allow(dead_code)] // consumed by the results dispatch in Task 5
 pub struct DiagramCanvas {
     projected: Projected,
@@ -65,6 +125,82 @@ pub struct DiagramCanvas {
     view: DiagramView,
     wire: Color,
     dim: Color,
+    inset: Option<PreppedInset>,
+}
+
+/// Stroke a set of edges (plain polylines, e.g. a wire silhouette or the
+/// inset's leg edges) under `t` into `frame` using `color`. Shared by the
+/// main silhouette and the corner inset (Task 9).
+fn draw_edges(frame: &mut Frame, t: &Transform, edges: &[Edge2], color: Color) {
+    for edge in edges {
+        if edge.points.len() < 2 {
+            continue;
+        }
+        let path = Path::new(|b| {
+            b.move_to(t.point(edge.points[0]));
+            for &p in &edge.points[1..] {
+                b.line_to(t.point(p));
+            }
+        });
+        frame.stroke(&path, Stroke::default().with_color(color).with_width(1.5));
+    }
+}
+
+/// Stroke one set of laid-out dims (lines, arc, arrowheads, constant-px
+/// centered text) under `t` into `frame` using `color`. Shared by the main
+/// side elevation and the corner inset (Task 9) so the CAD-callout drawing
+/// logic lives in exactly one place.
+fn draw_dims(frame: &mut Frame, t: &Transform, laid_out: &[LayoutedDim], color: Color) {
+    const ARROW_LEN: f32 = 7.0; // screen px, constant regardless of zoom
+    const ARROW_HALF: f64 = 0.42; // ~24° half-angle
+    for d in laid_out {
+        for (a, b) in &d.lines {
+            let seg = Path::line(t.point(*a), t.point(*b));
+            frame.stroke(&seg, Stroke::default().with_color(color).with_width(1.0));
+        }
+        if let Some((vertex, radius, start_deg, sweep_deg)) = d.arc {
+            let arc = Path::new(|bld| {
+                let steps = 24;
+                for i in 0..=steps {
+                    let a = (start_deg + sweep_deg * i as f64 / steps as f64).to_radians();
+                    let p = (vertex.0 + radius * a.cos(), vertex.1 + radius * a.sin());
+                    if i == 0 {
+                        bld.move_to(t.point(p));
+                    } else {
+                        bld.line_to(t.point(p));
+                    }
+                }
+            });
+            frame.stroke(&arc, Stroke::default().with_color(color).with_width(1.0));
+        }
+        for (anchor, dir) in &d.arrows {
+            let tip = t.point(*anchor);
+            // Model→screen direction: uniform positive scale keeps the
+            // angle, the y-flip negates the sin component.
+            let screen_dir = (-dir.sin()).atan2(dir.cos());
+            for barb in [screen_dir + PI - ARROW_HALF, screen_dir + PI + ARROW_HALF] {
+                let end = Point::new(
+                    tip.x + ARROW_LEN * barb.cos() as f32,
+                    tip.y + ARROW_LEN * barb.sin() as f32,
+                );
+                frame.stroke(
+                    &Path::line(tip, end),
+                    Stroke::default().with_color(color).with_width(1.0),
+                );
+            }
+        }
+        let (anchor, label) = &d.text;
+        let (tx, ty) = t.apply(*anchor);
+        frame.fill_text(Text {
+            content: label.clone(),
+            position: Point::new(tx, ty),
+            color,
+            size: 12.0.into(), // constant px — the CAD text-size exception
+            align_x: TextAlignment::Center,
+            align_y: Vertical::Center,
+            ..Text::default()
+        });
+    }
 }
 
 #[derive(Default)]
@@ -130,74 +266,33 @@ impl canvas::Program<Message> for DiagramCanvas {
             self.view,
         );
 
-        // Wire silhouette edges.
-        for edge in &self.projected.edges {
-            if edge.points.len() < 2 {
-                continue;
+        draw_edges(&mut frame, &t, &self.projected.edges, self.wire);
+        draw_dims(&mut frame, &t, &self.laid_out, self.dim);
+
+        // End-on inset (torsion legs; Task 9): a bordered box anchored in the
+        // bottom-right corner, drawn last so it sits atop the main content.
+        // Its transform uses the DEFAULT view (no zoom/pan) — the inset is a
+        // fixed reference, not a viewport onto the main scene — then is
+        // offset into the corner sub-rectangle.
+        if let Some(prepped) = &self.inset {
+            if let Some(rect) = inset_sub_rect(bounds.width, bounds.height) {
+                let mut it = fit_transform(
+                    &prepped.bounds,
+                    rect.width,
+                    rect.height,
+                    DiagramView::default(),
+                );
+                it.offset += Vector::new(rect.x, rect.y);
+
+                frame.stroke(
+                    &Path::rectangle(Point::new(rect.x, rect.y), rect.size()),
+                    Stroke::default().with_color(self.dim).with_width(1.0),
+                );
+                draw_edges(&mut frame, &it, &prepped.edges, self.wire);
+                draw_dims(&mut frame, &it, &prepped.laid_out, self.dim);
             }
-            let path = Path::new(|b| {
-                b.move_to(t.point(edge.points[0]));
-                for &p in &edge.points[1..] {
-                    b.line_to(t.point(p));
-                }
-            });
-            frame.stroke(
-                &path,
-                Stroke::default().with_color(self.wire).with_width(1.5),
-            );
         }
 
-        // Dimensions: lines, arcs, arrowheads, constant-px centered text.
-        const ARROW_LEN: f32 = 7.0; // screen px, constant regardless of zoom
-        const ARROW_HALF: f64 = 0.42; // ~24° half-angle
-        for d in &self.laid_out {
-            for (a, b) in &d.lines {
-                let seg = Path::line(t.point(*a), t.point(*b));
-                frame.stroke(&seg, Stroke::default().with_color(self.dim).with_width(1.0));
-            }
-            if let Some((vertex, radius, start_deg, sweep_deg)) = d.arc {
-                let arc = Path::new(|bld| {
-                    let steps = 24;
-                    for i in 0..=steps {
-                        let a = (start_deg + sweep_deg * i as f64 / steps as f64).to_radians();
-                        let p = (vertex.0 + radius * a.cos(), vertex.1 + radius * a.sin());
-                        if i == 0 {
-                            bld.move_to(t.point(p));
-                        } else {
-                            bld.line_to(t.point(p));
-                        }
-                    }
-                });
-                frame.stroke(&arc, Stroke::default().with_color(self.dim).with_width(1.0));
-            }
-            for (anchor, dir) in &d.arrows {
-                let tip = t.point(*anchor);
-                // Model→screen direction: uniform positive scale keeps the
-                // angle, the y-flip negates the sin component.
-                let screen_dir = (-dir.sin()).atan2(dir.cos());
-                for barb in [screen_dir + PI - ARROW_HALF, screen_dir + PI + ARROW_HALF] {
-                    let end = Point::new(
-                        tip.x + ARROW_LEN * barb.cos() as f32,
-                        tip.y + ARROW_LEN * barb.sin() as f32,
-                    );
-                    frame.stroke(
-                        &Path::line(tip, end),
-                        Stroke::default().with_color(self.dim).with_width(1.0),
-                    );
-                }
-            }
-            let (anchor, label) = &d.text;
-            let (tx, ty) = t.apply(*anchor);
-            frame.fill_text(Text {
-                content: label.clone(),
-                position: Point::new(tx, ty),
-                color: self.dim,
-                size: 12.0.into(), // constant px — the CAD text-size exception
-                align_x: TextAlignment::Center,
-                align_y: Vertical::Center,
-                ..Text::default()
-            });
-        }
         vec![frame.into_geometry()]
     }
 
@@ -232,14 +327,24 @@ pub fn diagram_element(
         ),
         Some(projected) => {
             let laid_out = layout(&input.dims, &projected.bounds, layers);
-            // `input.inset` (the torsion end-view) is drawn starting Task 9;
-            // ignored here.
+            // `input.inset` (the torsion end-view): laid out once here, off
+            // the frame, against its OWN bounds — never the main scene's.
+            // Skipped (no border, no content) when its edges carry no finite
+            // point (`inset_bounds` → `None`); `draw` never sees it.
+            let inset = input.inset.and_then(|i| {
+                inset_bounds(&i.edges).map(|bounds| PreppedInset {
+                    laid_out: layout(&i.dims, &bounds, layers),
+                    edges: i.edges,
+                    bounds,
+                })
+            });
             Canvas::new(DiagramCanvas {
                 projected,
                 laid_out,
                 view,
                 wire: pal.ink,  // primary wire-stroke token (Palette in app.rs)
                 dim: pal.muted, // muted dimension-line + text token
+                inset,
             })
             .width(Length::Fill)
             .height(Length::Fixed(crate::plot::CHART_H as f32))
@@ -252,6 +357,70 @@ pub fn diagram_element(
 mod tests {
     use super::*;
     use crate::diagram::{zoom_step, DiagramView};
+    use crate::torsion::form::{parse_and_solve, TorFormState};
+    use springcore::{MaterialSet, MaterialStore, UnitSystem};
+
+    /// Fixture mirroring `torsion::diagram_model`'s own tests: body 5.25
+    /// coils (legs 90° apart), legs 15mm/10mm — nonzero everything so the
+    /// inset edges/dims are non-trivial.
+    fn torsion_design() -> springcore::torsion::TorsionDesign {
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let form = TorFormState {
+            wire_dia: "2".into(),
+            mean_dia: "20".into(),
+            body_coils: "5.25".into(),
+            leg1: "15".into(),
+            leg2: "10".into(),
+            moments: "500, 1000".into(),
+            ..Default::default()
+        };
+        parse_and_solve(&form, "Music Wire", UnitSystem::Metric, &materials)
+            .unwrap()
+            .design
+    }
+
+    #[test]
+    fn inset_bounds_encloses_the_leg_tips_and_is_none_for_a_degenerate_inset() {
+        let design = torsion_design();
+        let (_dims, inset) = crate::torsion::diagram_model::diagram(&design);
+        let b = inset_bounds(&inset.edges).expect("finite inset edges must produce bounds");
+        assert!(b.axial_max > b.axial_min);
+        assert!(b.radial_max > b.radial_min);
+        // The bounds enclose every point of every edge actually drawn (the
+        // leg tips in particular — the whole point of the inset).
+        for edge in &inset.edges {
+            for &(a, r) in &edge.points {
+                assert!(a >= b.axial_min - 1e-9 && a <= b.axial_max + 1e-9);
+                assert!(r >= b.radial_min - 1e-9 && r <= b.radial_max + 1e-9);
+            }
+        }
+
+        // Empty edges: no finite point exists anywhere.
+        assert!(inset_bounds(&[]).is_none());
+        // All-non-finite points: skipped by the finiteness guard, leaving no
+        // finite point either.
+        let degenerate = vec![Edge2 {
+            points: vec![(f64::NAN, f64::NAN), (f64::INFINITY, f64::NEG_INFINITY)],
+            role: crate::viz::SceneRole::Detail,
+        }];
+        assert!(inset_bounds(&degenerate).is_none());
+    }
+
+    #[test]
+    fn diagram_element_with_inset_builds_without_panicking() {
+        let design = torsion_design();
+        let (dims, inset) = crate::torsion::diagram_model::diagram(&design);
+        let scene = crate::torsion::scene_model::torsion_scene(&design);
+        let input = crate::diagram::DiagramInput::new(scene, dims).with_inset(inset);
+        // The "inset element is produced when present" pin: no pixel/geometry
+        // snapshot (machine-dependent), just that construction doesn't panic.
+        let _element = diagram_element(
+            &crate::app::DARK,
+            input,
+            DiagramView::default(),
+            DimLayers::default(),
+        );
+    }
 
     #[test]
     fn zoom_step_clamps_and_ignores_non_finite() {
