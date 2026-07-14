@@ -30,6 +30,7 @@ mod tests {
     use super::*;
     use crate::conical::form::ConFormState;
     use crate::conical::scene_model::conical_scene;
+    use crate::diagram::test_support::find;
     use crate::diagram::{project_silhouette, DimKind, DimLayer};
     use approx::assert_relative_eq;
     use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
@@ -54,13 +55,6 @@ mod tests {
         )
         .unwrap()
         .design
-    }
-
-    fn find(dims: &[Dimension], s: &str) -> Dimension {
-        dims.iter()
-            .find(|d| d.label.contains(s))
-            .cloned()
-            .unwrap_or_else(|| panic!("no dim containing {s}"))
     }
 
     #[test]

@@ -29,12 +29,16 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
     let (d1x, d1y) = leg_dir(0.0);
     let (d2x, d2y) = leg_dir(end_angle);
     // Legs start at the coil radius, extend outward by their length (true length).
+    let leg1_start = (r, 0.0);
+    let leg1_end = ((r + l1) * d1x, (r + l1) * d1y);
+    let leg2_start = (r * d2x, r * d2y);
+    let leg2_end = ((r + l2) * d2x, (r + l2) * d2y);
     let leg1_edge = Edge2 {
-        points: vec![(r, 0.0), ((r + l1) * d1x, (r + l1) * d1y)],
+        points: vec![leg1_start, leg1_end],
         role: crate::viz::SceneRole::Detail,
     };
     let leg2_edge = Edge2 {
-        points: vec![(r * d2x, r * d2y), ((r + l2) * d2x, (r + l2) * d2y)],
+        points: vec![leg2_start, leg2_end],
         role: crate::viz::SceneRole::Detail,
     };
     // Included leg angle from the drawn leg directions (fractional turn → degrees).
@@ -42,8 +46,8 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
     let inset_dims = vec![
         Dimension {
             kind: DimKind::Linear {
-                from: (r, 0.0),
-                to: ((r + l1) * d1x, (r + l1) * d1y),
+                from: leg1_start,
+                to: leg1_end,
             },
             layer: DimLayer::Lengths,
             value: l1,
@@ -52,8 +56,8 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
         },
         Dimension {
             kind: DimKind::Linear {
-                from: (r * d2x, r * d2y),
-                to: ((r + l2) * d2x, (r + l2) * d2y),
+                from: leg2_start,
+                to: leg2_end,
             },
             layer: DimLayer::Lengths,
             value: l2,

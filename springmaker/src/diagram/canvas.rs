@@ -1,7 +1,8 @@
 //! Humble 2D-diagram canvas (ADR 0008): applies ONE affine (fit → zoom → pan)
 //! to model-mm geometry and draws the wire silhouette and laid-out dimensions
-//! with native iced `Frame`/`Path`/`Text`. The sole screen-space exception is
-//! dimension-text size, held constant px per CAD convention. Scroll publishes
+//! with native iced `Frame`/`Path`/`Text`. Constant-px cosmetic attributes
+//! (dimension-text size, stroke width, arrowhead length) never re-enter model
+//! space — they stay screen-space per CAD convention. Scroll publishes
 //! `DiagramZoom`; drag publishes `DiagramPan` — deltas, never absolute values
 //! read back from `self` (the `OrbitCanvas` stale-base rule).
 
@@ -74,6 +75,9 @@ fn inset_bounds(edges: &[Edge2]) -> Option<Bounds> {
 /// (which would otherwise degenerate to a near-zero scale) — the caller
 /// skips drawing the inset rather than render a garbled sliver.
 fn inset_sub_rect(canvas_w: f32, canvas_h: f32) -> Option<Rectangle> {
+    if !canvas_w.is_finite() || !canvas_h.is_finite() {
+        return None;
+    }
     const FRACTION: f32 = 0.34;
     const MARGIN: f32 = 8.0;
     // Must clear `fit_transform`'s own 2×40px internal margin with headroom.

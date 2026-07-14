@@ -15,6 +15,8 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
     let id = design.inner_dia.millimeters();
     let na = design.active_coils;
     // Body height from the engine's inside-hooks relation (matches scene_model).
+    // body_h = body_coils·wire ≥ 0 for every solvable design (engine rejects
+    // sub-close-wound free lengths), so no clamp needed.
     let body_h = l0 - 2.0 * (2.0 * r1 - wire) - wire;
     let bottom_inner = -2.0 * r1 + wire / 2.0;
     let top_inner = body_h + 2.0 * r1 - wire / 2.0;
@@ -65,6 +67,7 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
 mod tests {
     use super::*;
     use crate::diagram::project_silhouette;
+    use crate::diagram::test_support::find;
     use crate::extension::form::{parse_and_solve, ExtFormState};
     use crate::extension::scene_model::extension_scene;
     use approx::assert_relative_eq;
@@ -90,13 +93,6 @@ mod tests {
         )
         .unwrap()
         .design
-    }
-
-    fn find(dims: &[Dimension], s: &str) -> Dimension {
-        dims.iter()
-            .find(|d| d.label.contains(s))
-            .cloned()
-            .unwrap_or_else(|| panic!("no dim {s}"))
     }
 
     #[test]

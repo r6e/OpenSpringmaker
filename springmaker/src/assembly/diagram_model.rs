@@ -52,6 +52,7 @@ pub fn dimensions(design: &AssemblyDesign) -> Vec<Dimension> {
 mod tests {
     use super::*;
     use crate::assembly::form::{parse_and_solve, AsmFormState, AsmMemberForm};
+    use crate::diagram::test_support::find;
     use crate::diagram::DimLayer;
     use approx::assert_relative_eq;
     use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
@@ -81,13 +82,6 @@ mod tests {
             CurvatureCorrection::Bergstrasser,
         )
         .unwrap()
-    }
-
-    fn find(dims: &[Dimension], s: &str) -> Dimension {
-        dims.iter()
-            .find(|d| d.label.contains(s))
-            .cloned()
-            .unwrap_or_else(|| panic!("no dim {s}"))
     }
 
     #[test]

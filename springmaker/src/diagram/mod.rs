@@ -12,8 +12,7 @@ pub use geometry::{bounds_of, project_silhouette, Bounds, Edge2, Projected, P2};
 // Re-export consumed by the humble canvas (`canvas::diagram_element`).
 pub use layout::{layout, LayoutedDim};
 // Re-export consumed by the results dispatch in Task 5.
-#[allow(unused_imports)]
-pub use canvas::{diagram_element, DiagramCanvas};
+pub use canvas::diagram_element;
 
 /// Which toggleable layer a dimension belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,5 +150,29 @@ impl DiagramInput {
     pub fn with_inset(mut self, inset: Inset) -> Self {
         self.inset = Some(inset);
         self
+    }
+}
+
+/// Helpers shared by the family `diagram_model.rs` test modules (compression,
+/// conical, extension, torsion, assembly).
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::Dimension;
+
+    /// Find the first dimension whose label contains `needle`, panicking
+    /// with the full label list on a miss. NOT for compression, whose
+    /// landed test relies on `starts_with` (its wire-note label search
+    /// needs the leading `⌀` to disambiguate) — that family keeps its own
+    /// `starts_with`-based `find`.
+    pub fn find(dims: &[Dimension], needle: &str) -> Dimension {
+        dims.iter()
+            .find(|d| d.label.contains(needle))
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "no dimension containing {needle}: {:?}",
+                    dims.iter().map(|d| &d.label).collect::<Vec<_>>()
+                )
+            })
     }
 }
