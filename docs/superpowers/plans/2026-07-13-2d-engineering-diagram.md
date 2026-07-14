@@ -1704,15 +1704,28 @@ mod tests {
         let d = design();
         let dims = dimensions(&d);
         let fl = find(&dims, "L\u{2080}");
+        // (1) EXACT: presenter value == design free_length.
         assert_relative_eq!(fl.value, d.free_length.millimeters(), max_relative = 1e-9);
-        // Mirror-drift: the projected inside-hooks axial span equals free_length.
-        let p = project_silhouette(&extension_scene(&d)).unwrap();
-        assert_relative_eq!(p.bounds.axial_max - p.bounds.axial_min,
-            d.free_length.millimeters() + 2.0 * d.wire_dia.millimeters(), // outer surfaces
-            max_relative = 1e-9);
+        // (2) EXACT (purely algebraic): the presenter's Linear span == free_length.
+        //     |top_inner - bottom_inner| = body_h + 4·r1 - wire, and
+        //     body_h = free_length - 4·r1 + wire, so the span is free_length exactly.
         if let crate::diagram::DimKind::Linear { from, to } = fl.kind {
             assert_relative_eq!((to.0 - from.0).abs(), d.free_length.millimeters(), max_relative = 1e-9);
         } else { panic!("free length must be Linear"); }
+        // (3) DROP-Z ENVELOPE (sampling-approximate, NOT 1e-9): the projected
+        //     outer axial span ≈ free_length + 2·wire (hook outer surfaces). The
+        //     ±wire/2 perpendicular offset + arc sampling perturb each hook tip by
+        //     ≤ wire/2, so use a wire-scale tolerance — mirror the compression idiom
+        //     in diagram/geometry.rs::axial_span_matches_free_length (see the
+        //     PROJECTION MODEL footer: the envelope only approaches the ideal to
+        //     sampling resolution; exact ties are presenter-value/algebraic, above).
+        let p = project_silhouette(&extension_scene(&d)).unwrap();
+        let span = p.bounds.axial_max - p.bounds.axial_min;
+        let ideal = d.free_length.millimeters() + 2.0 * d.wire_dia.millimeters();
+        assert!(
+            (span - ideal).abs() <= d.wire_dia.millimeters(),
+            "projected outer axial span {span} not within a wire dia of free_length + 2·wire ({ideal})"
+        );
     }
 
     #[test]
