@@ -26,7 +26,13 @@ pub enum DimLayer {
 /// projection space `(axial, radial)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DimKind {
-    /// Distance between two anchor points (measured along the line joining them).
+    /// Axial length dimension. **Precondition: `from` and `to` must be axially
+    /// aligned (`from.1 == to.1`).** `layout` draws it on a horizontal ladder
+    /// rung using only the axial extent `|to.0 - from.0|`, so an off-axis
+    /// segment is foreshortened (and collapses to zero at 90°) and its drawn
+    /// line would then disagree with the label. For a non-axial length on
+    /// already-drawn geometry, use `Note` (see `torsion::diagram_model` legs and
+    /// `common::wire_note`), not `Linear`.
     Linear { from: P2, to: P2 },
     /// A diameter across the envelope at axial station `at_axial`, full span `2*half`.
     Diameter { at_axial: f64, half: f64 },

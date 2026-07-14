@@ -79,6 +79,15 @@ pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<Lay
     {
         match d.kind {
             DimKind::Linear { from, to } => {
+                // `Linear` is axial-only (see `DimKind::Linear`): the rung uses
+                // only the x-extent, so a non-horizontal segment would render a
+                // line of length `l·|cosθ|`, disagreeing with the label. Fail
+                // fast on future misuse rather than draw a foreshortened line.
+                debug_assert!(
+                    (from.1 - to.1).abs() < 1e-9,
+                    "Linear dim must be axially aligned (from.1 == to.1); an \
+                     off-axis segment foreshortens on the ladder — use Note"
+                );
                 // Drop the dimension line onto a ladder rung below the envelope.
                 let r = bounds.radial_min - LADDER_GAP - RUNG_STEP * length_rung as f64;
                 length_rung += 1;
@@ -182,6 +191,27 @@ mod tests {
                 "arrow at {anchor:?} must point away from {other:?}, got dot={dot}"
             );
         }
+    }
+
+    // `debug_assert` compiles out under `--release`, so gate the guard test to
+    // debug builds (CI runs `cargo test` in debug) to avoid a false failure.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "axially aligned")]
+    fn a_non_axial_linear_dim_trips_the_axial_precondition() {
+        // A vertical Linear (from.0 == to.0) would foreshorten to a zero-length
+        // ladder rung — the torsion-leg bug class. The layout seam rejects it.
+        let dims = vec![Dimension {
+            kind: DimKind::Linear {
+                from: (0.0, 0.0),
+                to: (0.0, 10.0),
+            },
+            layer: DimLayer::Lengths,
+            value: 10.0,
+            label: "L".into(),
+            at: (0.0, 5.0),
+        }];
+        let _ = layout(&dims, &bounds(), DimLayers::default());
     }
 
     #[test]
