@@ -118,7 +118,6 @@ struct PreppedInset {
     bounds: Bounds,
 }
 
-#[allow(dead_code)] // consumed by the results dispatch in Task 5
 pub struct DiagramCanvas {
     projected: Projected,
     laid_out: Vec<LayoutedDim>,
@@ -313,7 +312,6 @@ impl canvas::Program<Message> for DiagramCanvas {
 }
 
 /// Build the diagram element, or the shared placeholder for a degenerate scene.
-#[allow(dead_code)] // consumed by the results dispatch in Task 5
 pub fn diagram_element(
     pal: &'static Palette,
     input: crate::diagram::DiagramInput,

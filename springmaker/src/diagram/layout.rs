@@ -7,8 +7,7 @@
 use crate::diagram::{Bounds, DimKind, DimLayers, Dimension, P2};
 
 /// A dimension resolved to drawable primitives, all in model mm. Consumed by
-/// the humble canvas in Task 4, which applies the single affine to screen space.
-#[allow(dead_code)] // consumed by the canvas in Task 4
+/// the humble canvas, which applies the single affine to screen space.
 pub struct LayoutedDim {
     pub lines: Vec<(P2, P2)>,
     pub arrows: Vec<(P2, f64)>,
@@ -33,8 +32,7 @@ fn end_arrows(a: P2, b: P2) -> Vec<(P2, f64)> {
 
 /// Place every visible dimension's drawable primitives in model mm. Purely
 /// geometric: no frame/screen coordinates enter here (ADR 0008) — the humble
-/// canvas (Task 4) applies the single affine afterward.
-#[allow(dead_code)] // consumed by the canvas in Task 4
+/// canvas applies the single affine afterward.
 pub fn layout(dims: &[Dimension], bounds: &Bounds, active: DimLayers) -> Vec<LayoutedDim> {
     let mut out = Vec::new();
     let mut length_rung = 0usize; // ladder index for axial length dims

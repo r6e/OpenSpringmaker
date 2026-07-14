@@ -17,7 +17,6 @@ pub use canvas::{diagram_element, DiagramCanvas};
 
 /// Which toggleable layer a dimension belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by the layout engine in Task 3
 pub enum DimLayer {
     Lengths,
     Diameters,
@@ -27,7 +26,6 @@ pub enum DimLayer {
 /// The geometric primitive a dimension draws as. Coordinates are model mm in
 /// projection space `(axial, radial)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // consumed by the layout engine in Task 3
 pub enum DimKind {
     /// Distance between two anchor points (measured along the line joining them).
     Linear { from: P2, to: P2 },
@@ -48,7 +46,6 @@ pub enum DimKind {
 /// `value` from the design field (the label source), the formatted `label`,
 /// and a reference anchor `at` on the geometry (leader origin for `Note`s).
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // consumed by the layout engine in Task 3
 pub struct Dimension {
     pub kind: DimKind,
     pub layer: DimLayer,
@@ -77,7 +74,6 @@ impl Default for DimLayers {
 
 impl DimLayers {
     /// Whether a dimension's layer is currently visible.
-    #[allow(dead_code)] // consumed by the layout engine in Task 3
     pub fn shows(&self, layer: DimLayer) -> bool {
         match layer {
             DimLayer::Lengths => self.lengths,
@@ -130,23 +126,20 @@ pub fn pan_step(view: DiagramView, dx: f32, dy: f32) -> DiagramView {
     }
 }
 
-/// Optional secondary end-on projection (torsion legs; Task 9). Empty for
-/// other families.
-#[allow(dead_code)] // consumed by the torsion end-view inset in Task 9
+/// Optional secondary end-on projection (torsion legs). Empty for other
+/// families.
 pub struct Inset {
     pub edges: Vec<Edge2>,
     pub dims: Vec<Dimension>,
 }
 
 /// Everything the diagram needs for one family, built lazily by the caller.
-#[allow(dead_code)] // consumed by the results dispatch in Task 5
 pub struct DiagramInput {
     pub scene: SceneData,
     pub dims: Vec<Dimension>,
     pub inset: Option<Inset>,
 }
 
-#[allow(dead_code)] // consumed by the results dispatch in Task 5
 impl DiagramInput {
     pub fn new(scene: SceneData, dims: Vec<Dimension>) -> Self {
         Self {

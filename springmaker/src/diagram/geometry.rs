@@ -3,15 +3,16 @@
 //! offset ±wire/2 perpendicular to its local 2D tangent to draw the wire's two
 //! silhouette edges (the crossing double-strand look). All coordinates are
 //! model mm; the humble canvas applies the only affine.
-#![allow(dead_code)] // consumed by a later diagram task (layout + humble canvas);
-                     // Task 1 ships the pure projection ahead of its first caller.
-
 use crate::viz::{self, SceneData};
 
 pub type P2 = (f64, f64);
 
 pub struct Edge2 {
     pub points: Vec<P2>,
+    // Deliberate public API surface: carried through from the 3D scene's
+    // `SceneRole` for future role-based rendering (e.g. dashed envelope
+    // lines); the canvas does not yet discriminate on it.
+    #[allow(dead_code)]
     pub role: viz::SceneRole,
 }
 

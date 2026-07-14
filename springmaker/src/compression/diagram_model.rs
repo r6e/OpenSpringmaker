@@ -7,7 +7,6 @@
 use crate::diagram::{common, DimKind, DimLayer, Dimension};
 use springcore::SpringDesign;
 
-#[allow(dead_code)] // consumed by the layout engine in Task 3
 pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
     let l0 = design.free_length.millimeters();
     let ls = design.solid_length.millimeters();

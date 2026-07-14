@@ -7,7 +7,6 @@
 use crate::diagram::{common, DimKind, DimLayer, Dimension};
 use springcore::extension::ExtensionDesign;
 
-#[allow(dead_code)] // consumed by the layout engine in Task 3
 pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
     let wire = design.wire_dia.millimeters();
     let r1 = design.hooks.r1.millimeters();
