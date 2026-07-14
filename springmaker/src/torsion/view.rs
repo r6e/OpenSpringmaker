@@ -296,28 +296,26 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         TorResultsView::Error(msg) => results_error(pal, msg),
         TorResultsView::Empty => results_empty(pal),
         TorResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one load-deflection bitmap is
-            // rasterized per render (orbit drags re-render every frame; an
-            // eagerly-built chart would be thrown away each time).
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Built from the outcome the Populated
+            // variant guarantees is present.
             let outcome = app
                 .tor_outcome
                 .as_ref()
                 .expect("TorResultsView::Populated implies app.tor_outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::torsion::plot_model::torsion_chart(&outcome.design, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
-                    pal,
-                    crate::torsion::scene_model::torsion_scene(&outcome.design),
-                    app.orbit,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::torsion::plot_model::torsion_chart(&outcome.design, us),
+                    )
+                },
+                || crate::torsion::scene_model::torsion_scene(&outcome.design),
+                || crate::viz::sdf::torsion_sdf(&outcome.design),
+            );
             let toggle = visual_toggle(pal, app.results_visual);
 
             // The presenter decides whether a fatigue chart exists (it stays

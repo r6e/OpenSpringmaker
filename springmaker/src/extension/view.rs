@@ -297,28 +297,26 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ExtResultsView::Error(msg) => results_error(pal, msg),
         ExtResultsView::Empty => results_empty(pal),
         ExtResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one bitmap is rasterized per render
-            // (orbit drags re-render every frame; an eagerly-built chart
-            // would be thrown away each time).
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Built from the outcome the Populated
+            // variant guarantees is present.
             let outcome = app
                 .ext_outcome
                 .as_ref()
                 .expect("ExtResultsView::Populated implies app.ext_outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::extension::plot_model::extension_chart(&outcome.design, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
-                    pal,
-                    crate::extension::scene_model::extension_scene(&outcome.design),
-                    app.orbit,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::extension::plot_model::extension_chart(&outcome.design, us),
+                    )
+                },
+                || crate::extension::scene_model::extension_scene(&outcome.design),
+                || crate::viz::sdf::extension_sdf(&outcome.design),
+            );
             let toggle = visual_toggle(pal, app.results_visual);
 
             render_populated(pal, &p, toggle, visual)

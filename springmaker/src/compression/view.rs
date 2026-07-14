@@ -266,28 +266,26 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
         ResultsView::Error(msg) => results_error(pal, msg),
         ResultsView::Empty => results_empty(pal),
         ResultsView::Populated(p) => {
-            // The results panel's shared visual slot: chart or orbitable 3D
-            // scene, selected by `app.results_visual`. Each visual is pure
-            // rendering of the design (no decision), built from the outcome
-            // the Populated variant guarantees is present — and built ONLY in
-            // its own arm, so exactly one load-deflection bitmap is
-            // rasterized per render (orbit drags re-render every frame; an
-            // eagerly-built chart would be thrown away each time).
+            // The results panel's shared visual slot (see
+            // `results_visual_element`'s doc for the one-bitmap-per-render
+            // laziness rationale). Built from the outcome the Populated
+            // variant guarantees is present.
             let outcome = app
                 .outcome
                 .as_ref()
                 .expect("ResultsView::Populated implies app.outcome is Some");
-            let visual: Element<'_, Message> = match app.results_visual {
-                crate::app::VisualMode::Chart => crate::plot::chart_element(
-                    pal,
-                    crate::compression::plot_model::compression_chart(&outcome.design, us),
-                ),
-                crate::app::VisualMode::Spring3d => crate::viz::scene_element(
-                    pal,
-                    crate::compression::scene_model::compression_scene(&outcome.design),
-                    app.orbit,
-                ),
-            };
+            let visual = crate::widgets::results_visual_element(
+                pal,
+                app,
+                || {
+                    crate::plot::chart_element(
+                        pal,
+                        crate::compression::plot_model::compression_chart(&outcome.design, us),
+                    )
+                },
+                || crate::compression::scene_model::compression_scene(&outcome.design),
+                || crate::viz::sdf::compression_sdf(&outcome.design),
+            );
             let toggle = visual_toggle(pal, app.results_visual);
 
             // The presenter decides whether a fatigue chart exists (it stays

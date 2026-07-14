@@ -144,9 +144,13 @@ pub fn solve_forward(
     // solid force F = k·(L0 − Ls) negative, which yields negative stress and a
     // negative %-allowable that silently never trips the set/overstress check.
     if free_length.meters() < solid_length.meters() {
-        return Err(SpringError::InconsistentInputs(
-            "free length must be at least the solid length".into(),
-        ));
+        // Structured (R2 stateful-UI F3, extension's sibling): the solid
+        // length IS this family's close-wound minimum; the GUI relocalizes
+        // both values per the active unit system.
+        return Err(SpringError::FreeLengthBelowMinimum {
+            free_length_m: free_length.meters(),
+            min_free_length_m: solid_length.meters(),
+        });
     }
     let pitch = end_type.pitch_from_free_length(wire_dia, active, free_length);
     let nat_freq = natural_frequency(
@@ -909,10 +913,18 @@ mod tests {
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
         );
-        assert!(
-            matches!(&result, Err(crate::SpringError::InconsistentInputs(m)) if m == "free length must be at least the solid length"),
-            "free_length < solid_length must be rejected, got {result:?}"
-        );
+        // Structured variant with exact field pins (SI meters): L0 = 20 mm,
+        // Ls = d·(Na + 2) = 2·12 = 24 mm — swapped-field mutants die here.
+        match &result {
+            Err(crate::SpringError::FreeLengthBelowMinimum {
+                free_length_m,
+                min_free_length_m,
+            }) => {
+                approx::assert_relative_eq!(*free_length_m, 0.020, max_relative = 1e-12);
+                approx::assert_relative_eq!(*min_free_length_m, 0.024, max_relative = 1e-12);
+            }
+            other => panic!("free_length < solid_length must be rejected, got {other:?}"),
+        }
     }
 
     /// An out-of-range wire diameter must surface as DiameterOutOfRange even when

@@ -26,6 +26,28 @@ use iced::window;
 use iced::Size;
 use springcore::{LoadWarning, MaterialStore};
 
+/// One-shot boot probe: can wgpu produce ANY adapter on this machine? The
+/// shaded 3D path needs a GPU adapter; where none exists (VMs, headless
+/// sessions, exotic driver states) the app must degrade to the CPU
+/// wireframe renderer up front rather than fail at first shaded render.
+/// `request_adapter` is async only for WebGPU's sake — on native it
+/// resolves immediately, so `pollster` drives it to completion right here.
+/// `catch_unwind` covers `wgpu::Instance::default()`'s documented panic
+/// (no enabled backend for the platform — unreachable with iced's default
+/// features, but a probe whose entire job is graceful degradation must not
+/// itself be able to crash the boot).
+fn shader_probe() -> bool {
+    std::panic::catch_unwind(|| {
+        pollster::block_on(async {
+            iced::wgpu::Instance::default()
+                .request_adapter(&iced::wgpu::RequestAdapterOptions::default())
+                .await
+                .is_ok()
+        })
+    })
+    .unwrap_or(false)
+}
+
 fn initial_app() -> App {
     let (settings, settings_warning) = settings::AppSettings::load();
     let (materials, mut load_warnings) = MaterialStore::load();
@@ -40,6 +62,10 @@ fn initial_app() -> App {
     // None if the platform config dir is unavailable (settings_path() returns None).
     app.settings_path = settings::settings_path();
     app.theme_pref = settings.theme_pref;
+    // The probe runs ONCE, here — `App::from_store` deliberately defaults
+    // `shader_available` to false (see the field's doc for the test-path
+    // and snapshot hard-rule reasons).
+    app.shader_available = shader_probe();
     app
 }
 
@@ -69,4 +95,18 @@ fn main() -> iced::Result {
             ..Default::default()
         })
         .run()
+}
+
+#[cfg(test)]
+mod tests {
+    /// The probe must COMPLETE on every machine — including GPU-less CI,
+    /// where it reports `false`. The value itself is machine-dependent by
+    /// nature, so this pins only the no-panic contract (the
+    /// `catch_unwind`/`unwrap_or(false)` path) and prints the local verdict
+    /// for the test log; it must never assert on the value.
+    #[test]
+    fn shader_probe_completes_without_panicking() {
+        let available = super::shader_probe();
+        println!("shader_probe() -> {available}");
+    }
 }

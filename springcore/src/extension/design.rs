@@ -228,6 +228,29 @@ pub fn solve_forward(
                 .into(),
         ));
     }
+    // Free length cannot be below the close-wound minimum — the coils
+    // physically cannot be wound shorter than body close-wound plus both
+    // hook allowances (see `min_free_length`'s doc: Shigley Eq. 10-39's
+    // inside-hooks relation at the Eq. 10-40 body-coil count). Mirrors the
+    // compression solver's free < solid reject: don't let an impossible
+    // free length flow silently into load-point lengths and future exports.
+    // Sits after the hook-radius guards (the minimum is meaningless with an
+    // invalid r1) and carries both values structured in SI meters (wave-2
+    // V5 user decision, R2 stateful-UI F1: the GUI relocalizes them per the
+    // active unit system instead of receiving baked-in millimeters).
+    let min_free = crate::extension::mechanics::min_free_length(
+        wire_dia,
+        active,
+        hooks,
+        material.shear_modulus,
+        material.youngs_modulus,
+    )?;
+    if free_length.meters() < min_free.meters() {
+        return Err(SpringError::FreeLengthBelowMinimum {
+            free_length_m: free_length.meters(),
+            min_free_length_m: min_free.meters(),
+        });
+    }
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
@@ -526,9 +549,14 @@ mod tests {
             &[Force::from_newtons(30.0)],
             crate::CurvatureCorrection::Bergstrasser,
         );
+        // Since the R2 body-coil guard landed, a subnormal `active` rejects
+        // EARLIER (Nb = 1e-320 − G/E is negative — nonphysical body coils),
+        // before the rate computation can produce its +Inf. The rate guard's
+        // `is_finite` half stays as defense in depth; its `> 0.0` half keeps
+        // its own dedicated pin (`rejects_zero_rate_from_extreme_mean_dia`).
         assert!(
-            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed spring rate")),
-            "subnormal active (+Inf rate) must be rejected by the rate guard, got {r:?}"
+            matches!(&r, Err(crate::SpringError::InconsistentInputs(msg)) if msg.starts_with("computed body coil count")),
+            "subnormal active must be rejected as a nonphysical body-coil count, got {r:?}"
         );
     }
 
@@ -604,6 +632,186 @@ mod tests {
         assert!(
             matches!(&r, Err(crate::SpringError::InconsistentInputs(m)) if m == "wire diameter must be a positive finite number"),
             "expected the wire-diameter guard, got {r:?}"
+        );
+    }
+
+    // ── close-wound minimum free length (wave-2 V5) ─────────────────────────
+    // Fixture geometry: d=2mm, D=20mm, default hooks (r1=10mm), active 10.
+    // Body coils Nb = Na − G/E (Shigley Eq. 10-40; Music Wire G/E =
+    // 80/203.4), so the inside-hooks close-wound minimum (Eq. 10-39 via
+    // `free_length_from_geometry`) is 2·(2·r1 − d) + (Nb + 1)·d =
+    // 57.2133726647001 mm. The accept/reject pair sits ±0.4 mm around that
+    // literal — inside the smallest displacement any formula mutant
+    // produces (the G/E term alone shifts it by ~0.8 mm) — so a mutated
+    // minimum flips at least one of them.
+
+    /// Below the close-wound minimum: the coils physically cannot be wound
+    /// shorter, and a silently-accepted bogus free length would flow into
+    /// every future export. Mirrors compression's free < solid reject.
+    /// The error must carry BOTH values (user decision, wave-2 V5),
+    /// structured in SI meters (R2 stateful-UI F1) — exact field pins kill
+    /// swapped/dropped-field mutants.
+    #[test]
+    fn rejects_free_length_below_close_wound_minimum() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(56.8),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        match r {
+            Err(crate::SpringError::FreeLengthBelowMinimum {
+                free_length_m,
+                min_free_length_m,
+            }) => {
+                assert_relative_eq!(free_length_m, 0.0568, max_relative = 1e-12);
+                // Hand literal (see `min_free_length_subtracts_hook_compliance_turns`).
+                assert_relative_eq!(min_free_length_m, 0.0572133726647001, max_relative = 1e-12);
+            }
+            other => panic!("free length below close-wound minimum must be rejected: {other:?}"),
+        }
+    }
+
+    /// R2 input-domain F1: an editor-representable modulus ratio must not
+    /// silently NEUTRALIZE the close-wound-minimum reject. E = 0.001 GPa
+    /// (finite, positive — passes material validation) gives G/E = 80 000,
+    /// so `Nb = active − G/E ≈ −80 000` and the computed "minimum" is
+    /// ≈ −160 m: every positive free length passed the old `<` check, and a
+    /// 1 mm free length "solved" while the renderer clamped to ~58 mm —
+    /// engine/render disagreement flowing into exports. The moduli make the
+    /// body-coil correction nonphysical: reject.
+    #[test]
+    fn rejects_hostile_moduli_that_neutralize_the_close_wound_minimum() {
+        let mut draft = crate::test_support::music_wire().to_draft();
+        draft.youngs_modulus_gpa = 0.001;
+        let m = draft.build().expect("finite positive moduli build");
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(1.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(r, Err(crate::SpringError::InconsistentInputs(_))),
+            "a nonphysical body-coil count must reject, not neutralize the minimum: {r:?}"
+        );
+    }
+
+    /// R2 input-domain F1 twin: `youngs_modulus_gpa × 1e9` overflows to
+    /// +Inf AFTER material validation's finiteness check (1e300 GPa is
+    /// finite in GPa). G/E is then 0, `Nb = active`, and the minimum falls
+    /// back to the (slightly over-stated, still correct-in-the-limit)
+    /// Na-based close-wound length — the solve must still succeed for a
+    /// comfortably-above-minimum free length, not error or misbehave.
+    #[test]
+    fn overflowed_youngs_modulus_still_solves_with_the_na_based_minimum() {
+        let mut draft = crate::test_support::music_wire().to_draft();
+        draft.youngs_modulus_gpa = 1e300;
+        let m = draft.build().expect("1e300 GPa is finite in GPa units");
+        assert!(m.youngs_modulus.pascals().is_infinite());
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(100.0),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(r.is_ok(), "G/E = 0 limit must still solve: {r:?}");
+    }
+
+    /// R2 input-domain F1 twin, shear side: an overflowed SHEAR modulus
+    /// (G = +Inf Pa) drives `G/E = +Inf` → `Nb = −Inf`; and BOTH moduli
+    /// overflowed drive `G/E = NaN` → `Nb = NaN`. Both must reject at the
+    /// body-coil guard (not fall through a `<` that is false for NaN).
+    #[test]
+    fn rejects_overflowed_shear_modulus_body_coil_count() {
+        for (g_gpa, e_gpa) in [(1e300, 203.4), (1e300, 1e300)] {
+            let mut draft = crate::test_support::music_wire().to_draft();
+            draft.shear_modulus_gpa = g_gpa;
+            draft.youngs_modulus_gpa = e_gpa;
+            let m = draft.build().expect("finite in GPa units");
+            let r = solve_forward(
+                &m,
+                Length::from_millimeters(2.0),
+                Length::from_millimeters(20.0),
+                10.0,
+                Length::from_millimeters(100.0),
+                Force::from_newtons(10.0),
+                HookEnds::default_for(Length::from_millimeters(20.0)),
+                &[Force::from_newtons(30.0)],
+                crate::CurvatureCorrection::Bergstrasser,
+            );
+            assert!(
+                matches!(r, Err(crate::SpringError::InconsistentInputs(_))),
+                "non-finite body-coil count (G={g_gpa} GPa, E={e_gpa} GPa) must reject: {r:?}"
+            );
+        }
+    }
+
+    /// Just above the minimum is a valid (nearly close-wound) spring.
+    #[test]
+    fn accepts_free_length_just_above_close_wound_minimum() {
+        let m = crate::test_support::music_wire();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            Length::from_millimeters(57.62),
+            Force::from_newtons(10.0),
+            HookEnds::default_for(Length::from_millimeters(20.0)),
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            r.is_ok(),
+            "free length just above the close-wound minimum must solve: {r:?}"
+        );
+    }
+
+    /// Exactly AT the minimum is the boundary: a fully close-wound spring is
+    /// valid (compression's free == solid precedent) — pins `<`, not `<=`.
+    #[test]
+    fn accepts_free_length_exactly_at_close_wound_minimum() {
+        let m = crate::test_support::music_wire();
+        let hooks = HookEnds::default_for(Length::from_millimeters(20.0));
+        let min_free = crate::extension::mechanics::min_free_length(
+            Length::from_millimeters(2.0),
+            10.0,
+            hooks,
+            m.shear_modulus,
+            m.youngs_modulus,
+        )
+        .unwrap();
+        let r = solve_forward(
+            &m,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            min_free,
+            Force::from_newtons(10.0),
+            hooks,
+            &[Force::from_newtons(30.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            r.is_ok(),
+            "free length exactly at the close-wound minimum must solve: {r:?}"
         );
     }
 
@@ -718,13 +926,15 @@ mod tests {
     #[test]
     fn out_of_band_index_raises_caution() {
         // d=2mm D=40mm → index 20 (> 12). Load kept small so only the index caution fires.
+        // Free length 100mm clears the close-wound minimum (~97.2mm — the
+        // D=40 default hooks are large; wave-2 V5 fixture churn).
         let m = crate::test_support::music_wire();
         let d = solve_forward(
             &m,
             Length::from_millimeters(2.0),
             Length::from_millimeters(40.0),
             10.0,
-            Length::from_millimeters(60.0),
+            Length::from_millimeters(100.0),
             Force::from_newtons(1.0),
             HookEnds::default_for(Length::from_millimeters(40.0)),
             &[Force::from_newtons(2.0)],

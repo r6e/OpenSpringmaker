@@ -167,9 +167,13 @@ pub fn solve_forward(
         .end_type
         .solid_length(inputs.wire_dia, inputs.active_coils);
     if l0 < solid_length.meters() {
-        return Err(SpringError::InconsistentInputs(
-            "free length must be at least the solid length".into(),
-        ));
+        // Structured (R2 stateful-UI F3 sibling sweep): the conservative
+        // non-telescoping solid length is this family's close-wound
+        // minimum; the GUI relocalizes both values per the unit system.
+        return Err(SpringError::FreeLengthBelowMinimum {
+            free_length_m: l0,
+            min_free_length_m: solid_length.meters(),
+        });
     }
     let pitch = inputs.end_type.pitch_from_free_length(
         inputs.wire_dia,
@@ -634,11 +638,20 @@ mod tests {
         i.free_length = Length::from_millimeters(0.0);
         assert_eq!(msg(run(&i)), "free length must be a positive finite number");
         let mut i = base.clone();
-        i.free_length = Length::from_millimeters(20.0); // < Ls = 24 mm
-        assert_eq!(
-            msg(run(&i)),
-            "free length must be at least the solid length"
-        );
+        i.free_length = Length::from_millimeters(20.0);
+        // 20 mm < Ls = 24 mm. Structured variant (R2 stateful-UI F3 sibling
+        // sweep) with exact field pins in SI meters — swapped-field mutants
+        // die here.
+        match run(&i) {
+            Err(crate::SpringError::FreeLengthBelowMinimum {
+                free_length_m,
+                min_free_length_m,
+            }) => {
+                approx::assert_relative_eq!(free_length_m, 0.020, max_relative = 1e-12);
+                approx::assert_relative_eq!(min_free_length_m, 0.024, max_relative = 1e-12);
+            }
+            other => panic!("free < solid must be rejected structured, got {other:?}"),
+        }
         let bad_loads = [Force::from_newtons(-5.0)];
         assert_eq!(
             msg(solve_forward(&m, &base, &bad_loads, corr)),

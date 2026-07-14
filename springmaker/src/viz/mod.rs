@@ -13,6 +13,8 @@ use std::f64::consts::TAU;
 
 pub mod canvas3d;
 pub mod render3d;
+pub mod sdf;
+pub mod shader3d;
 
 pub use canvas3d::scene_element;
 #[cfg(test)]
@@ -122,14 +124,20 @@ const SAMPLES_PER_TURN: usize = 32;
 /// the largest value `radius_at` attains (the closure hides it, so callers
 /// pass it explicitly); extent = max(2·max_radius, total height).
 ///
-/// Hostile coil counts (non-finite or negative `active`/`total`, or `total`
-/// past [`MAX_RENDER_TURNS`]) return the degenerate empty-body scene
-/// (`scene_extent` → `None`, the caller shows the placeholder). The guard
-/// lives HERE and not only in [`helix`] because the unconditional
-/// stroke-sizing `height(1.0)` call below runs BEFORE helix's turns guard —
-/// and `coil_height_fn`'s `clamp(0.0, active)` panics when `active` is NaN
-/// or negative (std clamp: "min > max, or either was NaN"). Helix keeps its
-/// own guard as defense in depth.
+/// Hostile coil counts (non-finite, negative, or zero-`total`
+/// `active`/`total`, or `total` past [`MAX_RENDER_TURNS`]) and a non-finite
+/// OR non-positive `pitch_mm` return the degenerate empty-body scene
+/// (`scene_extent` → `None`, the caller shows the placeholder) — the same
+/// verdicts the SDF builders' `coils_hostile`/`geometry_hostile`/`pitch <=
+/// 0.0` gates reach, so the two geometry paths agree on what is degenerate
+/// (R2 input-domain F3: a
+/// zero-coil or infinite-pitch body previously kept finite stray points,
+/// letting detail-building callers attach floating hooks around a poisoned
+/// body). The guard lives HERE and not only in [`helix`] because the
+/// unconditional stroke-sizing `height(1.0)` call below runs BEFORE helix's
+/// turns guard — and `coil_height_fn`'s `clamp(0.0, active)` panics when
+/// `active` is NaN or negative (std clamp: "min > max, or either was NaN").
+/// Helix keeps its own guard as defense in depth.
 pub fn scene_from_radius(
     radius_at: impl Fn(f64) -> f64,
     max_radius_mm: f64,
@@ -140,9 +148,20 @@ pub fn scene_from_radius(
 ) -> SceneData {
     // The range check rejects a NaN/±inf total too (`contains` is false for
     // all three); active needs its own finiteness test since `+inf < 0.0`
-    // and `NaN < 0.0` are both false.
-    let coils_hostile =
-        !active.is_finite() || active < 0.0 || !(0.0..=MAX_RENDER_TURNS).contains(&total);
+    // and `NaN < 0.0` are both false. `total <= 0.0` mirrors the SDF
+    // `coils_hostile` verdict; the two pitch terms mirror BOTH the SDF
+    // builders' `geometry_hostile(&[pitch])` finiteness check AND their
+    // SEPARATE `pitch <= 0.0` gate (R3 general note: e1d8527's "mirrors
+    // exactly" was imprecise — the SDF `pitch <= 0.0` gate is distinct from
+    // `geometry_hostile`, so a finite non-positive pitch slipped THIS path
+    // and rendered a flat/inverted coil where the SDF showed a placeholder;
+    // both now degrade to placeholder together).
+    let coils_hostile = !active.is_finite()
+        || active < 0.0
+        || !(0.0..=MAX_RENDER_TURNS).contains(&total)
+        || total <= 0.0
+        || !pitch_mm.is_finite()
+        || pitch_mm <= 0.0;
     if coils_hostile {
         // Same shape as the normal path (exactly one Wire polyline, here
         // with no points) so the documented one-polyline invariant holds
@@ -167,11 +186,13 @@ pub fn scene_from_radius(
     }
 }
 
-/// Close-wound coil body shared by extension and torsion: pitch = wire
-/// diameter collapses `coil_height_fn` to a linear close-wound ramp (no dead
-/// coils, since active == total for a close-wound body). A thin wrapper over
-/// `scene_from_radius` with a constant radius and active == total == `turns`,
-/// hosting the explanation once instead of at each call site.
+/// Close-wound coil body (torsion's body; extension moved to the
+/// free-length pitch via `viz::sdf::extension_body_pitch_mm` in wave-2 V5):
+/// pitch = wire diameter collapses `coil_height_fn` to a linear close-wound
+/// ramp (no dead coils, since active == total for a close-wound body). A
+/// thin wrapper over `scene_from_radius` with a constant radius and active
+/// == total == `turns`, hosting the explanation once instead of at each
+/// call site.
 pub fn close_wound_coil(radius_mm: f64, turns: f64, wire_mm: f64) -> SceneData {
     scene_from_radius(|_| radius_mm, radius_mm, turns, turns, wire_mm, wire_mm)
 }
@@ -272,6 +293,621 @@ pub fn orbit_step(current: Orbit, dx: f32, dy: f32) -> Orbit {
     }
 }
 
+/// Multiplicative zoom bounds — the shaded-3D camera's `App.zoom` clamp
+/// (spec §Interaction: "`App.zoom: f32` (default 1.0, clamped to
+/// `[0.3, 4.0]`)"); shared by [`zoom_step`] (the app-level accumulator)
+/// and [`camera_uniforms`]'s own defensive clamp.
+pub(crate) const ZOOM_MIN: f32 = 0.3;
+pub(crate) const ZOOM_MAX: f32 = 4.0;
+
+/// Zoom sensitivity: e-folding rate per unit of `scroll_delta`, where
+/// `scroll_delta` is a RAW line-equivalent scroll count — one wheel "notch"
+/// is conventionally one line. Chosen so a typical single wheel/trackpad
+/// tick (`scroll_delta` ~1-3 lines) changes zoom by a comfortable ~10-35%
+/// (one line: `e^0.1 ≈ 1.105`, +10.5%).
+///
+/// **Single rate constant (review finding 2 fix).** `shader3d::SpringShader::
+/// update` used to pre-normalize its own wheel delta by an UNNAMED ×0.1
+/// (Lines) / ×0.002 (Pixels) factor before publishing `Message::Zoom`, so
+/// this constant's OWN ×0.1 applied a second time — 139 wheel notches to
+/// zoom from 1.0 to 4.0 instead of the ~15 the doc above promises. The
+/// widget now publishes a RAW line-equivalent count (see
+/// [`WHEEL_PIXELS_PER_LINE`]) and this is the ONLY rate applied.
+const ZOOM_SENSITIVITY: f32 = 0.1;
+
+/// Pixel-to-line-equivalent conversion for a `ScrollDelta::Pixels` wheel
+/// event (trackpads and some mice report pixels, not discrete lines) — a
+/// standard terminal/GUI line height in pixels, so a pixel delta converts to
+/// the SAME line-equivalent unit `ScrollDelta::Lines` already reports
+/// natively before either reaches [`zoom_step`]. Named beside
+/// `ZOOM_SENSITIVITY` (simplifier F8) since the two constants together
+/// define the whole wheel-to-zoom-rate pipeline; `shader3d::SpringShader::
+/// update` is the sole reader.
+pub(crate) const WHEEL_PIXELS_PER_LINE: f32 = 16.0;
+
+/// Apply a scroll-wheel delta multiplicatively: `current * e^(delta ×
+/// SENSITIVITY)` — exponential rather than `current * (1 + delta ×
+/// SENSITIVITY)` so the pre-clamp result is ALWAYS strictly positive
+/// regardless of `delta`'s sign or magnitude (no "clamped but still
+/// negative" edge case to separately guard), then clamped to [`ZOOM_MIN`],
+/// [`ZOOM_MAX`]. A non-finite delta (NaN/inf, e.g. a degenerate scroll
+/// event) leaves `current` unchanged, mirroring [`orbit_step`]'s guard.
+pub(crate) fn zoom_step(current: f32, scroll_delta: f32) -> f32 {
+    if !scroll_delta.is_finite() {
+        return current;
+    }
+    (current * (scroll_delta * ZOOM_SENSITIVITY).exp()).clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// A 4x4 matrix stored COLUMN-MAJOR (`m[col*4 + row]`) — the layout WGSL's
+/// `mat4x4<f32>` expects when built from a flat float array (Task 5 mirrors
+/// this exactly): column `c` occupies `m[c*4 .. c*4+4]`.
+type Mat4 = [f64; 16];
+
+const fn mat4_identity() -> Mat4 {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+/// `a * b` (matrix product; applying the RESULT to a vector is equivalent
+/// to applying `b` first, then `a`).
+fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut out = [0.0; 16];
+    for col in 0..4 {
+        for row in 0..4 {
+            let mut sum = 0.0;
+            for k in 0..4 {
+                sum += a[k * 4 + row] * b[col * 4 + k];
+            }
+            out[col * 4 + row] = sum;
+        }
+    }
+    out
+}
+
+/// `m * v` (homogeneous column vector) — test-only (the frustum-containment
+/// pin projects world points through `view_proj` directly; production code
+/// never needs a raw matrix-vector product).
+#[cfg(test)]
+fn mat4_mul_vec4(m: &Mat4, v: [f64; 4]) -> [f64; 4] {
+    let mut out = [0.0; 4];
+    for row in 0..4 {
+        let mut sum = 0.0;
+        for col in 0..4 {
+            sum += m[col * 4 + row] * v[col];
+        }
+        out[row] = sum;
+    }
+    out
+}
+
+/// Shared frustum-containment assertion (simplifier F-2 dedup): projects a
+/// bounding sphere's six world-axis poles (`center ± true_radius` on each
+/// axis) through a packed camera's forward `view_proj` (its first 16 floats)
+/// and asserts every pole lands in front of the camera and inside NDC
+/// `[-1, 1]` (a tiny epsilon absorbs f32 rounding at the tangent boundary).
+/// Uses the production [`mat4_mul_vec4`] so the containment pins exercise the
+/// SAME projection the shader consumes — no hand-rolled re-implementation to
+/// drift. Shared by this module's parametric two-aspect pin and
+/// `viz::sdf`'s end-to-end extension-hook fixture pin; `context` names the
+/// caller's varied parameters for the failure message.
+#[cfg(test)]
+pub(crate) fn assert_poles_inside_ndc(
+    camera: &[f32; 32],
+    center: [f64; 3],
+    true_radius: f64,
+    context: &str,
+) {
+    let view_proj: Mat4 = std::array::from_fn(|i| f64::from(camera[i]));
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            let mut pole = center;
+            pole[axis] += sign * true_radius;
+            let clip = mat4_mul_vec4(&view_proj, [pole[0], pole[1], pole[2], 1.0]);
+            assert!(
+                clip[3] > 0.0,
+                "{context}: pole {pole:?} landed behind the camera (w={})",
+                clip[3]
+            );
+            let ndc_x = clip[0] / clip[3];
+            let ndc_y = clip[1] / clip[3];
+            assert!(
+                ndc_x.abs() <= 1.0 + 1e-6,
+                "{context}: pole {pole:?} ndc_x={ndc_x}"
+            );
+            assert!(
+                ndc_y.abs() <= 1.0 + 1e-6,
+                "{context}: pole {pole:?} ndc_y={ndc_y}"
+            );
+        }
+    }
+}
+
+/// Right-handed look-at view matrix (world → view space; camera looks down
+/// its own -Z, +X right, +Y up) — the standard construction. `up` need not
+/// be exactly orthogonal to `target - eye` (re-orthogonalized via the cross
+/// products below) but must not be parallel to it; never happens here
+/// since [`PITCH_LIMIT`] (1.4 rad, 80.2°) keeps the view direction's angle
+/// to world Y strictly short of 90°.
+fn mat4_look_at(eye: [f64; 3], target: [f64; 3], up: [f64; 3]) -> Mat4 {
+    let sub = |p: [f64; 3], q: [f64; 3]| [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    let dot = |p: [f64; 3], q: [f64; 3]| p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    let cross = |p: [f64; 3], q: [f64; 3]| {
+        [
+            p[1] * q[2] - p[2] * q[1],
+            p[2] * q[0] - p[0] * q[2],
+            p[0] * q[1] - p[1] * q[0],
+        ]
+    };
+    let normalize = |v: [f64; 3]| {
+        let len = dot(v, v).sqrt();
+        [v[0] / len, v[1] / len, v[2] / len]
+    };
+    let forward = normalize(sub(target, eye));
+    let right = normalize(cross(forward, up));
+    let true_up = cross(right, forward);
+    let mut m = mat4_identity();
+    m[0] = right[0];
+    m[1] = true_up[0];
+    m[2] = -forward[0];
+    m[4] = right[1];
+    m[5] = true_up[1];
+    m[6] = -forward[1];
+    m[8] = right[2];
+    m[9] = true_up[2];
+    m[10] = -forward[2];
+    m[12] = -dot(right, eye);
+    m[13] = -dot(true_up, eye);
+    m[14] = dot(forward, eye);
+    m[15] = 1.0;
+    m
+}
+
+/// Right-handed perspective projection, wgpu/D3D NDC-depth convention
+/// (`z_ndc ∈ [0, 1]`, near → 0, far → 1 — NOT OpenGL's `[-1, 1]`, since
+/// Task 5's actual pipeline runs through `wgpu`).
+fn mat4_perspective(fov_y_rad: f64, aspect: f64, near: f64, far: f64) -> Mat4 {
+    let f_cot = 1.0 / (fov_y_rad / 2.0).tan();
+    let mut m = [0.0; 16];
+    m[0] = f_cot / aspect;
+    m[5] = f_cot;
+    m[10] = far / (near - far);
+    m[11] = -1.0;
+    m[14] = (near * far) / (near - far);
+    m
+}
+
+/// General 4x4 matrix inverse via the cofactor/adjugate expansion (the
+/// classic, widely-published closed-form construction — not specific to
+/// any one library). A near-zero determinant (a degenerate camera
+/// configuration: `near == far`, or a zero-volume frustum) is unreachable
+/// via [`camera_uniforms`]'s own inputs (FOV/near/far are all derived
+/// strictly positive with `near < far` by construction) but falls back to
+/// the identity rather than dividing by ~zero, as defense in depth.
+fn mat4_invert(m: &Mat4) -> Mat4 {
+    let mut inv = [0.0; 16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15]
+        + m[9] * m[7] * m[14]
+        + m[13] * m[6] * m[11]
+        - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15]
+        - m[8] * m[7] * m[14]
+        - m[12] * m[6] * m[11]
+        + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15]
+        + m[8] * m[7] * m[13]
+        + m[12] * m[5] * m[11]
+        - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14]
+        - m[8] * m[6] * m[13]
+        - m[12] * m[5] * m[10]
+        + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15]
+        - m[9] * m[3] * m[14]
+        - m[13] * m[2] * m[11]
+        + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15]
+        + m[8] * m[3] * m[14]
+        + m[12] * m[2] * m[11]
+        - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15]
+        - m[8] * m[3] * m[13]
+        - m[12] * m[1] * m[11]
+        + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14]
+        + m[8] * m[2] * m[13]
+        + m[12] * m[1] * m[10]
+        - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15]
+        + m[5] * m[3] * m[14]
+        + m[13] * m[2] * m[7]
+        - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15]
+        - m[4] * m[3] * m[14]
+        - m[12] * m[2] * m[7]
+        + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15]
+        + m[4] * m[3] * m[13]
+        + m[12] * m[1] * m[7]
+        - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14]
+        - m[4] * m[2] * m[13]
+        - m[12] * m[1] * m[6]
+        + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11]
+        - m[5] * m[3] * m[10]
+        - m[9] * m[2] * m[7]
+        + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11]
+        + m[4] * m[3] * m[10]
+        + m[8] * m[2] * m[7]
+        - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11]
+        - m[4] * m[3] * m[9]
+        - m[8] * m[1] * m[7]
+        + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10]
+        + m[4] * m[2] * m[9]
+        + m[8] * m[1] * m[6]
+        - m[8] * m[2] * m[5];
+
+    let det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if det.abs() < 1e-12 {
+        return mat4_identity();
+    }
+    let inv_det = 1.0 / det;
+    inv.map(|x| x * inv_det)
+}
+
+fn mat4_to_f32(m: &Mat4) -> [f32; 16] {
+    std::array::from_fn(|i| m[i] as f32)
+}
+
+/// Vertical field of view, fixed (no user FOV control — spec §Architecture:
+/// "45° vertical FOV").
+const FOV_Y_RAD: f64 = 45.0 * std::f64::consts::PI / 180.0;
+
+/// Fractions of `extent_mm` used for the near/far clip planes — generous
+/// enough that the fit-to-extent bounding sphere stays inside `[near, far]`
+/// across the FULL [`ZOOM_MIN`], [`ZOOM_MAX`] range (worst-case eye
+/// distance runs roughly `extent_mm × [0.33, 4.4]` — see [`fit_distance`]'s
+/// derivation and its doc) without either plane clipping real geometry in
+/// the common (zoom ≈ 1) case.
+const NEAR_FRACTION: f64 = 0.001;
+const FAR_FRACTION: f64 = 20.0;
+
+/// Small multiplicative margin on the fit-to-extent bounding-sphere radius
+/// so a pole landing exactly tangent to the frustum wall clears
+/// floating-point rounding (`|NDC| <= 1.0`) instead of landing a hair past
+/// it.
+const FIT_MARGIN: f64 = 1.02;
+
+/// Bounding-sphere radius that safely contains the shape [`sdf::
+/// scene_extent_mm`] actually bounds: a cylinder of radius `extent_mm/2`
+/// spanning `y ∈ [y_mid - extent_mm/2, y_mid + extent_mm/2]` (both hold
+/// because `extent_mm = max(2·r_max, y_span)` and `y_mid` is the TRUE
+/// midpoint of the scene's y-span — see that function's doc), centered at
+/// `(0, y_mid, 0)`. The worst-case corner (full radial reach AND a full
+/// axial half-span SIMULTANEOUSLY, e.g. `(extent_mm/2, y_mid, 0)`) sits at
+/// `extent_mm/sqrt(2)` from that center — NOT `extent_mm/2`, which would
+/// under-cover a wide, flat spring's outer coil by a factor of `sqrt(2)`.
+/// (`y_mid` doesn't appear in the formula itself — the sphere's RADIUS is
+/// independent of where its center sits along Y — but every caller of this
+/// function centers the resulting sphere at `y_mid`, not the origin.)
+fn fit_sphere_radius(extent_mm: f64) -> f64 {
+    (extent_mm / std::f64::consts::SQRT_2) * FIT_MARGIN
+}
+
+/// Eye-to-target distance that fits [`fit_sphere_radius`]'s bounding sphere
+/// exactly inside a [`FOV_Y_RAD`]-tall, `aspect`-wide perspective frustum:
+/// the sphere's angular half-size as seen from the eye is `asin(R /
+/// distance)`, so `distance = R / sin(theta)` where `theta` is the MORE
+/// restrictive of the vertical and horizontal half-fields-of-view
+/// (whichever is narrower — vertical for `aspect >= 1` landscape,
+/// horizontal for `aspect < 1` portrait; `tan(fov_x/2) = aspect ×
+/// tan(fov_y/2)` is the standard aspect-derived horizontal FOV).
+fn fit_distance(extent_mm: f64, aspect: f64) -> f64 {
+    let radius = fit_sphere_radius(extent_mm);
+    let half_v = FOV_Y_RAD / 2.0;
+    let half_h = (aspect * half_v.tan()).atan();
+    let half_theta = half_v.min(half_h);
+    radius / half_theta.sin()
+}
+
+/// World-space eye position for the given orbit/zoom/extent: spherical
+/// coordinates about the scene's target `(0, y_mid_mm, 0)` — the TRUE
+/// midpoint of the scene's y-span, not necessarily `extent_mm/2` (see
+/// [`sdf::scene_extent_mm`]'s doc — asymmetric scenes like extension's hooks
+/// need the real value; [`fit_sphere_radius`]'s doc covers why the fitted
+/// sphere centers there at all rather than at the origin) — at
+/// [`fit_distance`] divided by `zoom` (`zoom > 1` moves the eye closer —
+/// magnified). `yaw` rotates about world Y, `pitch` tilts toward/away from
+/// it — the same [`Orbit`] angles the wireframe path already carries.
+fn eye_position(orbit: Orbit, zoom: f32, extent_mm: f64, y_mid_mm: f64, aspect: f64) -> [f64; 3] {
+    let distance = fit_distance(extent_mm, aspect) / f64::from(zoom);
+    let yaw = f64::from(orbit.yaw);
+    let pitch = f64::from(orbit.pitch);
+    let dir = [
+        pitch.cos() * yaw.sin(),
+        pitch.sin(),
+        pitch.cos() * yaw.cos(),
+    ];
+    [
+        distance * dir[0],
+        y_mid_mm + distance * dir[1],
+        distance * dir[2],
+    ]
+}
+
+/// View-projection matrix + its inverse for the shaded-3D camera, packed
+/// into a fixed 32-`f32` array — Task 5's WGSL uniform reads this layout
+/// bit-for-bit: `[0..16)` = `view_proj` (world → clip, column-major, the
+/// standard WGSL `mat4x4<f32>` layout — column `c`'s four floats are
+/// `[c*4 .. c*4+4)`), `[16..32)` = its inverse. Camera: perspective, 45°
+/// vertical FOV ([`FOV_Y_RAD`]), looking at `(0, y_mid_mm, 0)` — the scene's
+/// TRUE y-midpoint, from [`sdf::scene_extent_mm`], NOT assumed `extent_mm/2`
+/// (see that function's doc) — from [`eye_position`] (fit-to-extent
+/// distance divided by `zoom`), world-Y up, near/far derived from
+/// `extent_mm` ([`NEAR_FRACTION`]/[`FAR_FRACTION`]).
+///
+/// **`aspect` is the LIVE widget aspect ratio, not a nominal one.** The
+/// caller (`shader3d::SpringShader::draw`) recomputes this every frame from
+/// the shader widget's actual layout `Rectangle` (`bounds.width /
+/// bounds.height`) — this function itself stays pure and stateless, taking
+/// whatever aspect its caller measured.
+///
+/// **No separate stored eye position.** Task 5's vertex shader reconstructs
+/// each pixel's world-space ray directly from the INVERSE block by
+/// unprojecting that pixel's near- and far-plane NDC points (standard
+/// technique — both lie ON the eye-to-pixel ray, so their difference gives
+/// the ray direction without the eye ever needing to be a separately stored
+/// value — see the plan's Task 5 entry, "pass NDC ray through the inverse
+/// view-proj"). This task's own "pinned eye distance" tests exercise
+/// [`eye_position`]/[`fit_distance`] directly as private helpers instead —
+/// Task 5 should NOT hunt for a third stored field; there isn't one.
+///
+/// A non-finite or non-positive `extent_mm`/`aspect` falls back to `1.0`; a
+/// non-finite `y_mid_mm` falls back to `extent_mm/2` (defense in depth — a
+/// pure fn reachable directly by tests/future callers, mirroring
+/// [`stroke_for`]'s non-finite guard); `zoom` is clamped to [`ZOOM_MIN`]/
+/// [`ZOOM_MAX`] even though the committed `App.zoom` state is expected to
+/// already be clamped by [`zoom_step`].
+///
+/// **Returns `None`, not a poisoned camera (review finding 5 fix).** Two
+/// independent guards, mirroring [`sdf::scene_uniforms`]'s finiteness
+/// sweep on the geometry side:
+/// - `zoom`/`orbit.yaw`/`orbit.pitch` are checked with an explicit
+///   `is_finite` UP FRONT — `f32::clamp` does NOT sanitize a NaN `self`
+///   (neither the `< min` nor `> max` comparison a clamp relies on is true
+///   for NaN, so `zoom.clamp(..)` alone would let a NaN zoom straight
+///   through).
+/// - After building the matrices, every one of the 32 packed floats is
+///   swept for finiteness. This catches a case the input-side guards
+///   above cannot: `extent_mm`/`y_mid_mm` can be huge but perfectly FINITE
+///   `f64`s (e.g. from a hostile-but-finite solved geometry) that are
+///   NOT replaced by the non-finite fallback, yet still overflow to `inf`
+///   once the eye/view/projection math scales with them and the result
+///   narrows `as f32`.
+///
+/// Callers (`spring3d_element`'s representability probe, `shader3d::
+/// SpringShader::draw`'s fallback) treat `None` as "fall back to the
+/// wireframe path" / "use a known-safe default camera" respectively — the
+/// same "documented fallback, never garbage" discipline `scene_uniforms`
+/// established for packed geometry.
+pub(crate) fn camera_uniforms(
+    extent_mm: f64,
+    y_mid_mm: f64,
+    orbit: Orbit,
+    zoom: f32,
+    aspect: f32,
+) -> Option<[f32; 32]> {
+    if !zoom.is_finite() || !orbit.yaw.is_finite() || !orbit.pitch.is_finite() {
+        return None;
+    }
+    let extent = if extent_mm.is_finite() && extent_mm > 0.0 {
+        extent_mm
+    } else {
+        1.0
+    };
+    let y_mid = if y_mid_mm.is_finite() {
+        y_mid_mm
+    } else {
+        extent / 2.0
+    };
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        f64::from(aspect)
+    } else {
+        1.0
+    };
+    let zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
+    let eye = eye_position(orbit, zoom, extent, y_mid, aspect);
+    let target = [0.0, y_mid, 0.0];
+    let up = [0.0, 1.0, 0.0];
+    let near = extent * NEAR_FRACTION;
+    let far = (extent * FAR_FRACTION).max(near * 2.0);
+    let view = mat4_look_at(eye, target, up);
+    let proj = mat4_perspective(FOV_Y_RAD, aspect, near, far);
+    let view_proj = mat4_mul(&proj, &view);
+    let inv_view_proj = mat4_invert(&view_proj);
+    let mut out = [0.0f32; 32];
+    out[0..16].copy_from_slice(&mat4_to_f32(&view_proj));
+    out[16..32].copy_from_slice(&mat4_to_f32(&inv_view_proj));
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// A known-safe, always-finite camera for `shader3d::SpringShader::draw`'s
+/// per-frame [`camera_uniforms`] call to fall back to when that call returns
+/// `None`. A degenerate live aspect is NOT the trigger — [`camera_uniforms`]
+/// substitutes `1.0` for any non-finite/non-positive aspect and still returns
+/// `Some`. The real residual trigger is the extreme-magnitude corner
+/// [`camera_representable`]'s doc describes: an extent in the roughly
+/// `2.5e37..7.5e37` mm band passes the view-build probe at aspect `1.0` yet
+/// overflows `as f32` at draw time on a TALL live layout (whose `1/aspect`
+/// projection scaling inflates the packed matrix ~3x) — plus pure defense in
+/// depth against any future draw-time input the view-build probe did not see.
+/// A nominal unit-scene camera (extent 1mm, default orbit/zoom, square
+/// aspect) is guaranteed finite by [`camera_uniforms`]'s own contract for
+/// sane inputs, so this is built by calling it rather than hand-writing a raw
+/// array that could drift from that contract. The fallback renders the
+/// background against the real scene uniforms — safe-wrong (a unit-scene
+/// framing), never garbage.
+fn fallback_camera() -> [f32; 32] {
+    camera_uniforms(1.0, 0.5, Orbit::default(), 1.0, 1.0)
+        .expect("nominal unit-scene inputs are always finite")
+}
+
+/// Pure chooser for the results panel's 3D slot: the shaded path runs IFF
+/// a GPU adapter was found by the boot probe (`App.shader_available`) AND
+/// the scene is representable in the packed uniform budget
+/// ([`sdf::scene_uniforms`] returned `Some`). Everything else — no
+/// adapter, over-budget scene — falls back to the wireframe path.
+pub(crate) fn use_shaded(shader_available: bool, uniforms: Option<&Vec<f32>>) -> bool {
+    shader_available && uniforms.is_some()
+}
+
+/// Whether the shaded camera itself is representable for the given
+/// extent/y_mid/orbit/zoom (review finding 5) — folded into
+/// `spring3d_element`'s shaded/wireframe choice alongside [`use_shaded`]. A
+/// persistently non-finite zoom/orbit, or an extent/y_mid so extreme the
+/// packed camera would overflow `as f32` on narrowing, must fall back to
+/// the wireframe path exactly like an unrepresentable SCENE does — never
+/// reach the shader with a poisoned or garbage camera.
+///
+/// Probed at a fixed representative `aspect` of `1.0`: aspect is always a
+/// positive, finite ratio the widget derives from its own live `Rectangle`
+/// at draw time (`shader3d::SpringShader::draw`). Aspect scales the packed
+/// magnitude but for all NORMAL layout ratios (down to a tall ~9:16) cannot
+/// flip a finite aspect-1.0 result to non-finite — with one bounded caveat:
+/// a tall aspect scales the projection x-row by `1/aspect` AND `eye_position`
+/// by the fit distance, so the dominant `view_proj` entry at aspect 0.5625 is
+/// ~3x its aspect-1.0 value. An extent in roughly the `2.5e37..7.5e37` mm
+/// band therefore passes THIS aspect-1.0 probe (and `scene_uniforms`' own f32
+/// sweep — the radius still packs finite) yet overflows `as f32` at draw time
+/// in a narrow widget. That residual is the belt `draw`'s
+/// [`fallback_camera`] provides (safe background-only render, never garbage),
+/// so this ONE view-build check gates every realistic per-frame aspect while
+/// the fallback catches the extreme-magnitude corner. (The `scene_uniforms`
+/// 1e38-radius representability test is thus NOT an end-to-end shaded
+/// guarantee: at that magnitude the camera overflows first and the widget
+/// safely takes the wireframe/fallback path.)
+fn camera_representable(extent_mm: f64, y_mid_mm: f64, orbit: Orbit, zoom: f32) -> bool {
+    camera_uniforms(extent_mm, y_mid_mm, orbit, zoom, 1.0).is_some()
+}
+
+/// The shaded path's clear color: the same panel surface the wireframe
+/// bitmap fills, as the LINEAR RGBA floats the WGSL `Camera.bg` slot
+/// expects.
+///
+/// **Linear, not raw sRGB (review F1 / wave-2 V1+V2 fix).** `Palette`'s tokens
+/// (like every other color authored in this app) are ordinary sRGB display
+/// values. The pipeline's contract is encode-exactly-once: linearize every
+/// input at PACK time, compose in linear light, then apply the display
+/// (sRGB) encode exactly ONCE at output — in HARDWARE on an sRGB-format
+/// render target, or in the fragment shader's `encode_output` on a non-sRGB
+/// target. Which one is decided at runtime from the real target format by
+/// `shader3d::needs_srgb_encode`, the authority for this contract (the
+/// wave-2 fix: `iced_wgpu`'s compositor only PREFERS an sRGB swapchain and
+/// falls back to whatever the surface offers, so the target format is not
+/// guaranteed sRGB — the earlier "the hardware always re-encodes" assumption
+/// was exactly the V1/V2 black-render bug). `into_linear` (the same
+/// conversion every other `iced` pipeline applies before handing a `Color`
+/// to the GPU) is the pack-time linearize for the background, so the shader's
+/// `ambient = luminance(bg)` term operates on genuinely linear light and the
+/// single output encode restores the authored panel color.
+fn bg_rgba(pal: &crate::app::Palette) -> [f32; 4] {
+    pal.panel.into_linear()
+}
+
+/// The results panel's shared 3D element: shaded ray-marched view when
+/// [`use_shaded`] says so, the existing wireframe canvas otherwise.
+///
+/// **Degenerate scenes short-circuit to the placeholder BEFORE choosing.**
+/// An empty [`sdf::SdfScene`] is "representable" to `scene_uniforms` (zero
+/// parts pack fine and render pure background), so without this gate a
+/// degenerate design on the shaded path would show an empty background
+/// where the wireframe path shows the placeholder. Both geometry paths'
+/// degenerate verdicts are checked — the WIREFRAME's via the same
+/// `scene_extent` + `frame_ranges` tests `render_scene` itself performs,
+/// the SDF's via [`sdf::scene_extent_mm`] — and EITHER being degenerate
+/// shows the placeholder. The two verdicts agree for every real design
+/// (the family SDF builders and scene presenters share the same hostility
+/// rules: non-finite geometry and hostile coil counts empty both); if they
+/// ever disagree, the wireframe scene's verdict governs the WORDING via
+/// [`canvas3d`]'s `placeholder_for`, per the shipped placeholder contract.
+/// (That both-verdicts gate is the adapter-present path; with no adapter the
+/// caller passes an empty `sdf_scene` and the body's early-out applies only
+/// the wireframe verdict — see there.)
+///
+/// The shaded widget matches the wireframe slot's sizing (Fill × the bitmap
+/// height); it carries the scene's raw `extent_mm`/`y_mid_mm` plus
+/// `orbit`/`zoom` rather than a pre-packed camera — `SpringShader::draw`
+/// rebuilds the camera every frame from the widget's LIVE layout `Rectangle`
+/// (`camera_uniforms`'s `aspect` argument), so the fitted view tracks the
+/// panel's actual on-screen aspect ratio instead of a nominal one (review
+/// finding 1 — the previous nominal-`chart_aspect` camera distorted coils by
+/// up to ~25% at the shipped default window width).
+///
+/// **Camera representability gates the shaded choice too (review finding
+/// 5).** [`camera_representable`] is checked alongside [`use_shaded`]: a
+/// persistently non-finite zoom/orbit, or an extent/y_mid extreme enough to
+/// overflow the packed camera, falls back to the wireframe path exactly
+/// like an unrepresentable SCENE does — never reaching the shader with a
+/// poisoned or garbage camera.
+pub(crate) fn spring3d_element(
+    pal: &'static crate::app::Palette,
+    scene: SceneData,
+    sdf_scene: sdf::SdfScene,
+    orbit: Orbit,
+    zoom: f32,
+    shader_available: bool,
+) -> iced::Element<'static, crate::app::Message> {
+    let wireframe_frames = scene_extent(&scene)
+        .as_ref()
+        .and_then(render3d::frame_ranges)
+        .is_some();
+    // No GPU adapter is the whole-session wireframe case on a GPU-less machine.
+    // Decide from the WIREFRAME scene alone and never consult `sdf_scene` —
+    // callers pass `SdfScene::default()` on this path, so no SDF geometry is
+    // built, extent-measured, or packed only to be discarded (Copilot perf
+    // note). The wireframe verdict already governs the placeholder wording, so
+    // real designs — whose two geometry paths' degenerate verdicts agree —
+    // render identically to the both-verdicts gate below.
+    if !shader_available {
+        return if wireframe_frames {
+            scene_element(pal, scene, orbit)
+        } else {
+            crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene))
+        };
+    }
+    let (true, Some((extent_mm, y_mid_mm))) = (wireframe_frames, sdf::scene_extent_mm(&sdf_scene))
+    else {
+        return crate::widgets::placeholder_text(pal, canvas3d::placeholder_for(&scene));
+    };
+    let uniforms = sdf::scene_uniforms(&sdf_scene);
+    if !use_shaded(shader_available, uniforms.as_ref())
+        || !camera_representable(extent_mm, y_mid_mm, orbit, zoom)
+    {
+        return scene_element(pal, scene, orbit);
+    }
+    // `use_shaded` just confirmed `uniforms.is_some()`; unwrap rather than a
+    // second `let ... else` fallback arm identical to the one above (the
+    // prior shape's dead-code-shaped duplicate — simplifier F4).
+    let uniforms = uniforms.expect("use_shaded confirmed uniforms is Some");
+    let program = shader3d::SpringShader {
+        uniforms,
+        extent_mm,
+        y_mid_mm,
+        orbit,
+        zoom,
+        bg: bg_rgba(pal),
+    };
+    iced::widget::shader::Shader::new(program)
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fixed(crate::plot::CHART_H as f32))
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +987,21 @@ mod tests {
         assert!(scene_extent(&nan_total).is_none());
         let negative_total = scene_from_radius(|_| 10.0, 10.0, 10.0, -2.0, 5.0, 2.0);
         assert!(scene_extent(&negative_total).is_none());
+    }
+
+    /// R3 general note (wireframe/SDF parity): a finite NON-POSITIVE pitch
+    /// (post-solve `wire<=0`, the same mutation threat model the SDF builders'
+    /// `pitch <= 0.0` gate defends) must empty the body here too — otherwise
+    /// the wireframe rendered a flat (pitch=0) / inverted (pitch<0) coil while
+    /// the SDF (`compression_sdf_zero_pitch_yields_default`) showed a
+    /// placeholder. `pitch = 0.0` isolates the new term (the finiteness term
+    /// is false for 0.0), so this genuinely pins the added gate.
+    #[test]
+    fn scene_from_radius_non_positive_pitch_yields_a_degenerate_scene() {
+        let zero_pitch = scene_from_radius(|_| 10.0, 10.0, 10.0, 10.0, 0.0, 2.0);
+        assert!(scene_extent(&zero_pitch).is_none());
+        let negative_pitch = scene_from_radius(|_| 10.0, 10.0, 10.0, 10.0, -1.0, 2.0);
+        assert!(scene_extent(&negative_pitch).is_none());
     }
 
     #[test]
@@ -474,5 +1125,616 @@ mod tests {
         assert_eq!(orbit_step(current, 1.0, f32::NAN), current);
         assert_eq!(orbit_step(current, f32::INFINITY, 0.0), current);
         assert_eq!(orbit_step(current, 0.0, f32::INFINITY), current);
+    }
+
+    // ------------------------------------------------------------------
+    // Task 4: zoom step
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn zoom_step_scales_multiplicatively_and_clamps_at_exact_bounds() {
+        assert_relative_eq!(zoom_step(1.0, 0.0), 1.0, max_relative = 1e-6); // no-op scroll
+        let up = zoom_step(1.0, 1.0);
+        assert_relative_eq!(up, ZOOM_SENSITIVITY.exp(), max_relative = 1e-6);
+        let down = zoom_step(up, -1.0);
+        assert_relative_eq!(down, 1.0, max_relative = 1e-6); // exactly undoes the prior step
+                                                             // Clamps at EXACTLY the bounds for extreme deltas (orbit_step precedent).
+        assert_eq!(zoom_step(1.0, 1000.0), ZOOM_MAX);
+        assert_eq!(zoom_step(1.0, -1000.0), ZOOM_MIN);
+    }
+
+    #[test]
+    fn zoom_step_ignores_non_finite_deltas() {
+        assert_eq!(zoom_step(1.5, f32::NAN), 1.5);
+        assert_eq!(zoom_step(1.5, f32::INFINITY), 1.5);
+        assert_eq!(zoom_step(1.5, f32::NEG_INFINITY), 1.5);
+    }
+
+    // ------------------------------------------------------------------
+    // Task 6: shaded/wireframe chooser
+    // ------------------------------------------------------------------
+
+    /// The full 2×2 truth table: the shaded path runs IFF a GPU adapter was
+    /// probed at boot AND the scene packed into the uniform budget. Any
+    /// other combination — no adapter, unrepresentable scene, or both —
+    /// falls back to the wireframe path.
+    #[test]
+    fn use_shaded_requires_adapter_and_representable_scene() {
+        let packed = vec![0.0f32; 4];
+        assert!(!use_shaded(false, None));
+        assert!(!use_shaded(false, Some(&packed)));
+        assert!(!use_shaded(true, None));
+        assert!(use_shaded(true, Some(&packed)));
+    }
+
+    // ------------------------------------------------------------------
+    // Review finding 5: `spring3d_element`'s camera-representability gate
+    // (folded alongside `use_shaded`) — a non-finite camera falls back to
+    // the wireframe path exactly like an unrepresentable scene does.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn camera_representable_is_false_for_non_finite_zoom_or_orbit_true_otherwise() {
+        assert!(camera_representable(80.0, 40.0, Orbit::default(), 1.0));
+        assert!(!camera_representable(
+            80.0,
+            40.0,
+            Orbit::default(),
+            f32::NAN
+        ));
+        let nan_orbit = Orbit {
+            yaw: f32::NAN,
+            pitch: 0.0,
+        };
+        assert!(!camera_representable(80.0, 40.0, nan_orbit, 1.0));
+    }
+
+    #[test]
+    fn camera_representable_is_false_for_an_extent_that_overflows_f32_on_packing() {
+        assert!(!camera_representable(1e300, 5e299, Orbit::default(), 1.0));
+    }
+
+    // ------------------------------------------------------------------
+    // Review F1 / wave-2 V1+V2 fix: gamma — the shaded background must be
+    // LINEAR, not raw sRGB. The pipeline composes in linear light and encodes
+    // exactly once at output (hardware on an sRGB target, else the shader per
+    // `shader3d::needs_srgb_encode`), so every input — background included —
+    // is linearized at pack time. See `bg_rgba`'s doc for the full contract.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn bg_rgba_returns_the_panel_color_linearized() {
+        // Neither DARK's nor LIGHT's `panel` sits at a 0/1 fixed point of the
+        // sRGB EOTF, so this pin has real teeth: a regression back to raw
+        // components would fail it (revert-probed below in the fix commit).
+        for pal in [&crate::app::DARK, &crate::app::LIGHT] {
+            assert_eq!(bg_rgba(pal), pal.panel.into_linear());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Task 4: camera math
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn fit_distance_matches_the_independently_computed_value_at_two_aspects() {
+        // extent=100mm; hand-computed (Python) via
+        // R = 100/sqrt(2)*1.02 = 72.12489168102783,
+        // half_v = 22.5 deg exactly.
+        // aspect=1.0: half_h == half_v (symmetric) -> theta = 22.5 deg.
+        assert_relative_eq!(
+            fit_distance(100.0, 1.0),
+            188.47142463230244,
+            max_relative = 1e-9
+        );
+        // aspect=2.0 (wide): half_h = atan(2*tan(22.5deg)) = 39.639...deg >
+        // half_v, so vertical still governs -> same distance as aspect=1.0.
+        assert_relative_eq!(
+            fit_distance(100.0, 2.0),
+            188.47142463230244,
+            max_relative = 1e-9
+        );
+        // aspect=0.5 (tall/portrait): half_h = atan(0.5*tan(22.5deg)) =
+        // 11.7...deg < half_v, so horizontal governs -> a LARGER distance.
+        assert_relative_eq!(
+            fit_distance(100.0, 0.5),
+            355.6401434198882,
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn eye_position_matches_the_independently_computed_pinned_vector() {
+        // extent=60mm, y_mid=extent/2=30mm (the symmetric case), aspect=16/9,
+        // zoom=1.5, yaw=0.3, pitch=0.2 rad (as ACTUALLY stored — `Orbit`'s
+        // fields are `f32`, so the literals below round to the nearest f32
+        // before this function ever sees them: yaw = 0.300000011920928...,
+        // pitch = 0.200000002980232...) — hand-computed (Python, independent
+        // of this module's Rust code, starting from those SAME f32-rounded
+        // values) via the documented formula: eye = (0, y_mid, 0) +
+        // (fit_distance(extent, aspect) / zoom) * (cos(pitch)sin(yaw),
+        // sin(pitch), cos(pitch)cos(yaw)).
+        let orbit = Orbit {
+            yaw: 0.3,
+            pitch: 0.2,
+        };
+        let eye = eye_position(orbit, 1.5, 60.0, 30.0, 16.0 / 9.0);
+        assert_relative_eq!(eye[0], 21.834752933693835, max_relative = 1e-9);
+        assert_relative_eq!(eye[1], 44.97739694247343, max_relative = 1e-9);
+        assert_relative_eq!(eye[2], 70.5858173404607, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn eye_position_distance_from_target_is_fit_distance_over_zoom() {
+        let orbit = Orbit {
+            yaw: 0.4,
+            pitch: -0.35,
+        };
+        let (extent, y_mid, aspect, zoom) = (80.0, 40.0, 1.6, 2.0);
+        let eye = eye_position(orbit, zoom, extent, y_mid, aspect);
+        let target = [0.0, y_mid, 0.0];
+        let dist = ((eye[0] - target[0]).powi(2)
+            + (eye[1] - target[1]).powi(2)
+            + (eye[2] - target[2]).powi(2))
+        .sqrt();
+        assert_relative_eq!(
+            dist,
+            fit_distance(extent, aspect) / f64::from(zoom),
+            max_relative = 1e-9
+        );
+    }
+
+    #[test]
+    fn eye_position_targets_y_mid_not_half_extent_when_they_differ() {
+        // Review finding 4: an asymmetric scene's true y-midpoint need not
+        // be extent/2 (extension's hook overhang is the real-world case) —
+        // `eye_position` must orbit about the SUPPLIED `y_mid`, not a value
+        // re-derived from `extent`. `pitch = 0` puts the eye exactly at
+        // `target.y` (the `sin(pitch)` term vanishes), so the eye's own Y
+        // coordinate is a direct, unambiguous readout of `y_mid`.
+        let orbit = Orbit {
+            yaw: 0.0,
+            pitch: 0.0,
+        };
+        let eye = eye_position(orbit, 1.0, 100.0, 12.5, 1.0);
+        assert_relative_eq!(eye[1], 12.5, max_relative = 1e-9);
+        // The SAME extent with the naively-assumed `extent/2` midpoint
+        // (50.0) lands the eye somewhere else entirely — proving the two
+        // are not interchangeable.
+        let eye_naive = eye_position(orbit, 1.0, 100.0, 50.0, 1.0);
+        assert!((eye[1] - eye_naive[1]).abs() > 30.0);
+    }
+
+    #[test]
+    fn mat4_mul_with_identity_is_a_no_op() {
+        let m = mat4_look_at([10.0, 5.0, 3.0], [0.0, 2.0, 0.0], [0.0, 1.0, 0.0]);
+        let id = mat4_identity();
+        let product = mat4_mul(&m, &id);
+        for i in 0..16 {
+            assert_relative_eq!(product[i], m[i], max_relative = 1e-9);
+        }
+    }
+
+    #[test]
+    fn camera_uniforms_matrix_times_its_inverse_is_the_identity() {
+        let out = camera_uniforms(
+            120.0,
+            60.0,
+            Orbit {
+                yaw: 0.9,
+                pitch: 0.25,
+            },
+            1.0,
+            1.5,
+        )
+        .expect("finite, sane inputs always produce a camera");
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[i]));
+        let inv_view_proj: Mat4 = std::array::from_fn(|i| f64::from(out[16 + i]));
+        let product = mat4_mul(&view_proj, &inv_view_proj);
+        let identity = mat4_identity();
+        for i in 0..16 {
+            assert!(
+                (product[i] - identity[i]).abs() < 1e-2,
+                "index {i}: {} vs identity {}",
+                product[i],
+                identity[i]
+            );
+        }
+    }
+
+    #[test]
+    fn mat4_invert_is_a_true_inverse_both_orders() {
+        // Mutation bucket-1 pin: `M·M⁻¹ == M⁻¹·M == I` element-wise. The camera
+        // matrices (view, projection, composed view_proj) are STRUCTURED —
+        // a perspective is ~80% zeros with m[15] = 0, a view has m[3] = m[7] =
+        // m[11] = 0 and an orthonormal 3x3 — so any cofactor term that happens
+        // to multiply one of those zeros is unaffected by an operator mutation.
+        // The two DENSE generic matrices below (all 16 entries distinct and
+        // nonzero, well-conditioned) leave no cofactor term dormant: every
+        // MESA-inverse product-of-three is a product of three distinct nonzero
+        // O(1) values, so a single operator flip moves the product off the
+        // identity by O(1) ≫ the 1e-9 tolerance. (The camera matrices are
+        // ill-conditioned — a perspective's near/far ratio — so they keep the
+        // looser 1e-4 that absorbs their rounding; the dense ones carry the
+        // teeth.)
+        let view = mat4_look_at([10.0, 5.0, 3.0], [0.0, 2.0, 0.0], [0.0, 1.0, 0.0]);
+        let proj = mat4_perspective(FOV_Y_RAD, 1.6, 0.7, 250.0);
+        let camera = camera_uniforms(
+            140.0,
+            40.0,
+            Orbit {
+                yaw: 0.8,
+                pitch: -0.3,
+            },
+            1.2,
+            1.777,
+        )
+        .expect("finite inputs always produce a camera");
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(camera[i]));
+        let dense_a: Mat4 = [
+            2.0, 0.5, -1.3, 0.7, //
+            1.1, 3.2, 0.9, -0.4, //
+            -0.6, 1.4, 2.7, 1.8, //
+            0.3, -1.1, 0.8, 2.2,
+        ];
+        let dense_b: Mat4 = [
+            -1.5, 2.1, 0.4, -0.9, //
+            0.8, -0.7, 3.3, 1.2, //
+            2.4, 1.6, -0.5, 0.6, //
+            -1.1, 0.9, 1.7, -2.3,
+        ];
+        let id = mat4_identity();
+        for (m, tol) in [
+            (view, 1e-4),
+            (proj, 1e-4),
+            (view_proj, 1e-4),
+            (dense_a, 1e-9),
+            (dense_b, 1e-9),
+        ] {
+            let inv = mat4_invert(&m);
+            for (label, product) in [("M*inv", mat4_mul(&m, &inv)), ("inv*M", mat4_mul(&inv, &m))] {
+                for i in 0..16 {
+                    assert!(
+                        (product[i] - id[i]).abs() < tol,
+                        "{label} index {i}: {} vs identity {}",
+                        product[i],
+                        id[i]
+                    );
+                }
+            }
+        }
+
+        // Degenerate fallback: a rank-deficient matrix (rows 0 and 1 equal ⇒
+        // det = 0) returns the identity rather than dividing by ~zero. Pins the
+        // det-guard's branch SELECTION — an `==` mutation on `det.abs() <
+        // 1e-12` would skip the guard on this near-zero det and blow up.
+        let singular: Mat4 = [
+            1.0, 2.0, 3.0, 4.0, //
+            1.0, 2.0, 3.0, 4.0, //
+            0.5, 1.0, 0.0, 2.0, //
+            3.0, 1.0, 4.0, 1.0,
+        ];
+        assert_eq!(mat4_invert(&singular), id);
+    }
+
+    #[test]
+    fn mat4_perspective_maps_reference_points_to_expected_ndc() {
+        // Bucket-1 pin: RH projection, wgpu z ∈ [0, 1]. fov = π/3 (NOT π/2 —
+        // there tan(fov/2) = 1, making both `1.0 / tan(..)` and the inner
+        // `fov/2` division degenerate: a `/`→`*` flip on `fov/2` is invisible
+        // when the operand halves to π/4). At π/3, f_cot = 1/tan(π/6) = √3.
+        // aspect = 2, near = 1, far = 100. Near-plane center → NDC (0, 0, 0);
+        // far-plane center → z = 1; edge points pin the x/y scaling
+        // (f_cot/aspect = √3/2, f_cot = √3). Independent of the fn's own
+        // formula (points transformed, not matrix entries read back).
+        let f_cot = 3.0_f64.sqrt();
+        let m = mat4_perspective(std::f64::consts::FRAC_PI_3, 2.0, 1.0, 100.0);
+        let ndc = |v: [f64; 4]| {
+            let c = mat4_mul_vec4(&m, v);
+            [c[0] / c[3], c[1] / c[3], c[2] / c[3]]
+        };
+        let near_c = ndc([0.0, 0.0, -1.0, 1.0]);
+        assert_relative_eq!(near_c[0], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(near_c[1], 0.0, epsilon = 1e-12);
+        assert_relative_eq!(near_c[2], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([0.0, 0.0, -100.0, 1.0])[2], 1.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([1.0, 0.0, -1.0, 1.0])[0], f_cot / 2.0, epsilon = 1e-9);
+        assert_relative_eq!(ndc([0.0, 1.0, -1.0, 1.0])[1], f_cot, epsilon = 1e-9);
+    }
+
+    /// Packed `camera_uniforms(140, 35, {yaw 0.9, pitch −0.4}, zoom 1.15,
+    /// aspect 1.6)` captured from the (reviewed-correct) implementation — the
+    /// reference for the composition pin below. `view_proj` in `[0..16]`,
+    /// `inv_view_proj` in `[16..32]`.
+    const CAMERA_REFERENCE_PACK: [f32; 32] = [
+        0.937937,
+        0.7364362,
+        -0.72152793,
+        -0.7214919, //
+        0.0,
+        2.2236378,
+        0.38943782,
+        0.38941833, //
+        -1.181949,
+        0.5843998,
+        -0.5725693,
+        -0.5725407, //
+        -2.1442524e-14,
+        -77.82733,
+        215.68462,
+        215.81384, //
+        0.41196686,
+        -0.0,
+        -0.5191434,
+        5.4421324e-17, //
+        0.12635247,
+        0.38151595,
+        0.10026716,
+        -0.0, //
+        -1182.3809,
+        388.1913,
+        -938.2797,
+        -7.1425, //
+        1181.7185,
+        -387.8213,
+        937.7541,
+        7.142857,
+    ];
+
+    #[test]
+    fn camera_uniforms_applies_each_input_fallback() {
+        // Bucket-1 discrimination pins for the input-sanitizing guards. A bad
+        // value must produce the SAME camera as its canonical fallback — the
+        // only way to observe a guard whose mutation would either let the bad
+        // value through or stop falling back on a good one.
+        let orbit = Orbit {
+            yaw: 0.7,
+            pitch: -0.35,
+        };
+        let (z, a) = (1.3f32, 1.6f32);
+
+        // 698: a single non-finite zoom/yaw/pitch → None. An `||`→`&&` between
+        // the three checks would let a lone NaN through.
+        assert!(camera_uniforms(120.0, 0.0, orbit, f32::NAN, a).is_none());
+        assert!(camera_uniforms(
+            120.0,
+            0.0,
+            Orbit {
+                yaw: f32::NAN,
+                pitch: -0.35,
+            },
+            z,
+            a,
+        )
+        .is_none());
+        assert!(camera_uniforms(
+            120.0,
+            0.0,
+            Orbit {
+                yaw: 0.7,
+                pitch: f32::NAN,
+            },
+            z,
+            a,
+        )
+        .is_none());
+
+        // 701: a non-finite / non-positive extent falls back to 1.0. `&&`→`||`
+        // would use a negative extent; `>`→`>=` would use a zero one.
+        let extent_ref = camera_uniforms(1.0, 0.0, orbit, z, a);
+        assert!(extent_ref.is_some());
+        assert_eq!(camera_uniforms(-5.0, 0.0, orbit, z, a), extent_ref);
+        assert_eq!(camera_uniforms(0.0, 0.0, orbit, z, a), extent_ref);
+
+        // 709: a non-finite y_mid falls back to extent/2. A `/`→`*` (would give
+        // 2·extent) or `/`→`%` flip on that half shifts the target off-center.
+        assert_eq!(
+            camera_uniforms(8.0, f64::NAN, orbit, z, a),
+            camera_uniforms(8.0, 4.0, orbit, z, a),
+        );
+
+        // 711: a non-finite / non-positive aspect falls back to 1.0.
+        let aspect_ref = camera_uniforms(120.0, 0.0, orbit, z, 1.0);
+        assert!(aspect_ref.is_some());
+        assert_eq!(camera_uniforms(120.0, 0.0, orbit, z, -2.0), aspect_ref);
+        assert_eq!(camera_uniforms(120.0, 0.0, orbit, z, 0.0), aspect_ref);
+    }
+
+    #[test]
+    fn camera_uniforms_packs_the_reference_view_proj_and_its_inverse() {
+        // Bucket-1 composition pin (the triage's "packed 32 floats for one
+        // fixed input"). A fixed, fully-general camera — every input distinct
+        // and nonzero — is packed and every one of the 32 floats is checked
+        // against a captured reference. This is what kills the near/far plane
+        // arithmetic (`extent * NEAR_FRACTION`, `extent * FAR_FRACTION`): those
+        // feed the projection's z-row, which the looser "sphere stays inside
+        // the frustum" containment test cannot observe. The second half is
+        // independently pinned as the true inverse of the first (view_proj ·
+        // inv_view_proj ≈ I), so the snapshot is not a bare tautology.
+        let packed = camera_uniforms(
+            140.0,
+            35.0,
+            Orbit {
+                yaw: 0.9,
+                pitch: -0.4,
+            },
+            1.15,
+            1.6,
+        )
+        .expect("finite generic inputs pack a camera");
+        let expected: [f32; 32] = CAMERA_REFERENCE_PACK;
+        for (i, (&got, &want)) in packed.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (got - want).abs() <= 2e-4 * want.abs().max(1.0),
+                "packed float {i}: {got} vs reference {want}",
+            );
+        }
+        // The two halves are a mutual inverse (independent of the snapshot):
+        // any adjugate mutation that slips past the 2e-4 snapshot on the
+        // inverse half still breaks this identity.
+        let view_proj: Mat4 = std::array::from_fn(|i| f64::from(packed[i]));
+        let inv: Mat4 = std::array::from_fn(|i| f64::from(packed[16 + i]));
+        let product = mat4_mul(&view_proj, &inv);
+        let id = mat4_identity();
+        for i in 0..16 {
+            assert!((product[i] - id[i]).abs() < 2e-3, "vp·inv index {i}");
+        }
+    }
+
+    #[test]
+    fn mat4_look_at_builds_an_orthonormal_right_handed_view() {
+        // Bucket-1 pin. A symmetric config (target at the origin, up = +Y)
+        // leaves two arithmetic terms unobserved: `dot(right, eye)` is 0 (so
+        // dropping the `-` on m[12] is invisible) and `up[0]` is 0 (so the
+        // sign of the cross-product z-term p[0]*q[1] - p[1]*q[0] never shows).
+        // Fully asymmetric geometry — every eye/target/up component distinct
+        // and nonzero — exercises both, plus the whole basis construction.
+        let eye = [4.0, 1.0, 3.0];
+        let target = [-1.0, 2.0, -2.0];
+        let up = [0.3, 1.0, -0.2];
+        let m = mat4_look_at(eye, target, up);
+
+        // Rows 0..2 of the upper-left 3x3 are the view basis: right, true_up,
+        // and -forward (m is column-major, so a "row" of the rotation reads
+        // m[col*4 + row]).
+        let r0 = [m[0], m[4], m[8]];
+        let r1 = [m[1], m[5], m[9]];
+        let r2 = [m[2], m[6], m[10]];
+        let dot3 = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+        // Orthonormal basis: unit rows, mutually perpendicular. A flipped sign
+        // anywhere in the cross product breaks perpendicularity (`right` stops
+        // being orthogonal to `forward`). Epsilon 1e-9: mutation deltas here are
+        // ~1e-2, so every tooth survives while f64 noise on correct code does not.
+        for row in [r0, r1, r2] {
+            assert_relative_eq!(dot3(row, row).sqrt(), 1.0, epsilon = 1e-9);
+        }
+        assert_relative_eq!(dot3(r0, r1), 0.0, epsilon = 1e-9);
+        assert_relative_eq!(dot3(r0, r2), 0.0, epsilon = 1e-9);
+        assert_relative_eq!(dot3(r1, r2), 0.0, epsilon = 1e-9);
+
+        // Right-handed: right x true_up = -forward = r2.
+        let cross_r0_r1 = [
+            r0[1] * r1[2] - r0[2] * r1[1],
+            r0[2] * r1[0] - r0[0] * r1[2],
+            r0[0] * r1[1] - r0[1] * r1[0],
+        ];
+        for k in 0..3 {
+            assert_relative_eq!(cross_r0_r1[k], r2[k], epsilon = 1e-9);
+        }
+
+        let apply = |p: [f64; 3]| mat4_mul_vec4(&m, [p[0], p[1], p[2], 1.0]);
+
+        // Eye maps to the view-space origin. dot(right, eye) ~= 0.106 here, so
+        // dropping the `-` on m[12] shifts this off origin — the mutation shows.
+        let at_eye = apply(eye);
+        for &component in &at_eye[..3] {
+            assert_relative_eq!(component, 0.0, epsilon = 1e-9);
+        }
+        assert_relative_eq!(at_eye[3], 1.0, epsilon = 1e-9);
+
+        // Target lies straight down the view -Z axis (x = y = 0, z < 0),
+        // pinning the handedness and the forward mapping together.
+        let at_target = apply(target);
+        assert_relative_eq!(at_target[0], 0.0, epsilon = 1e-9);
+        assert_relative_eq!(at_target[1], 0.0, epsilon = 1e-9);
+        assert!(at_target[2] < 0.0);
+    }
+
+    #[test]
+    fn camera_uniforms_keeps_the_extent_sphere_inside_the_frustum_at_two_aspects() {
+        // Project the fit-to-extent bounding sphere's 6 world-axis poles
+        // (the TRUE, unpadded sphere the scene actually needs contained —
+        // extent/sqrt(2), not fit_sphere_radius's padded value) through the
+        // forward view-proj matrix at two very different aspect ratios
+        // (wide and tall) and confirm every pole's NDC x/y stays within
+        // [-1, 1] (a tiny epsilon absorbs f32 rounding at the tangent
+        // boundary). Run at BOTH a symmetric `y_mid` (== extent/2, the
+        // compression case) and an asymmetric one (the extension-hook case,
+        // review finding 4) — the containment property must hold regardless
+        // of where the true midpoint sits, since the sphere is centered at
+        // `y_mid`, not a value re-derived from `extent`.
+        let extent = 90.0;
+        let orbit = Orbit {
+            yaw: 0.5,
+            pitch: -0.3,
+        };
+        let true_radius = extent / std::f64::consts::SQRT_2;
+        for y_mid in [extent / 2.0, 20.0] {
+            let center = [0.0, y_mid, 0.0];
+            for aspect in [1.777_f32, 0.5625_f32] {
+                let out = camera_uniforms(extent, y_mid, orbit, 1.0, aspect)
+                    .expect("finite, sane inputs always produce a camera");
+                assert_poles_inside_ndc(
+                    &out,
+                    center,
+                    true_radius,
+                    &format!("y_mid {y_mid} aspect {aspect}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn camera_uniforms_non_finite_extent_y_mid_and_aspect_do_not_produce_nan() {
+        // These fall back to sane internal defaults (extent/aspect -> 1.0,
+        // y_mid -> extent/2) and so still produce a `Some`, finite camera.
+        let out = camera_uniforms(f64::NAN, f64::NAN, Orbit::default(), 1.0, f32::INFINITY)
+            .expect("non-finite extent/y_mid/aspect fall back to sane defaults");
+        assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
+        let out_neg = camera_uniforms(-5.0, f64::NAN, Orbit::default(), 1.0, -1.0)
+            .expect("negative extent/aspect fall back to sane defaults");
+        assert!(out_neg.iter().all(|v| v.is_finite()), "{out_neg:?}");
+        // A non-finite y_mid alone (finite, sane extent/aspect) must also
+        // fall back rather than poison the target with NaN.
+        let out_bad_y_mid = camera_uniforms(80.0, f64::INFINITY, Orbit::default(), 1.0, 1.5)
+            .expect("non-finite y_mid alone falls back to extent/2");
+        assert!(
+            out_bad_y_mid.iter().all(|v| v.is_finite()),
+            "{out_bad_y_mid:?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Task/review finding 5: camera_uniforms returns None (rather than a
+    // poisoned/overflowed camera) for non-finite zoom/orbit, or when the
+    // packed output itself would overflow — the same subset-guard-bypass
+    // class scene_uniforms's finiteness sweep closes on the geometry side.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn camera_uniforms_is_none_for_non_finite_zoom_or_orbit() {
+        // `f32::clamp` on a NaN `self` returns the NaN unchanged (neither
+        // comparison against min/max is true) — so `zoom.clamp(..)` alone
+        // does NOT sanitize a NaN zoom; camera_uniforms needs its own
+        // explicit is_finite guard ahead of the clamp.
+        assert!(camera_uniforms(80.0, 40.0, Orbit::default(), f32::NAN, 1.5).is_none());
+        assert!(camera_uniforms(80.0, 40.0, Orbit::default(), f32::INFINITY, 1.5).is_none());
+        let nan_yaw = Orbit {
+            yaw: f32::NAN,
+            pitch: 0.2,
+        };
+        assert!(camera_uniforms(80.0, 40.0, nan_yaw, 1.0, 1.5).is_none());
+        let nan_pitch = Orbit {
+            yaw: 0.2,
+            pitch: f32::NAN,
+        };
+        assert!(camera_uniforms(80.0, 40.0, nan_pitch, 1.0, 1.5).is_none());
+    }
+
+    #[test]
+    fn camera_uniforms_is_none_when_a_huge_finite_extent_overflows_f32_on_packing() {
+        // Review finding 5's "camera would-be-NaN case exercised via the
+        // pure fn": extent_mm=1e300 is a FINITE f64 (so it is NOT replaced
+        // by the non-finite-extent fallback), but the eye/view/projection
+        // math scales with it, and casting the resulting huge-but-finite
+        // f64 matrix entries `as f32` overflows to `inf` — the output sweep
+        // must catch this even though every individual INPUT was finite.
+        for extent in [1e40, 1e155, 1e300] {
+            assert!(
+                camera_uniforms(extent, extent / 2.0, Orbit::default(), 1.0, 1.5).is_none(),
+                "extent={extent} must fail the output finiteness sweep"
+            );
+        }
     }
 }
