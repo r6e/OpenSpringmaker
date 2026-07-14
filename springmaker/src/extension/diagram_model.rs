@@ -68,12 +68,28 @@ mod tests {
     use super::*;
     use crate::diagram::project_silhouette;
     use crate::diagram::test_support::find;
-    use crate::extension::form::{parse_and_solve, ExtFormState};
+    use crate::extension::form::{parse_and_solve, ExtFormState, HookMode};
     use crate::extension::scene_model::extension_scene;
     use approx::assert_relative_eq;
     use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
 
     fn design() -> springcore::extension::ExtensionDesign {
+        build(HookMode::Default, "10", "5")
+    }
+
+    /// A non-default hook radius (r1 = 14, vs the default D/2 = 10) so the
+    /// no-drift lock test exercises r1-generality — the whole
+    /// presenter-matches-scene claim rests on `free_length_from_geometry` being
+    /// general in r1, which a default-r1 fixture cannot show.
+    fn custom_hook_design() -> springcore::extension::ExtensionDesign {
+        build(HookMode::Custom, "14", "7")
+    }
+
+    fn build(
+        hook_mode: HookMode,
+        hook_r1: &str,
+        hook_r2: &str,
+    ) -> springcore::extension::ExtensionDesign {
         let materials = MaterialStore::new(MaterialSet::load_default());
         let form = ExtFormState {
             wire_dia: "2".into(),
@@ -82,6 +98,9 @@ mod tests {
             free_length: "100".into(),
             initial_tension: "5".into(),
             loads: "10, 30".into(),
+            hook_mode,
+            hook_r1: hook_r1.into(),
+            hook_r2: hook_r2.into(),
             ..Default::default()
         };
         parse_and_solve(
@@ -93,6 +112,21 @@ mod tests {
         )
         .unwrap()
         .design
+    }
+
+    /// The y-center of the coil body AS DRAWN by `extension_scene` (polyline 0
+    /// is the body; the two hooks are polylines 1–2) — INDEPENDENTLY sampled
+    /// from the scene, not re-derived from `body_h`.
+    fn drawn_body_center(d: &springcore::extension::ExtensionDesign) -> f64 {
+        let body = &extension_scene(d).polylines[0];
+        let (lo, hi) = body
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(y), hi.max(y))
+            });
+        (lo + hi) / 2.0
     }
 
     #[test]
@@ -160,5 +194,27 @@ mod tests {
         let fl = find(&dims, "L\u{2080}");
         assert!(!fl.value.is_finite());
         assert!(fl.label.contains('\u{2014}'));
+    }
+
+    /// Lock (not fix): the body OD/ID/wire/coil callouts sit at the axial center
+    /// of the coil body AS DRAWN by `extension_scene`, for the default hook mode
+    /// AND a non-default one. Unlike compression/conical, extension does NOT
+    /// drift: the presenter's `body_h = l0 − 2·(2·r1 − wire) − wire` is the SAME
+    /// inside-hooks relation (`free_length_from_geometry`, fully general in r1)
+    /// that the scene renders the body to via `extension_body_pitch_mm`, so they
+    /// agree for every hook radius. This pins that invariant against regression;
+    /// compared against the scene body's own y-center, so a re-derivation drift
+    /// would fail it.
+    #[test]
+    fn body_callouts_track_the_drawn_body_across_hook_modes() {
+        for d in [design(), custom_hook_design()] {
+            let dims = dimensions(&d);
+            let center = drawn_body_center(&d);
+            // Substrings unique to the BODY callouts: "⌀"/"N" would collide via
+            // `contains` with the "hook ⌀…" opening and the "Fᵢ …N" tension note.
+            for label in ["OD", "ID", "wire", "active"] {
+                assert_relative_eq!(find(&dims, label).at.0, center, max_relative = 1e-9);
+            }
+        }
     }
 }

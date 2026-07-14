@@ -160,4 +160,33 @@ mod tests {
         assert!(!od.value.is_finite());
         assert!(od.label.contains('\u{2014}'));
     }
+
+    /// Lock (not fix): the side-elevation body callouts (OD/ID/wire/coil) sit at
+    /// the axial center of the body AS DRAWN — and the main side elevation
+    /// projects the BODY-ONLY scene (`torsion_body_scene`, the R1 leg-leak fix),
+    /// not the body+legs `torsion_scene`. Torsion does NOT drift like
+    /// compression/conical: the body is close-wound, so the presenter's
+    /// `body_h = nb·wire` equals the rendered height `coil_height_fn(nb,nb,
+    /// wire,wire)(1.0)` exactly. Compared against the body scene's own
+    /// independently sampled y-center, so a re-derivation drift would fail it.
+    #[test]
+    fn side_body_callouts_track_the_drawn_body_only_scene() {
+        let d = design();
+        let (side, _inset) = diagram(&d);
+        let body = &crate::torsion::scene_model::torsion_body_scene(&d).polylines[0];
+        let (lo, hi) = body
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(y), hi.max(y))
+            });
+        let center = (lo + hi) / 2.0;
+        assert!(center > 0.0, "fixture must have a nonzero body height");
+        // "OD"/"ID"/"wire"/"active" are each unique among the side dims.
+        for label in ["OD", "ID", "wire", "active"] {
+            let dm = side.iter().find(|x| x.label.contains(label)).unwrap();
+            assert_relative_eq!(dm.at.0, center, max_relative = 1e-9);
+        }
+    }
 }

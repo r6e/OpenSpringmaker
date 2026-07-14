@@ -1,10 +1,13 @@
 //! Pure 2D-diagram dimension presenter for the compression family (ADR 0008).
-//! Anchors are in projection space `(axial, radial)` model mm; axial spans
-//! `[0, free_length]` and the radial envelope is ±OD/2 (see scene_model). Each
-//! feature dimension is anchored to that geometry and labeled from the design
-//! field — the mirror-drift equality is asserted in tests.
+//! Anchors are in projection space `(axial, radial)` model mm. The L₀ reference
+//! dim spans `[0, free_length]`; the diameter/wire/coil callouts anchor on the
+//! axial center of the coil body AS DRAWN — the rendered coil height, which
+//! diverges from free_length for every end type except SquaredGround (see
+//! `dimensions`). The radial envelope is ±OD/2 (see scene_model). The
+//! mirror-drift equality against the drawn geometry is asserted in tests.
 
 use crate::diagram::{common, Dimension};
+use crate::viz::coil_render_height;
 use springcore::SpringDesign;
 
 pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
@@ -15,7 +18,13 @@ pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
     let wire = design.wire_dia.millimeters();
     let na = design.active_coils;
     let nt = design.total_coils;
-    let mid = l0 / 2.0; // an axial station for the diameter callouts
+    // Axial station for the diameter/wire/coil callouts: the center of the coil
+    // body AS DRAWN. `compression_scene` draws the helix to `coil_render_height`
+    // (coil_height_fn(..)(1.0)); that equals free_length/2 only for
+    // SquaredGround ends. For Squared/Plain/PlainGround, free_length exceeds the
+    // rendered body (by wire or pitch−wire), so anchoring on l0/2 floats the
+    // callouts off the drawn coils. free_length remains the L₀ reference dim.
+    let mid = coil_render_height(na, nt, design.pitch.millimeters(), wire) / 2.0;
 
     vec![
         common::free_length(l0),
@@ -36,13 +45,24 @@ mod tests {
     use springcore::units::{Force, Length};
     use springcore::{EndFixity, EndType, MaterialSet, PowerUser, Scenario, SpringDesign};
 
-    fn design() -> SpringDesign {
+    /// Every user-selectable compression end type. Only SquaredGround has
+    /// rendered coil height == free_length, so the drift sweep must exercise
+    /// all four — a SquaredGround-only fixture passes the anchor check
+    /// vacuously (assembly PR lesson).
+    const ALL_END_TYPES: [EndType; 4] = [
+        EndType::SquaredGround,
+        EndType::Squared,
+        EndType::Plain,
+        EndType::PlainGround,
+    ];
+
+    fn build(end_type: EndType) -> SpringDesign {
         let m = MaterialSet::load_default()
             .get("Music Wire")
             .unwrap()
             .clone();
         PowerUser {
-            end_type: EndType::SquaredGround,
+            end_type,
             fixity: EndFixity::FixedFixed,
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
@@ -52,6 +72,26 @@ mod tests {
         }
         .solve(&m, springcore::CurvatureCorrection::Bergstrasser)
         .unwrap()
+    }
+
+    fn design() -> SpringDesign {
+        build(EndType::SquaredGround)
+    }
+
+    /// The axial center of the coil body AS DRAWN by `compression_scene` — the
+    /// min/max of the helix's INDEPENDENTLY sampled y coordinates, not a
+    /// re-derived `coil_render_height`, so the mirror-drift test pins
+    /// presenter-tracks-geometry rather than presenter-calls-the-same-helper.
+    fn drawn_body_center(d: &SpringDesign) -> f64 {
+        let line = &compression_scene(d).polylines[0];
+        let (lo, hi) = line
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(y), hi.max(y))
+            });
+        (lo + hi) / 2.0
     }
 
     fn find(dims: &[Dimension], label_starts: &str) -> Dimension {
@@ -153,5 +193,41 @@ mod tests {
         let fl = find(&dims, "L\u{2080}"); // "L₀"
         assert!(!fl.value.is_finite());
         assert!(fl.label.contains('\u{2014}'));
+    }
+
+    /// The diameter/wire/coil callouts anchor on the axial center of the coil
+    /// body AS DRAWN by `compression_scene`, across EVERY end type — not on
+    /// free_length/2, which drifts from the rendered body for all ends but
+    /// SquaredGround (~(pitch−wire)/2 for PlainGround). Every callout's axial
+    /// anchor (`at.0`) must equal the scene helix's own y-center to fp.
+    #[test]
+    fn diameter_callouts_track_the_drawn_coil_body_across_end_types() {
+        for end_type in ALL_END_TYPES {
+            let d = build(end_type);
+            let dims = dimensions(&d);
+            let center = drawn_body_center(&d);
+            for label in ["OD", "ID", "\u{2300}", "N"] {
+                assert_relative_eq!(find(&dims, label).at.0, center, max_relative = 1e-9);
+            }
+        }
+    }
+
+    /// The callouts moved off `free_length` onto the rendered coil height
+    /// (active/total/pitch/wire). A NaN in one of THOSE fields must not produce
+    /// a non-finite anchor: `coil_render_height`'s shared guard returns 0.0, so
+    /// `mid` stays finite. Mirrors the assembly degenerate discipline (NaN a
+    /// field the anchor actually reads).
+    #[test]
+    fn degenerate_coil_count_yields_finite_callout_anchors() {
+        let mut d = design();
+        d.active_coils = f64::NAN;
+        let dims = dimensions(&d);
+        for label in ["OD", "ID", "\u{2300}", "N"] {
+            let at = find(&dims, label).at;
+            assert!(
+                at.0.is_finite() && at.1.is_finite(),
+                "{label} anchor non-finite"
+            );
+        }
     }
 }
