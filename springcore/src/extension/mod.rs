@@ -10,6 +10,7 @@ mod scenario;
 
 pub use design::{ExtLoadPoint, ExtensionDesign};
 pub use ends::HookEnds;
+pub use mechanics::free_length_from_geometry;
 pub use optimize::{
     solve_min_weight, ExtBindingConstraint, ExtMinWeightRequest, ExtMinWeightSolution, HookSpec,
 };

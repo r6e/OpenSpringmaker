@@ -258,6 +258,15 @@ fn settings_changes_correction_and_recomputes() {
 /// equality — so within one `dir`, future snapshot stems must not be
 /// prefixes of one another (e.g. `"a"` and `"ab"`), or the lookup can find
 /// the wrong file depending on `read_dir`'s unspecified iteration order.
+///
+/// HARD RULE (Task 6, do not weaken): no `snapshot_hash` call site may
+/// build an app with `shader_available = true`. A true flag routes the
+/// Spring3d slot to the GPU `Shader` widget, whose rasterized pixels are
+/// adapter/driver-dependent — hashing them makes the pin machine-specific.
+/// `test_app()` defaults the flag to false (pinned by
+/// `test_app_defaults_to_the_deterministic_wireframe_path`), so every
+/// snapshot caller stays on the CPU wireframe/chart path; any future
+/// snapshot of a `shader_available = true` app must be rejected in review.
 fn snapshot_hash(app: &App, theme: &iced::Theme, dir: &std::path::Path, stem: &str) -> String {
     let mut sim = ui(app);
     let snapshot = sim
@@ -335,6 +344,52 @@ fn segmented_selection_highlight_renders_differently() {
          the only visual difference between these two app states is which \
          segmented option button `segmented_style` highlights, so equal \
          renders mean the selection styling is dead"
+    );
+}
+
+/// P11 pin (stateful adversary, adopted as a permanent regression test):
+/// the wireframe 3D slot must render DIFFERENTLY under the dark vs. light
+/// palette — `render3d`'s stroke/background colors come from `Palette`, so
+/// an equal render across themes would mean the wireframe path silently
+/// ignores the active palette (a real risk given `OrbitCanvas`'s bitmap is
+/// cached at `view()` time and could plausibly be built from a stale/wrong
+/// palette reference). HARD RULE (per `snapshot_hash`'s doc): `shader_available`
+/// stays `false` throughout — asserted explicitly, not just inherited from
+/// `test_app`'s default — so both snapshots stay on the deterministic CPU
+/// wireframe path, never the GPU shader. Stem names are chosen so neither is
+/// a prefix of the other (`snapshot_hash`'s lookup caveat).
+#[test]
+fn wireframe_3d_slot_renders_differently_under_dark_vs_light_palette() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert!(
+        !app.shader_available,
+        "P11 HARD RULE: must stay on the deterministic wireframe path"
+    );
+
+    let dir = unique_temp_dir("openspringmaker-p11-palette-wireframe");
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).expect("create temp snapshot dir");
+
+    let dark_theme = app.theme();
+    let hash_dark = snapshot_hash(&app, &dark_theme, &dir, "p11-dark-wireframe");
+
+    app.update(Message::ThemePref(crate::settings::ThemePref::Light));
+    assert!(
+        !app.shader_available,
+        "P11 HARD RULE: theme switch must not flip the shader flag"
+    );
+    let light_theme = app.theme();
+    let hash_light = snapshot_hash(&app, &light_theme, &dir, "p11-light-wireframe");
+
+    fs::remove_dir_all(&dir).ok();
+
+    assert_ne!(
+        hash_dark, hash_light,
+        "the Spring3d wireframe slot rendered identically under the dark and light \
+         palettes; the wireframe renderer's stroke/background colors come from the \
+         active Palette, so equal renders mean it stopped reading it"
     );
 }
 
@@ -1517,6 +1572,168 @@ fn orbit_message_rerenders_without_disturbing_results() {
     assert!(
         !shows(&app, SCENE_PLACEHOLDER),
         "an orbit drag must not surface the 3D placeholder"
+    );
+}
+
+/// Scrolling the shaded 3D view (`Message::Zoom`, published by
+/// `SpringShader::update`) must update the committed zoom without disturbing
+/// the solved results or surfacing either placeholder — the wheel twin of
+/// `orbit_message_rerenders_without_disturbing_results` (`Message::Zoom`
+/// recomputes nothing; see `app.rs`'s `update`).
+#[test]
+fn zoom_message_rerenders_without_disturbing_results() {
+    let mut app = test_app();
+    type_into(&mut app, Field::WireDia, "2.0");
+    type_into(&mut app, Field::MeanDia, "20.0");
+    type_into(&mut app, Field::Active, "10");
+    type_into(&mut app, Field::FreeLength, "60");
+    type_into(&mut app, Field::Loads, "10, 30");
+    assert!(app.outcome.is_some(), "fixture must solve before zooming");
+
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    let before = app.zoom;
+    app.update(Message::Zoom(3.0));
+
+    assert_ne!(
+        app.zoom, before,
+        "the committed zoom must update in response to the wheel delta"
+    );
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated after a zoom scroll"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "a zoom scroll must not surface the chart placeholder"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER),
+        "a zoom scroll must not surface the 3D placeholder"
+    );
+}
+
+/// Task 6 invariant, asserted explicitly rather than left implicit in
+/// `App::from_store`: every test-constructed app starts with
+/// `shader_available == false` (the deterministic CPU wireframe path) and
+/// `zoom == 1.0`. This is the anchor for the snapshot HARD RULE documented
+/// on `snapshot_hash` — the whole suite, snapshot callers included, renders
+/// without a GPU `Shader` widget unless a test deliberately flips the flag
+/// (and such a test must never snapshot).
+#[test]
+fn test_app_defaults_to_the_deterministic_wireframe_path() {
+    let app = test_app();
+    assert!(!app.shader_available);
+    assert_eq!(app.zoom, 1.0);
+}
+
+/// The shaded-dispatch pin: with `shader_available = true` on a solved
+/// design, the Spring3d slot must dispatch the SHADED path. The shader
+/// widget has no queryable text, so the ui-level observable here is only
+/// "no placeholder, no chart fallback, no panic while the results stay
+/// populated" — `use_shaded_requires_adapter_and_representable_scene`
+/// (viz/mod.rs) carries the branch logic. Layout-only: this test must NEVER
+/// call `snapshot_hash` (see its HARD RULE doc); `shows`/`find` build the
+/// widget tree without rasterizing, so no GPU is touched.
+#[test]
+fn spring3d_arm_dispatches_shaded_when_available() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.shader_available = true;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        shows(&app, "Spring rate"),
+        "the results panel must remain populated on the shaded path"
+    );
+    assert!(
+        !shows(&app, SCENE_PLACEHOLDER) && !shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "a solved, representable design must not surface a 3D placeholder"
+    );
+    assert!(
+        !shows(&app, CHART_PLACEHOLDER),
+        "the shaded arm must not fall through to chart_element"
+    );
+}
+
+/// Degenerate scenes must short-circuit to the placeholder BEFORE the
+/// shaded/wireframe choice: an EMPTY `SdfScene` still packs (zero parts —
+/// `scene_uniforms` returns `Some`), so without the up-front gate a capped
+/// design with `shader_available = true` would render an empty shaded
+/// background instead of the capped placeholder the wireframe path shows.
+/// Twin of `torsion_capped_body_coils_shows_placeholder_not_panic`, with
+/// the flag flipped.
+#[test]
+fn capped_body_shows_placeholder_even_when_shader_is_available() {
+    let mut app = probe_solve_torsion_with_body_coils("2001");
+    app.shader_available = true;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    assert!(
+        shows(&app, SCENE_PLACEHOLDER_CAPPED),
+        "the degenerate short-circuit must fire before the shaded choice"
+    );
+    assert!(
+        shows(&app, "Geometry"),
+        "the results panel must stay populated — only the 3D slot degrades"
+    );
+}
+
+/// Perf (Copilot review, PR #69): on a GPU-less machine the shaded path is
+/// unreachable, so `results_visual_element` must NOT invoke `sdf3d` — building
+/// the SDF scene would allocate geometry `spring3d_element` immediately
+/// discards. The `sdf3d` closure here panics if called; reaching the end
+/// without panicking proves it was skipped (and the panicking `chart` proves
+/// the Chart arm was not taken either — only `wire3d` runs). The panicking
+/// `diagram` closure extends the same pin to the Diagram arm added in Task 5.
+#[test]
+fn no_adapter_skips_building_the_sdf_scene() {
+    let mut app = test_app();
+    app.shader_available = false;
+    app.update(Message::Visual(VisualMode::Spring3d));
+
+    let _element = crate::widgets::results_visual_element(
+        &crate::app::DARK,
+        &app,
+        || panic!("chart must not be built on the Spring3d path"),
+        || crate::viz::SceneData {
+            polylines: Vec::new(),
+        },
+        || panic!("sdf3d must not be built when shader_available is false"),
+        || panic!("diagram must not be built on the Spring3d path"),
+    );
+}
+
+/// Reverse-laziness pin, symmetric to `no_adapter_skips_building_the_sdf_scene`:
+/// in `VisualMode::Diagram`, `results_visual_element` must not build the
+/// chart or either 3D scene — only `diagram` runs. The panicking
+/// `chart`/`wire3d`/`sdf3d` closures below prove that; reaching the end
+/// without panicking proves the Diagram arm alone was taken. The `diagram`
+/// closure is a real (solved) design's scene+dims rather than an empty
+/// placeholder, so this also exercises the actual `diagram_element` render
+/// path, not just the laziness gate.
+#[test]
+fn diagram_mode_skips_building_the_chart_and_3d_scenes() {
+    let mut app = test_app();
+    probe_solve_compression(&mut app);
+    app.update(Message::Visual(VisualMode::Diagram));
+
+    let outcome = app
+        .outcome
+        .as_ref()
+        .expect("probe_solve_compression populates app.outcome");
+    let _element = crate::widgets::results_visual_element(
+        &crate::app::DARK,
+        &app,
+        || panic!("chart must not be built on the Diagram path"),
+        || panic!("wire3d must not be built on the Diagram path"),
+        || panic!("sdf3d must not be built on the Diagram path"),
+        || {
+            crate::diagram::DiagramInput::new(
+                crate::compression::scene_model::compression_scene(&outcome.design),
+                crate::compression::diagram_model::dimensions(&outcome.design),
+            )
+        },
     );
 }
 
@@ -2766,4 +2983,105 @@ fn calculator_results_still_render_after_switching_to_light_theme() {
         !shows(&app, "Enter design parameters to see results."),
         "the light-theme render must not fall back to the empty-state placeholder"
     );
+}
+
+// --------------------------------------------------------------------------
+// 2D diagram — view-only messages (Task 4). `DiagramZoom`/`DiagramPan` mirror
+// the `Zoom`/`Orbit` non-recompute discipline via the single-writer step
+// helpers; `DiagramLayer` flips exactly the toggled group. `VisualMode::
+// Diagram` and the results dispatch land in Task 5 — these arms are wired
+// now only because `DiagramCanvas` (Task 4) publishes the messages.
+// --------------------------------------------------------------------------
+
+#[test]
+fn diagram_zoom_and_pan_do_not_recompute_and_stay_finite() {
+    let mut app = test_app();
+    let before = app.diagram_view;
+    app.update(Message::DiagramZoom(2.0));
+    app.update(Message::DiagramPan(5.0, -3.0));
+    assert!(app.diagram_view.zoom.is_finite() && app.diagram_view.zoom > 0.0);
+    assert_ne!(app.diagram_view, before);
+    // A non-finite delta is a no-op (single-writer guard).
+    let held = app.diagram_view;
+    app.update(Message::DiagramZoom(f32::NAN));
+    assert_eq!(app.diagram_view, held);
+}
+
+#[test]
+fn diagram_layer_toggle_flips_exactly_its_group() {
+    use crate::diagram::{DimLayer, DimLayers};
+
+    fn triple(l: DimLayers) -> (bool, bool, bool) {
+        (l.lengths, l.diameters, l.coils)
+    }
+
+    // Each layer must flip ONLY its own field and leave the other two
+    // untouched — pins every arm of the `DiagramLayer` match against a
+    // copy-paste bug (the single-`Coils` version couldn't catch a wrong
+    // `Lengths`/`Diameters` arm). Toggling twice must restore the default.
+    for (layer, expected) in [
+        (DimLayer::Lengths, (false, true, true)),
+        (DimLayer::Diameters, (true, false, true)),
+        (DimLayer::Coils, (true, true, false)),
+    ] {
+        let mut app = test_app();
+        assert_eq!(triple(app.diagram_layers), (true, true, true));
+        app.update(Message::DiagramLayer(layer));
+        assert_eq!(
+            triple(app.diagram_layers),
+            expected,
+            "toggling {layer:?} must flip only its own field"
+        );
+        app.update(Message::DiagramLayer(layer));
+        assert_eq!(
+            triple(app.diagram_layers),
+            (true, true, true),
+            "toggling {layer:?} again must restore the default"
+        );
+    }
+}
+
+/// `diagram_layer_controls` is the shared gate every family's view calls to
+/// decide whether to render the layer-toggle row above its diagram canvas
+/// (BLOCK-B fix: previously only compression rendered it, stranding a
+/// hidden layer with no affordance to restore it after switching families).
+/// `Element` is opaque, so this pins the `Some`/`None` gate itself rather
+/// than the widget contents.
+#[test]
+fn diagram_layer_controls_gates_on_diagram_mode_only() {
+    let mut app = test_app();
+    let pal = app.pal();
+
+    app.results_visual = VisualMode::Diagram;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_some());
+
+    app.results_visual = VisualMode::Chart;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_none());
+
+    app.results_visual = VisualMode::Spring3d;
+    assert!(crate::widgets::diagram_layer_controls(pal, &app).is_none());
+}
+
+// --------------------------------------------------------------------------
+// 2D diagram — VisualMode::Diagram wiring (Task 5). The Diagram*/diagram_*
+// message and state round trips are pinned above (Task 4); this pins the
+// third `results_visual` slot end to end.
+// --------------------------------------------------------------------------
+
+#[test]
+fn visual_toggle_round_trips_through_diagram_mode() {
+    let mut app = test_app();
+    app.update(Message::Visual(VisualMode::Diagram));
+    assert_eq!(app.results_visual, VisualMode::Diagram);
+    app.update(Message::Visual(VisualMode::Chart));
+    assert_eq!(app.results_visual, VisualMode::Chart);
+    // Widened to all three modes: Chart → Diagram was the only pair pinned
+    // above; Spring3d is the third `results_visual` slot and must round-trip
+    // through the same toggle just as cleanly.
+    app.update(Message::Visual(VisualMode::Spring3d));
+    assert_eq!(app.results_visual, VisualMode::Spring3d);
+    app.update(Message::Visual(VisualMode::Diagram));
+    assert_eq!(app.results_visual, VisualMode::Diagram);
+    app.update(Message::Visual(VisualMode::Chart));
+    assert_eq!(app.results_visual, VisualMode::Chart);
 }
