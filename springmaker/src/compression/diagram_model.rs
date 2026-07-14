@@ -4,7 +4,7 @@
 //! feature dimension is anchored to that geometry and labeled from the design
 //! field — the mirror-drift equality is asserted in tests.
 
-use crate::diagram::{common, DimKind, DimLayer, Dimension};
+use crate::diagram::{common, Dimension};
 use springcore::SpringDesign;
 
 pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
@@ -19,36 +19,9 @@ pub fn dimensions(design: &SpringDesign) -> Vec<Dimension> {
 
     vec![
         common::free_length(l0),
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (ls, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: ls,
-            label: format!("L\u{209B} {}", common::mm(ls)), // Lₛ (reference)
-            at: (ls / 2.0, 0.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: mid,
-                half: od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: od,
-            label: format!("OD {}", common::mm(od)),
-            at: (mid, od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: mid,
-                half: id / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: id,
-            label: format!("ID {}", common::mm(id)),
-            at: (mid, id / 2.0),
-        },
+        common::axial_length(ls, format!("L\u{209B} {}", common::mm(ls))), // Lₛ (reference)
+        common::diameter(mid, od, format!("OD {}", common::mm(od))),
+        common::diameter(mid, id, format!("ID {}", common::mm(id))),
         common::wire_note(wire, (mid, od / 2.0)),
         common::coil_note(na, nt, (mid, 0.0)),
     ]

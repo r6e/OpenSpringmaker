@@ -1,7 +1,7 @@
 //! Pure 2D-diagram dimension presenter for the conical family. Large end at
 //! axial 0, small end at axial `free_length` (see conical scene_model).
 
-use crate::diagram::{common, DimKind, DimLayer, Dimension};
+use crate::diagram::{common, Dimension};
 use springcore::conical::ConicalDesign;
 
 pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
@@ -16,46 +16,10 @@ pub fn dimensions(design: &ConicalDesign) -> Vec<Dimension> {
 
     vec![
         common::free_length(l0),
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: 0.0,
-                half: large_od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: large_od,
-            label: format!("large OD {}", common::mm(large_od)),
-            at: (0.0, large_od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: 0.0,
-                half: large_id / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: large_id,
-            label: format!("large ID {}", common::mm(large_id)),
-            at: (0.0, large_id / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: l0,
-                half: small_od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: small_od,
-            label: format!("small OD {}", common::mm(small_od)),
-            at: (l0, small_od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: l0,
-                half: small_id / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: small_id,
-            label: format!("small ID {}", common::mm(small_id)),
-            at: (l0, small_id / 2.0),
-        },
+        common::diameter(0.0, large_od, format!("large OD {}", common::mm(large_od))),
+        common::diameter(0.0, large_id, format!("large ID {}", common::mm(large_id))),
+        common::diameter(l0, small_od, format!("small OD {}", common::mm(small_od))),
+        common::diameter(l0, small_id, format!("small ID {}", common::mm(small_id))),
         common::wire_note(wire, (l0 / 2.0, large_od / 2.0)),
         common::coil_note(na, nt, (l0 / 2.0, 0.0)),
     ]

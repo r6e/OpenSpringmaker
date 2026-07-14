@@ -37,16 +37,37 @@ pub fn wire_note(wire: f64, at: P2) -> Dimension {
     }
 }
 
-/// A free-length linear dimension along the axis, `[0, l0]`.
-pub fn free_length(l0: f64) -> Dimension {
+/// A diameter callout spanning ±value/2 at an axial station, in the
+/// Diameters layer.
+pub fn diameter(at_axial: f64, value: f64, label: String) -> Dimension {
+    Dimension {
+        kind: DimKind::Diameter {
+            at_axial,
+            half: value / 2.0,
+        },
+        layer: DimLayer::Diameters,
+        value,
+        label,
+        at: (at_axial, value / 2.0),
+    }
+}
+
+/// An axial length dim over `[0, to]` in the Lengths layer, labelled at its
+/// midpoint.
+pub fn axial_length(to: f64, label: String) -> Dimension {
     Dimension {
         kind: DimKind::Linear {
             from: (0.0, 0.0),
-            to: (l0, 0.0),
+            to: (to, 0.0),
         },
         layer: DimLayer::Lengths,
-        value: l0,
-        label: format!("L\u{2080} {}", mm(l0)),
-        at: (l0 / 2.0, 0.0),
+        value: to,
+        label,
+        at: (to / 2.0, 0.0),
     }
+}
+
+/// A free-length linear dimension along the axis, `[0, l0]`.
+pub fn free_length(l0: f64) -> Dimension {
+    axial_length(l0, format!("L\u{2080} {}", mm(l0)))
 }

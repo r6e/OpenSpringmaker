@@ -33,17 +33,10 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
             at: ((bottom_inner + top_inner) / 2.0, 0.0),
         },
         // Body length.
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (body_h, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: body_h,
-            label: format!("body {}", common::mm(body_h)),
-            at: (body_h / 2.0, 0.0),
-        },
-        // Hook opening = loop inside diameter.
+        common::axial_length(body_h, format!("body {}", common::mm(body_h))),
+        // Hook opening = loop inside diameter. NOT a `common::diameter` fold:
+        // its anchor is `(bottom_inner, r1)`, not `(bottom_inner, half)` —
+        // `r1 != (2*r1 - wire)/2` for a nonzero wire.
         Dimension {
             kind: DimKind::Diameter {
                 at_axial: bottom_inner,
@@ -54,26 +47,8 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
             label: format!("hook \u{2300}{}", common::mm(2.0 * r1 - wire)),
             at: (bottom_inner, r1),
         },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: body_h / 2.0,
-                half: od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: od,
-            label: format!("OD {}", common::mm(od)),
-            at: (body_h / 2.0, od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: body_h / 2.0,
-                half: id / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: id,
-            label: format!("ID {}", common::mm(id)),
-            at: (body_h / 2.0, id / 2.0),
-        },
+        common::diameter(body_h / 2.0, od, format!("OD {}", common::mm(od))),
+        common::diameter(body_h / 2.0, id, format!("ID {}", common::mm(id))),
         common::wire_note(wire, (body_h / 2.0, od / 2.0)),
         common::coil_note(na, na, (body_h / 2.0, 0.0)), // extension body: active ≈ total
         Dimension {

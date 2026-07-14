@@ -16,36 +16,9 @@ pub fn diagram(design: &TorsionDesign) -> (Vec<Dimension>, Inset) {
     let l2 = design.inputs.leg2.millimeters();
 
     let side = vec![
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (body_h, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: body_h,
-            label: format!("body {}", common::mm(body_h)),
-            at: (body_h / 2.0, 0.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: body_h / 2.0,
-                half: od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: od,
-            label: format!("OD {}", common::mm(od)),
-            at: (body_h / 2.0, od / 2.0),
-        },
-        Dimension {
-            kind: DimKind::Diameter {
-                at_axial: body_h / 2.0,
-                half: id / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: id,
-            label: format!("ID {}", common::mm(id)),
-            at: (body_h / 2.0, id / 2.0),
-        },
+        common::axial_length(body_h, format!("body {}", common::mm(body_h))),
+        common::diameter(body_h / 2.0, od, format!("OD {}", common::mm(od))),
+        common::diameter(body_h / 2.0, id, format!("ID {}", common::mm(id))),
         common::wire_note(wire, (body_h / 2.0, od / 2.0)),
         common::coil_note(nb, nb, (body_h / 2.0, 0.0)),
     ];

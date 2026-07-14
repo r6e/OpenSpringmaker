@@ -11,16 +11,7 @@ pub fn dimensions(design: &AssemblyDesign) -> Vec<Dimension> {
     let mut dims = vec![
         // Overall free length (reference; series includes schematic gaps).
         common::free_length(l0),
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (ls, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: ls,
-            label: format!("L\u{209B} {}", common::mm(ls)),
-            at: (ls / 2.0, 0.0),
-        },
+        common::axial_length(ls, format!("L\u{209B} {}", common::mm(ls))),
     ];
     // Per-member OD/wire notes.
     let mut axial = 0.0;
@@ -32,16 +23,11 @@ pub fn dimensions(design: &AssemblyDesign) -> Vec<Dimension> {
             Topology::Nested => member_h / 2.0,
             Topology::Series => axial + member_h / 2.0,
         };
-        dims.push(Dimension {
-            kind: DimKind::Diameter {
-                at_axial: station,
-                half: od / 2.0,
-            },
-            layer: DimLayer::Diameters,
-            value: od,
-            label: format!("m{} OD {}", i + 1, common::mm(od)),
-            at: (station, od / 2.0),
-        });
+        dims.push(common::diameter(
+            station,
+            od,
+            format!("m{} OD {}", i + 1, common::mm(od)),
+        ));
         dims.push(common::wire_note(wire, (station, od / 2.0)));
         if design.topology == Topology::Series {
             axial += member_h; // (gap is cosmetic; per-member stations approximate)
