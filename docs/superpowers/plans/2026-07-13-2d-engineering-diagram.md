@@ -158,34 +158,53 @@ mod tests {
     fn projects_two_silhouette_edges_per_wire_polyline() {
         let scene = compression_scene(&compression_design());
         let p = project_silhouette(&scene).expect("finite scene projects");
-        // One body Wire polyline → two silhouette edges (outer + inner).
+        // One body Wire polyline → two silhouette edges (outer + inner),
+        // index-aligned with the centerline.
         assert_eq!(p.edges.len(), 2);
         assert!(p.edges.iter().all(|e| e.points.len() == scene.polylines[0].points.len()));
     }
 
     #[test]
-    fn outer_and_inner_edges_land_on_od_and_id_over_two() {
-        let d = compression_design(); // OD = 22, ID = 18 (mean 20 ± wire 2)
-        let scene = compression_scene(&d);
-        let p = project_silhouette(&scene).unwrap();
-        // Max |radial| over all edge points is the outer silhouette = OD/2;
-        // min |radial| is the inner silhouette = ID/2. Checked at the radial
-        // extremes, where the centerline tangent is purely axial so the ±wire/2
-        // offset is purely radial.
-        let radials: Vec<f64> = p.edges.iter().flat_map(|e| e.points.iter().map(|q| q.1.abs())).collect();
-        let outer = radials.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let inner = radials.iter().cloned().fold(f64::INFINITY, f64::min);
-        assert_relative_eq!(outer, d.outer_dia.millimeters() / 2.0, max_relative = 1e-9);
-        assert_relative_eq!(inner, d.inner_dia.millimeters() / 2.0, max_relative = 1e-9);
+    fn silhouette_edge_separation_equals_the_true_wire_diameter() {
+        // The point of the crossing double-strand choice: the perpendicular gap
+        // between the two silhouette edges is the TRUE wire diameter in model mm
+        // (a real geometric width, not a clamped stroke). EXACT at every sample —
+        // this is the honest-thickness invariant that makes OD/ID fall out.
+        let d = compression_design(); // wire 2mm
+        let p = project_silhouette(&compression_scene(&d)).unwrap();
+        let (outer, inner) = (&p.edges[0], &p.edges[1]);
+        assert_eq!(outer.points.len(), inner.points.len());
+        for (a, b) in outer.points.iter().zip(&inner.points) {
+            assert_relative_eq!((a.0 - b.0).hypot(a.1 - b.1), d.wire_dia.millimeters(), max_relative = 1e-9);
+        }
     }
 
     #[test]
-    fn axial_span_equals_free_length() {
+    fn silhouette_midpoint_at_the_axial_start_is_the_mean_radius() {
+        // Drop-z side elevation: radial = x. At the first sample (θ=0) the
+        // centerline sits at radial = mean/2 exactly, and the two silhouette
+        // points straddle it, so their midpoint == mean/2. EXACT — ties the
+        // drawn geometry to the mean-diameter field regardless of the discrete
+        // perpendicular's direction.
+        let d = compression_design(); // mean 20mm
+        let p = project_silhouette(&compression_scene(&d)).unwrap();
+        let mid = (p.edges[0].points[0].1 + p.edges[1].points[0].1) / 2.0;
+        assert_relative_eq!(mid, d.mean_dia.millimeters() / 2.0, max_relative = 1e-9);
+    }
+
+    #[test]
+    fn axial_span_matches_free_length() {
+        // axial = y ∈ [0, H] with H = free_length (compression scene_model). The
+        // silhouette offset perturbs each end by at most wire/2, so the edge
+        // bounds' axial span sits within a wire diameter of the true free length.
         let d = compression_design();
-        let scene = compression_scene(&d);
-        let p = project_silhouette(&scene).unwrap();
+        let p = project_silhouette(&compression_scene(&d)).unwrap();
         let span = p.bounds.axial_max - p.bounds.axial_min;
-        assert_relative_eq!(span, d.free_length.millimeters(), max_relative = 1e-9);
+        assert!(
+            (span - d.free_length.millimeters()).abs() <= d.wire_dia.millimeters(),
+            "axial span {span} not within one wire dia of free length {}",
+            d.free_length.millimeters()
+        );
     }
 
     #[test]
@@ -196,6 +215,18 @@ mod tests {
         assert!(project_silhouette(&scene).is_none());
     }
 }
+
+// PROJECTION MODEL (locked): drop-z side elevation — `radial = x`, `axial = y`,
+// z discarded. This is what makes the crossing double-strand look: radial
+// oscillates ±R along the axis, so adjacent coils' sine ribbons overlap and
+// their edges cross (the textbook interlocking-X look, for the true-scale case
+// diameter > pitch). Do NOT switch to `radial = hypot(x,z)` (the developed/
+// envelope model) — it draws a flat constant-radius band with no visible coils.
+// Consequence: the OUTER silhouette envelope only approaches OD/2 to sampling
+// resolution (~3% at 32 samples/turn), so OD/ID are NOT verified from the
+// geometry envelope here — they are verified in Task 2 as `presenter-half ==
+// design OD/2` (exact). The EXACT geometry ties in Task 1 are edge-separation
+// == wire_dia and edge-midpoint == mean/2.
 ```
 
 - [ ] **Step 4: Run the tests to verify they fail**
@@ -317,7 +348,7 @@ pub use geometry::{project_silhouette, Bounds, Edge2, Projected, P2};
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cargo test -p springmaker diagram::geometry`
-Expected: PASS (4 tests). Then `cargo test -p springmaker viz::` and the family `scene_model` tests to confirm the `wire_mm` addition broke nothing.
+Expected: PASS (5 tests). Then `cargo test -p springmaker viz::` and the family `scene_model` tests to confirm the `wire_mm` addition broke nothing.
 
 - [ ] **Step 7: Lint + commit**
 
@@ -435,15 +466,19 @@ mod tests {
         let dims = dimensions(&d);
         let fl = find(&dims, "L\u{2080}"); // "L₀"
         assert_eq!(fl.layer, DimLayer::Lengths);
+        // Presenter ↔ design: EXACT (the callout number is the design field).
         assert_relative_eq!(fl.value, d.free_length.millimeters(), max_relative = 1e-9);
-        // Mirror-drift: the drawn span the dimension anchors to equals free_length.
-        let span = project_silhouette(&compression_scene(&d)).unwrap().bounds;
-        let axial = span.axial_max - span.axial_min;
-        if let DimKind::Linear { from, to } = fl.kind {
-            assert_relative_eq!((to.0 - from.0).abs(), axial, max_relative = 1e-9);
-        } else {
-            panic!("free length must be a Linear dim");
-        }
+        // Presenter anchor span == the labeled value: EXACT (the drawn dimension
+        // line length equals its own number).
+        let DimKind::Linear { from, to } = fl.kind else { panic!("free length must be a Linear dim") };
+        assert_relative_eq!((to.0 - from.0).abs(), d.free_length.millimeters(), max_relative = 1e-9);
+        // Mirror-drift vs geometry: the projected silhouette's axial span matches
+        // free_length to within a wire diameter (the drop-z offset perturbs the
+        // ends by ≤ wire/2 each — the envelope peak is sampling-approximate, see
+        // Task 1's PROJECTION MODEL note).
+        let b = project_silhouette(&compression_scene(&d)).unwrap().bounds;
+        let axial = b.axial_max - b.axial_min;
+        assert!((axial - d.free_length.millimeters()).abs() <= d.wire_dia.millimeters());
     }
 
     #[test]
