@@ -1773,7 +1773,7 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
         Dimension { kind: DimKind::Diameter { at_axial: body_h / 2.0, half: id / 2.0 }, layer: DimLayer::Diameters, value: id, label: format!("ID {}", common::mm(id)), at: (body_h / 2.0, id / 2.0) },
         common::wire_note(wire, (body_h / 2.0, od / 2.0)),
         common::coil_note(na, na, (body_h / 2.0, 0.0)), // extension body: active ≈ total
-        Dimension { kind: DimKind::Note, layer: DimLayer::Coils, value: fi, label: format!("F\u{1d62} {}N", if fi.is_finite() { format!("{fi:.1}") } else { "\u{2014}".into() }), at: (body_h / 2.0, 0.0) },
+        Dimension { kind: DimKind::Note, layer: DimLayer::Coils, value: fi, label: format!("F\u{1d62} {}N", common::mm(fi)), at: (body_h / 2.0, 0.0) },
     ]
 }
 ```
