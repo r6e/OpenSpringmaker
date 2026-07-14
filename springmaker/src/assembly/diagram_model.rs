@@ -286,8 +286,17 @@ mod tests {
                 );
             }
         };
+        // All FOUR independent coil-geometry fields member_rendered_height reads
+        // (member is a full SpringDesign, unlike extension's na==total derived
+        // path) — sweep ALL producers of the coil_render_height sink, matching
+        // compression/conical: total/pitch hit coil_body_hostile clauses that
+        // active/wire don't (total-range and pitch-finiteness respectively).
         for topology in ["series", "nested"] {
             check("active", topology, |m| m.active_coils = f64::NAN);
+            check("total", topology, |m| m.total_coils = f64::NAN);
+            check("pitch", topology, |m| {
+                m.pitch = Length::from_millimeters(f64::NAN)
+            });
             check("wire", topology, |m| {
                 m.wire_dia = Length::from_millimeters(f64::NAN)
             });
