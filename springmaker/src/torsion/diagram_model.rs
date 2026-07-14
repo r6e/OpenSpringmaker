@@ -174,14 +174,7 @@ mod tests {
         let d = design();
         let (side, _inset) = diagram(&d);
         let body = &crate::torsion::scene_model::torsion_body_scene(&d).polylines[0];
-        let (lo, hi) = body
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
-                (lo.min(y), hi.max(y))
-            });
-        let center = (lo + hi) / 2.0;
+        let center = crate::diagram::test_support::polyline_y_center(body);
         assert!(center > 0.0, "fixture must have a nonzero body height");
         // "OD"/"ID"/"wire"/"active" are each unique among the side dims.
         for label in ["OD", "ID", "wire", "active"] {

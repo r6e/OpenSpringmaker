@@ -1,10 +1,14 @@
 //! Pure 2D-diagram dimension presenter for the extension family (ADR 0008).
 //! Anchors are in projection space `(axial, radial)` model mm. The free
-//! length is anchored to the **inside-hooks span** (matches
-//! `scene_model::extension_scene`'s hook geometry and the engine's
-//! `free_length_from_geometry` relation), not `[0, l0]` like compression.
+//! length is anchored to the **drawn inside-hooks span** (matches
+//! `scene_model::extension_scene`'s hook geometry), not `[0, l0]` like
+//! compression. The L₀ callout's value is the design free length; its span is
+//! the drawn hooks — the two coincide except in the close-wound clamp band
+//! (see `dimensions`), where L₀ is a reference dim like the assembly overall.
 
 use crate::diagram::{common, DimKind, DimLayer, Dimension};
+use crate::viz::coil_render_height;
+use crate::viz::sdf::extension_body_pitch_mm;
 use springcore::extension::ExtensionDesign;
 
 pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
@@ -14,16 +18,26 @@ pub fn dimensions(design: &ExtensionDesign) -> Vec<Dimension> {
     let od = design.outer_dia.millimeters();
     let id = design.inner_dia.millimeters();
     let na = design.active_coils;
-    // Body height from the engine's inside-hooks relation (matches scene_model).
-    // body_h = body_coils·wire ≥ 0 for every solvable design (engine rejects
-    // sub-close-wound free lengths), so no clamp needed.
-    let body_h = l0 - 2.0 * (2.0 * r1 - wire) - wire;
+    // Body height AS DRAWN by extension_scene: it renders `na` turns at the
+    // shared close-wound-clamped body pitch (`viz::sdf::extension_body_pitch_mm`,
+    // via the same `coil_render_height` the other families anchor on). The raw
+    // inside-hooks relation `l0 − 2·(2·r1 − wire) − wire` equals this only ABOVE
+    // the rate-equivalent close-wound length (`free_length_from_geometry` at Na).
+    // Between the PHYSICAL close-wound minimum (Nb = Na − G/E, what the engine
+    // accepts down to) and that rate-equivalent length, the scene clamps the
+    // body to close-wound while the raw relation keeps shrinking — so anchoring
+    // on the raw relation floats the callouts off the drawn body. Anchor on the
+    // drawn height instead, exactly as compression/conical/assembly do.
+    let body_h = coil_render_height(na, na, extension_body_pitch_mm(design), wire);
     let bottom_inner = -2.0 * r1 + wire / 2.0;
     let top_inner = body_h + 2.0 * r1 - wire / 2.0;
     let fi = design.initial_tension.newtons();
 
     vec![
-        // Free length = inside-hooks span (feature-anchored).
+        // Free length: value is the design free length; the drawn span is the
+        // inside-hooks span (bottom→top hook inner surfaces of the DRAWN body).
+        // These coincide except in the close-wound clamp band, where this is a
+        // reference dim (value = spec free length, span = the drawn hooks).
         Dimension {
             kind: DimKind::Linear {
                 from: (bottom_inner, 0.0),
@@ -74,7 +88,7 @@ mod tests {
     use springcore::{CurvatureCorrection, MaterialSet, MaterialStore, UnitSystem};
 
     fn design() -> springcore::extension::ExtensionDesign {
-        build(HookMode::Default, "10", "5")
+        build(HookMode::Default, "10", "5", "100")
     }
 
     /// A non-default hook radius (r1 = 14, vs the default D/2 = 10) so the
@@ -82,20 +96,31 @@ mod tests {
     /// presenter-matches-scene claim rests on `free_length_from_geometry` being
     /// general in r1, which a default-r1 fixture cannot show.
     fn custom_hook_design() -> springcore::extension::ExtensionDesign {
-        build(HookMode::Custom, "14", "7")
+        build(HookMode::Custom, "14", "7", "100")
+    }
+
+    /// A free length inside the close-wound clamp band — above the PHYSICAL
+    /// close-wound minimum the engine accepts down to (57.2134mm for this
+    /// fixture, pinned in `springcore::extension::design`'s
+    /// `accepts_free_length_just_above_close_wound_minimum`) but below the
+    /// rate-equivalent close-wound length (58mm) where the scene clamps the body
+    /// to close-wound. Here the drawn body ≠ the raw inside-hooks relation.
+    fn clamp_band_design() -> springcore::extension::ExtensionDesign {
+        build(HookMode::Default, "10", "5", "57.62")
     }
 
     fn build(
         hook_mode: HookMode,
         hook_r1: &str,
         hook_r2: &str,
+        free_length: &str,
     ) -> springcore::extension::ExtensionDesign {
         let materials = MaterialStore::new(MaterialSet::load_default());
         let form = ExtFormState {
             wire_dia: "2".into(),
             mean_dia: "20".into(),
             active: "10".into(),
-            free_length: "100".into(),
+            free_length: free_length.into(),
             initial_tension: "5".into(),
             loads: "10, 30".into(),
             hook_mode,
@@ -116,17 +141,10 @@ mod tests {
 
     /// The y-center of the coil body AS DRAWN by `extension_scene` (polyline 0
     /// is the body; the two hooks are polylines 1–2) — INDEPENDENTLY sampled
-    /// from the scene, not re-derived from `body_h`.
+    /// from the scene (via the shared `test_support::polyline_y_center`), not
+    /// re-derived from `body_h`.
     fn drawn_body_center(d: &springcore::extension::ExtensionDesign) -> f64 {
-        let body = &extension_scene(d).polylines[0];
-        let (lo, hi) = body
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
-                (lo.min(y), hi.max(y))
-            });
-        (lo + hi) / 2.0
+        crate::diagram::test_support::polyline_y_center(&extension_scene(d).polylines[0])
     }
 
     #[test]
@@ -196,15 +214,12 @@ mod tests {
         assert!(fl.label.contains('\u{2014}'));
     }
 
-    /// Lock (not fix): the body OD/ID/wire/coil callouts sit at the axial center
-    /// of the coil body AS DRAWN by `extension_scene`, for the default hook mode
-    /// AND a non-default one. Unlike compression/conical, extension does NOT
-    /// drift: the presenter's `body_h = l0 − 2·(2·r1 − wire) − wire` is the SAME
-    /// inside-hooks relation (`free_length_from_geometry`, fully general in r1)
-    /// that the scene renders the body to via `extension_body_pitch_mm`, so they
-    /// agree for every hook radius. This pins that invariant against regression;
-    /// compared against the scene body's own y-center, so a re-derivation drift
-    /// would fail it.
+    /// The body OD/ID/wire/coil callouts sit at the axial center of the coil
+    /// body AS DRAWN by `extension_scene`, for the default hook mode AND a
+    /// non-default hook radius (r1-generality). Above the clamp band the drawn
+    /// body equals the raw inside-hooks relation, so this also confirms the
+    /// common case unchanged; the clamp-band test below covers where they
+    /// diverge. Compared against the scene body's own y-center.
     #[test]
     fn body_callouts_track_the_drawn_body_across_hook_modes() {
         for d in [design(), custom_hook_design()] {
@@ -215,6 +230,40 @@ mod tests {
             for label in ["OD", "ID", "wire", "active"] {
                 assert_relative_eq!(find(&dims, label).at.0, center, max_relative = 1e-9);
             }
+        }
+    }
+
+    /// The real drift the raw inside-hooks relation hides: in the close-wound
+    /// clamp band (free length the engine ACCEPTS but where the scene clamps the
+    /// body to close-wound), the callouts must track the DRAWN (clamped) body,
+    /// not the raw `l0 − 2·(2·r1 − wire) − wire`. Anchoring on the drawn height
+    /// (`coil_render_height` over `extension_body_pitch_mm`) fixes it. Compared
+    /// against the scene body's own y-center; revert-probed RED on the raw
+    /// relation, which drifts by (G/E)·wire/2 here.
+    #[test]
+    fn body_callouts_track_the_drawn_body_in_the_close_wound_clamp_band() {
+        let d = clamp_band_design();
+        let dims = dimensions(&d);
+        let center = drawn_body_center(&d);
+        // Precondition: the fixture really is in the clamp band — the drawn body
+        // is close-wound (na·wire), strictly SHORTER than the raw relation, so a
+        // raw anchor would genuinely drift (guards against a fixture that drifted
+        // out of the band and made the test vacuous).
+        let raw_body_h = d.free_length.millimeters()
+            - 2.0 * (2.0 * d.hooks.r1.millimeters() - d.wire_dia.millimeters())
+            - d.wire_dia.millimeters();
+        assert_relative_eq!(
+            2.0 * center,
+            d.active_coils * d.wire_dia.millimeters(),
+            max_relative = 1e-9
+        );
+        assert!(
+            raw_body_h < 2.0 * center - 1e-6,
+            "fixture left the clamp band: raw body_h {raw_body_h} not below drawn {}",
+            2.0 * center
+        );
+        for label in ["OD", "ID", "wire", "active"] {
+            assert_relative_eq!(find(&dims, label).at.0, center, max_relative = 1e-9);
         }
     }
 }

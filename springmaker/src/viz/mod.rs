@@ -208,8 +208,15 @@ pub fn scene_from_radius(
 
 /// The axial height a coil body renders to — `coil_height_fn` at the top of the
 /// coil (`t = 1.0`), the y-extent its helix reaches. Returns `0.0` for a
-/// degenerate body via the shared [`coil_body_hostile`] guard, so callers can't
-/// panic on NaN/negative coils (`coil_height_fn`'s `clamp(0.0, active)` would).
+/// degenerate body, so callers can't panic on NaN/negative coils
+/// (`coil_height_fn`'s `clamp(0.0, active)` would) AND every anchor derived from
+/// it stays finite. Two guards: the shared [`coil_body_hostile`] gate up front
+/// (degenerate active/total/pitch), then a finiteness check on the RESULT —
+/// `coil_height_fn` also multiplies dead-coil turns by `wire_mm`, which
+/// `coil_body_hostile` does NOT screen, so a NaN/±inf `wire_mm`, or a
+/// finite-but-huge pitch/wire whose product overflows to ±inf, would otherwise
+/// leak a non-finite height into presenter callout anchors (the 2D presenters
+/// assert finite anchors). Both degrade to the same empty-body `0.0`.
 /// `assembly_scene` draws each member to this exact height (its helix's last
 /// point y = `coil_height_fn(..)(1.0)`, radius-independent), so the 2D-diagram
 /// presenter anchors callouts on it — matching the drawn bodies where
@@ -219,7 +226,12 @@ pub(crate) fn coil_render_height(active: f64, total: f64, pitch_mm: f64, wire_mm
     if coil_body_hostile(active, total, pitch_mm) {
         return 0.0;
     }
-    coil_height_fn(active, total, pitch_mm, wire_mm)(1.0)
+    let height = coil_height_fn(active, total, pitch_mm, wire_mm)(1.0);
+    if height.is_finite() {
+        height
+    } else {
+        0.0
+    }
 }
 
 /// Close-wound coil body (torsion's body; extension moved to the
@@ -1089,12 +1101,21 @@ mod tests {
             42.0,
             max_relative = 1e-12
         );
-        // Hostile coil counts / pitch route through scene_from_radius's guard to
-        // an empty body → 0.0, never a panic (coil_height_fn's clamp would panic
-        // on NaN active if called directly).
+        // Hostile coil counts / pitch route through the coil_body_hostile guard
+        // to 0.0, never a panic (coil_height_fn's clamp would panic on NaN active
+        // if called directly).
         assert_eq!(coil_render_height(f64::NAN, 10.0, 5.0, 1.0), 0.0);
         assert_eq!(coil_render_height(-1.0, 10.0, 5.0, 1.0), 0.0);
         assert_eq!(coil_render_height(8.0, 10.0, 0.0, 1.0), 0.0);
+        // wire_mm is NOT screened by coil_body_hostile, but the result
+        // finiteness guard keeps the anchor finite: a NaN/inf wire (dead coils
+        // multiply it) and a finite pitch/wire product that overflows to ±inf
+        // both degrade to 0.0 rather than leaking a non-finite callout anchor.
+        assert_eq!(coil_render_height(8.0, 10.0, 5.0, f64::NAN), 0.0);
+        assert_eq!(coil_render_height(8.0, 10.0, 5.0, f64::INFINITY), 0.0);
+        // total=2000 (at the render cap) × pitch 1e306 overflows the active-span
+        // term to +inf → 0.0.
+        assert_eq!(coil_render_height(2000.0, 2000.0, 1e306, 1.0), 0.0);
     }
 
     #[test]

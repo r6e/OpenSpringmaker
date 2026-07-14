@@ -79,19 +79,12 @@ mod tests {
     }
 
     /// The axial center of the coil body AS DRAWN by `compression_scene` — the
-    /// min/max of the helix's INDEPENDENTLY sampled y coordinates, not a
-    /// re-derived `coil_render_height`, so the mirror-drift test pins
-    /// presenter-tracks-geometry rather than presenter-calls-the-same-helper.
+    /// helix's INDEPENDENTLY sampled y-center (via the shared
+    /// `test_support::polyline_y_center`), not a re-derived `coil_render_height`,
+    /// so the mirror-drift test pins presenter-tracks-geometry rather than
+    /// presenter-calls-the-same-helper.
     fn drawn_body_center(d: &SpringDesign) -> f64 {
-        let line = &compression_scene(d).polylines[0];
-        let (lo, hi) = line
-            .points
-            .iter()
-            .map(|p| p.1)
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
-                (lo.min(y), hi.max(y))
-            });
-        (lo + hi) / 2.0
+        crate::diagram::test_support::polyline_y_center(&compression_scene(d).polylines[0])
     }
 
     fn find(dims: &[Dimension], label_starts: &str) -> Dimension {
@@ -212,22 +205,30 @@ mod tests {
         }
     }
 
-    /// The callouts moved off `free_length` onto the rendered coil height
-    /// (active/total/pitch/wire). A NaN in one of THOSE fields must not produce
-    /// a non-finite anchor: `coil_render_height`'s shared guard returns 0.0, so
-    /// `mid` stays finite. Mirrors the assembly degenerate discipline (NaN a
-    /// field the anchor actually reads).
+    /// The callouts moved off `free_length` onto the rendered coil height, which
+    /// reads active/total/pitch/wire. A NaN in ANY of those must keep every
+    /// anchor finite — `coil_render_height` guards active/total/pitch via
+    /// `coil_body_hostile` and NaN/inf `wire` (plus finite overflow) via its
+    /// result finiteness check, so `mid` stays finite. Mirrors the assembly
+    /// degenerate discipline (NaN a field the anchor actually reads), swept over
+    /// every such field so the doc's "wire" claim is exercised, not just asserted.
     #[test]
-    fn degenerate_coil_count_yields_finite_callout_anchors() {
-        let mut d = design();
-        d.active_coils = f64::NAN;
-        let dims = dimensions(&d);
-        for label in ["OD", "ID", "\u{2300}", "N"] {
-            let at = find(&dims, label).at;
-            assert!(
-                at.0.is_finite() && at.1.is_finite(),
-                "{label} anchor non-finite"
-            );
-        }
+    fn degenerate_coil_geometry_yields_finite_callout_anchors() {
+        let check = |field: &str, mutate: fn(&mut SpringDesign)| {
+            let mut d = design();
+            mutate(&mut d);
+            let dims = dimensions(&d);
+            for label in ["OD", "ID", "\u{2300}", "N"] {
+                let at = find(&dims, label).at;
+                assert!(
+                    at.0.is_finite() && at.1.is_finite(),
+                    "NaN {field}: {label} anchor non-finite"
+                );
+            }
+        };
+        check("active", |d| d.active_coils = f64::NAN);
+        check("total", |d| d.total_coils = f64::NAN);
+        check("pitch", |d| d.pitch = Length::from_millimeters(f64::NAN));
+        check("wire", |d| d.wire_dia = Length::from_millimeters(f64::NAN));
     }
 }

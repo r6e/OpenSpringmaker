@@ -193,4 +193,20 @@ pub(crate) mod test_support {
                 )
             })
     }
+
+    /// The axial (y) center of a scene polyline AS DRAWN — the midpoint of its
+    /// sampled y-extent. The family `diagram_model` mirror-drift tests anchor on
+    /// this (the drawn coil body's center), sampled from the scene independently
+    /// of the presenter's `coil_render_height`. Mirror of
+    /// `extension::scene_model`'s `y_extremes`, returning the center.
+    pub fn polyline_y_center(line: &crate::viz::Polyline3) -> f64 {
+        let (lo, hi) = line
+            .points
+            .iter()
+            .map(|p| p.1)
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
+                (lo.min(y), hi.max(y))
+            });
+        (lo + hi) / 2.0
+    }
 }

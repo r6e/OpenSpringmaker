@@ -53,7 +53,11 @@ pub fn dimensions(design: &AssemblyDesign) -> Vec<Dimension> {
             axial += member_h + gap;
         }
     }
-    // Stage summary.
+    // Stage summary. This is a caption (stage count + topology), NOT a feature
+    // callout on a drawn body, so it anchors on `free_length/2` like the L₀
+    // reference dim — the "anchor on the drawn body" rule does not apply. For a
+    // Series stack with gaps the drawn span exceeds `l0`, so this sits slightly
+    // below the drawn center by design; do not "fix" it onto rendered height.
     let topo = match design.topology {
         Topology::Nested => "nested",
         Topology::Series => "series",
@@ -133,14 +137,7 @@ mod tests {
             "one drawn body per member"
         );
         for (i, poly) in scene.polylines.iter().enumerate() {
-            let (lo, hi) = poly
-                .points
-                .iter()
-                .map(|p| p.1)
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| {
-                    (lo.min(y), hi.max(y))
-                });
-            let drawn_center = (lo + hi) / 2.0;
+            let drawn_center = crate::diagram::test_support::polyline_y_center(poly);
             let label = format!("m{} OD", i + 1);
             let at_axial = match find(&dims, &label).kind {
                 DimKind::Diameter { at_axial, .. } => at_axial,

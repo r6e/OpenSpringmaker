@@ -210,21 +210,32 @@ mod tests {
     }
 
     /// The small-end anchor moved off `free_length` onto the rendered coil
-    /// height (active/total/pitch/wire). A NaN in one of THOSE fields must not
-    /// produce a non-finite anchor: `coil_render_height`'s shared guard returns
-    /// 0.0. Mirrors the assembly degenerate discipline (NaN a field the anchor
-    /// actually reads).
+    /// height, which reads active/total/pitch/wire. A NaN in ANY of those must
+    /// keep every anchor finite — `coil_render_height` guards active/total/pitch
+    /// via `coil_body_hostile` and NaN/inf `wire` via its result finiteness
+    /// check. Swept over every such field so the doc's "wire" claim is
+    /// exercised, not just asserted.
     #[test]
-    fn degenerate_coil_count_yields_finite_callout_anchors() {
-        let mut d = design();
-        d.inputs.active_coils = f64::NAN;
-        let dims = dimensions(&d);
-        for label in ["small OD", "small ID", "\u{2300}", "N"] {
-            let at = find(&dims, label).at;
-            assert!(
-                at.0.is_finite() && at.1.is_finite(),
-                "{label} anchor non-finite"
-            );
-        }
+    fn degenerate_coil_geometry_yields_finite_callout_anchors() {
+        use springcore::conical::ConicalDesign;
+        use springcore::units::Length;
+        let check = |field: &str, mutate: fn(&mut ConicalDesign)| {
+            let mut d = design();
+            mutate(&mut d);
+            let dims = dimensions(&d);
+            for label in ["small OD", "small ID", "\u{2300}", "N"] {
+                let at = find(&dims, label).at;
+                assert!(
+                    at.0.is_finite() && at.1.is_finite(),
+                    "NaN {field}: {label} anchor non-finite"
+                );
+            }
+        };
+        check("active", |d| d.inputs.active_coils = f64::NAN);
+        check("total", |d| d.total_coils = f64::NAN);
+        check("pitch", |d| d.pitch = Length::from_millimeters(f64::NAN));
+        check("wire", |d| {
+            d.inputs.wire_dia = Length::from_millimeters(f64::NAN)
+        });
     }
 }
