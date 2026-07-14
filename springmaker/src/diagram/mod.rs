@@ -8,7 +8,7 @@ pub mod layout;
 use crate::viz::SceneData;
 
 // Re-export consumed by the humble canvas (`canvas::diagram_element`).
-pub use geometry::{project_silhouette, Bounds, Edge2, Projected, P2};
+pub use geometry::{bounds_of, project_silhouette, Bounds, Edge2, Projected, P2};
 // Re-export consumed by the humble canvas (`canvas::diagram_element`).
 pub use layout::{layout, LayoutedDim};
 // Re-export consumed by the results dispatch in Task 5.

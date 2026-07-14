@@ -55,6 +55,28 @@ fn normal_at(pts: &[P2], i: usize) -> P2 {
     }
 }
 
+/// Bounding envelope over a set of edges (model mm), skipping non-finite
+/// points; `None` when no finite point exists. Shared by `project_silhouette`
+/// (the main silhouette) and the canvas's corner inset (Task 9).
+pub fn bounds_of(edges: &[Edge2]) -> Option<Bounds> {
+    let mut b = Bounds {
+        axial_min: f64::INFINITY,
+        axial_max: f64::NEG_INFINITY,
+        radial_min: f64::INFINITY,
+        radial_max: f64::NEG_INFINITY,
+    };
+    for (a, r) in edges.iter().flat_map(|e| e.points.iter().copied()) {
+        if !a.is_finite() || !r.is_finite() {
+            continue;
+        }
+        b.axial_min = b.axial_min.min(a);
+        b.axial_max = b.axial_max.max(a);
+        b.radial_min = b.radial_min.min(r);
+        b.radial_max = b.radial_max.max(r);
+    }
+    (b.axial_min.is_finite() && b.axial_max.is_finite()).then_some(b)
+}
+
 pub fn project_silhouette(scene: &SceneData) -> Option<Projected> {
     // Gate on the same finiteness contract the renderer uses.
     viz::scene_extent(scene)?;
@@ -86,22 +108,8 @@ pub fn project_silhouette(scene: &SceneData) -> Option<Projected> {
         });
     }
 
-    let mut b = Bounds {
-        axial_min: f64::INFINITY,
-        axial_max: f64::NEG_INFINITY,
-        radial_min: f64::INFINITY,
-        radial_max: f64::NEG_INFINITY,
-    };
-    for (a, r) in edges.iter().flat_map(|e| e.points.iter().copied()) {
-        if !a.is_finite() || !r.is_finite() {
-            continue;
-        }
-        b.axial_min = b.axial_min.min(a);
-        b.axial_max = b.axial_max.max(a);
-        b.radial_min = b.radial_min.min(r);
-        b.radial_max = b.radial_max.max(r);
-    }
-    (b.axial_min.is_finite() && b.axial_max.is_finite()).then_some(Projected { edges, bounds: b })
+    let bounds = bounds_of(&edges)?;
+    Some(Projected { edges, bounds })
 }
 
 #[cfg(test)]

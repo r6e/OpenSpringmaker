@@ -9,7 +9,8 @@ use std::f64::consts::PI;
 
 use crate::app::{Message, Palette};
 use crate::diagram::{
-    layout, project_silhouette, Bounds, DiagramView, DimLayers, Edge2, LayoutedDim, Projected, P2,
+    bounds_of, layout, project_silhouette, Bounds, DiagramView, DimLayers, Edge2, LayoutedDim,
+    Projected, P2,
 };
 use iced::alignment::Vertical;
 use iced::mouse;
@@ -58,28 +59,13 @@ pub fn fit_transform(bounds: &Bounds, w: f32, h: f32, view: DiagramView) -> Tran
     Transform { scale, offset }
 }
 
-/// Bounding envelope over an inset's edges (model mm) — the pure, testable
-/// seam (ADR 0008) behind the corner `fit_transform` in `draw`. Mirrors the
-/// finiteness guard in `project_silhouette`: non-finite points are skipped;
-/// `None` when no finite point exists (an empty or fully degenerate inset),
-/// so the caller can skip drawing it rather than fit a transform to garbage.
+/// Bounding envelope over an inset's edges (model mm) — a thin wrapper around
+/// the shared `geometry::bounds_of`, the pure, testable seam (ADR 0008)
+/// behind the corner `fit_transform` in `draw`. `None` when no finite point
+/// exists (an empty or fully degenerate inset), so the caller can skip
+/// drawing it rather than fit a transform to garbage.
 fn inset_bounds(edges: &[Edge2]) -> Option<Bounds> {
-    let mut b = Bounds {
-        axial_min: f64::INFINITY,
-        axial_max: f64::NEG_INFINITY,
-        radial_min: f64::INFINITY,
-        radial_max: f64::NEG_INFINITY,
-    };
-    for (a, r) in edges.iter().flat_map(|e| e.points.iter().copied()) {
-        if !a.is_finite() || !r.is_finite() {
-            continue;
-        }
-        b.axial_min = b.axial_min.min(a);
-        b.axial_max = b.axial_max.max(a);
-        b.radial_min = b.radial_min.min(r);
-        b.radial_max = b.radial_max.max(r);
-    }
-    (b.axial_min.is_finite() && b.axial_max.is_finite()).then_some(b)
+    bounds_of(edges)
 }
 
 /// A corner sub-rectangle for the inset, anchored bottom-right, sized as a
