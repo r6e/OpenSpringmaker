@@ -111,7 +111,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 || {
                     crate::diagram::DiagramInput::new(
                         crate::assembly::scene_model::assembly_scene(outcome),
-                        Vec::new(), // dims added in the assembly diagram task
+                        crate::assembly::diagram_model::dimensions(outcome),
                     )
                 },
             );
