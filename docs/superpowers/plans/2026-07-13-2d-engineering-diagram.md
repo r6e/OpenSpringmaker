@@ -877,9 +877,12 @@ git commit -m "feat(diagram): shared dimension layout engine (linear + diameter 
 **Files:**
 - Create: `springmaker/src/diagram/canvas.rs`
 - Modify: `springmaker/src/diagram/mod.rs` (`DiagramView`, `DiagramInput`, `Inset`, `diagram_element`, view step helpers, re-exports)
+- Modify: `springmaker/src/app.rs` (`Message::{DiagramZoom,DiagramPan,DiagramLayer}`, `App::{diagram_view,diagram_layers}` + defaults + no-recompute update arms — the canvas publishes these messages, so they must exist here for the crate to compile; `VisualMode::Diagram` and the visual wiring stay in Task 5)
+- Modify: `springmaker/src/ui_tests.rs` (update-arm tests)
 
 **Interfaces:**
-- Consumes: `diagram::{project_silhouette, layout, Projected, LayoutedDim, DimLayers}`, `viz::canvas3d::{placeholder_for}` idiom via `widgets::placeholder_text`, `app::{Message, Palette}`.
+- Consumes: `diagram::{project_silhouette, layout, Projected, LayoutedDim, DimLayers, DimLayer, zoom_step, pan_step}`, `viz::canvas3d::{placeholder_for}` idiom via `widgets::placeholder_text`, `app::{Message, Palette}`.
+- Produces: `Message::{DiagramZoom(f32), DiagramPan(f32,f32), DiagramLayer(DimLayer)}`; `App::{diagram_view: DiagramView, diagram_layers: DimLayers}`.
 - Produces:
   ```rust
   pub struct DiagramView { pub zoom: f32, pub pan: iced::Vector }
@@ -955,6 +958,80 @@ impl DiagramInput {
         self.inset = Some(inset);
         self
     }
+}
+```
+
+- [ ] **Step 1b: Wire the diagram messages, state, and update arms in `app.rs`**
+
+The canvas (Step 4) publishes `Message::DiagramZoom`/`DiagramPan`, so these variants and their update arms must exist for the crate to compile. Add the view-only messages, `App` state, defaults, and no-recompute arms now. (`VisualMode::Diagram`, the segmented `"2D"` toggle, the results dispatch, and the layer-toggle row are Task 5.) Write the two update-arm tests first (RED: the `Message::Diagram*` variants don't exist yet), then add the variants+state+arms (GREEN).
+
+`app.rs` — `Message` (near `Zoom`/`Orbit`):
+```rust
+    /// 2D-diagram wheel-zoom delta (published by `DiagramCanvas::update`),
+    /// accumulated by the `DiagramZoom` arm via `diagram::zoom_step`.
+    DiagramZoom(f32),
+    /// 2D-diagram drag-pan delta (dx, dy) in px, accumulated via `diagram::pan_step`.
+    DiagramPan(f32, f32),
+    /// Toggle one 2D-diagram dimension layer.
+    DiagramLayer(crate::diagram::DimLayer),
+```
+`app.rs` — `App` fields (near `orbit`/`zoom`/`results_visual`):
+```rust
+    pub diagram_view: crate::diagram::DiagramView,
+    pub diagram_layers: crate::diagram::DimLayers,
+```
+`app.rs` — defaults (near `orbit: ...`, `zoom: 1.0`):
+```rust
+            diagram_view: crate::diagram::DiagramView::default(),
+            diagram_layers: crate::diagram::DimLayers::default(),
+```
+`app.rs` — update arms (next to the `Message::Zoom` arm; all return `false` — no recompute; mirror the `Orbit`/`Zoom` single-writer discipline):
+```rust
+            // Same non-recompute shape as `Zoom`/`Orbit`: `zoom_step`/`pan_step`
+            // are the single writers (finiteness-guarded), so the view stays valid
+            // by induction. Layer toggles are pure view state.
+            Message::DiagramZoom(delta) => {
+                self.diagram_view = crate::diagram::zoom_step(self.diagram_view, delta);
+                false
+            }
+            Message::DiagramPan(dx, dy) => {
+                self.diagram_view = crate::diagram::pan_step(self.diagram_view, dx, dy);
+                false
+            }
+            Message::DiagramLayer(layer) => {
+                let l = &mut self.diagram_layers;
+                match layer {
+                    crate::diagram::DimLayer::Lengths => l.lengths = !l.lengths,
+                    crate::diagram::DimLayer::Diameters => l.diameters = !l.diameters,
+                    crate::diagram::DimLayer::Coils => l.coils = !l.coils,
+                }
+                false
+            }
+```
+
+Add these update-arm tests to `springmaker/src/ui_tests.rs` (use `test_app()`, the constructor at `ui_tests.rs:36`):
+```rust
+#[test]
+fn diagram_zoom_and_pan_do_not_recompute_and_stay_finite() {
+    let mut app = test_app();
+    let before = app.diagram_view;
+    app.update(Message::DiagramZoom(2.0));
+    app.update(Message::DiagramPan(5.0, -3.0));
+    assert!(app.diagram_view.zoom.is_finite() && app.diagram_view.zoom > 0.0);
+    assert_ne!(app.diagram_view, before);
+    // A non-finite delta is a no-op (single-writer guard).
+    let held = app.diagram_view;
+    app.update(Message::DiagramZoom(f32::NAN));
+    assert_eq!(app.diagram_view, held);
+}
+
+#[test]
+fn diagram_layer_toggle_flips_exactly_its_group() {
+    let mut app = test_app();
+    assert!(app.diagram_layers.coils);
+    app.update(Message::DiagramLayer(crate::diagram::DimLayer::Coils));
+    assert!(!app.diagram_layers.coils);
+    assert!(app.diagram_layers.lengths && app.diagram_layers.diameters);
 }
 ```
 
