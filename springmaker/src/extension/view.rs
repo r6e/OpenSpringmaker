@@ -319,7 +319,7 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 || {
                     crate::diagram::DiagramInput::new(
                         crate::extension::scene_model::extension_scene(&outcome.design),
-                        Vec::new(), // dims added in the extension diagram task
+                        crate::extension::diagram_model::dimensions(&outcome.design),
                     )
                 },
             );
