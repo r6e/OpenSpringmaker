@@ -1298,18 +1298,20 @@ git commit -m "feat(diagram): humble canvas with fit/zoom/pan transform + degene
 ## Task 5: App wiring — `VisualMode::Diagram` end-to-end (compression)
 
 **Files:**
-- Modify: `springmaker/src/app.rs` (`VisualMode`, `Message`, `App` fields + defaults, update arms)
-- Modify: `springmaker/src/widgets.rs` (`visual_toggle`, `results_visual_element`, `diagram_layer_toggle`)
+- Modify: `springmaker/src/app.rs` (add ONLY the `VisualMode::Diagram` variant — `Message::Diagram*`, `App::diagram_view`/`diagram_layers`, and the update arms already landed in Task 4)
+- Modify: `springmaker/src/widgets.rs` (`visual_toggle` 3rd segment, `results_visual_element` 4th closure + arm, `diagram_layer_toggle` row)
+- Modify: `springmaker/src/diagram/canvas.rs` (draw arrowheads — deferred D1; center dimension text — deferred D2)
 - Modify: `springmaker/src/compression/view.rs` (pass the `diagram` closure + layer row)
-- Modify: `springmaker/src/ui_tests.rs` (integration tests)
+- Modify: the other four families' `view.rs` (temporary empty-dims `diagram` closure so the workspace compiles)
+- Modify: `springmaker/src/ui_tests.rs` (the `VisualMode::Diagram` round-trip test)
 
 **Interfaces:**
-- Consumes: `diagram::{diagram_element, DiagramInput, DiagramView, DimLayers, DimLayer, zoom_step, pan_step}`, `compression::diagram_model::dimensions`, `compression::scene_model::compression_scene`.
-- Produces: `VisualMode::Diagram`; `Message::{DiagramZoom(f32), DiagramPan(f32,f32), DiagramLayer(DimLayer)}`; `App::{diagram_view: DiagramView, diagram_layers: DimLayers}`.
+- Consumes: `diagram::{diagram_element, DiagramInput}` (Task 4), `compression::{scene_model::compression_scene, diagram_model::dimensions}`. `Message::Diagram*`, `App::diagram_*`, `zoom_step`/`pan_step` already exist from Task 4.
+- Produces: `VisualMode::Diagram`; the segmented `"2D"` option; the `results_visual_element` 4th closure; `diagram_layer_toggle`.
 
-- [ ] **Step 1: Write the failing integration tests**
+- [ ] **Step 1: Write the failing integration test**
 
-Add to `springmaker/src/ui_tests.rs`:
+The `Message::Diagram*` / `App::diagram_*` update-arm tests already landed in Task 4. This task adds only the `VisualMode::Diagram` round-trip. Add to `springmaker/src/ui_tests.rs`:
 ```rust
 #[test]
 fn visual_toggle_round_trips_through_diagram_mode() {
@@ -1319,29 +1321,6 @@ fn visual_toggle_round_trips_through_diagram_mode() {
     app.update(Message::Visual(VisualMode::Chart));
     assert_eq!(app.results_visual, VisualMode::Chart);
 }
-
-#[test]
-fn diagram_zoom_and_pan_do_not_recompute_and_stay_finite() {
-    let mut app = test_app();
-    let before = app.diagram_view;
-    app.update(Message::DiagramZoom(2.0));
-    app.update(Message::DiagramPan(5.0, -3.0));
-    assert!(app.diagram_view.zoom.is_finite() && app.diagram_view.zoom > 0.0);
-    assert_ne!(app.diagram_view, before);
-    // Non-finite deltas are no-ops (single-writer guard).
-    let held = app.diagram_view;
-    app.update(Message::DiagramZoom(f32::NAN));
-    assert_eq!(app.diagram_view, held);
-}
-
-#[test]
-fn diagram_layer_toggle_flips_exactly_its_group() {
-    let mut app = test_app();
-    assert!(app.diagram_layers.coils);
-    app.update(Message::DiagramLayer(crate::diagram::DimLayer::Coils));
-    assert!(!app.diagram_layers.coils);
-    assert!(app.diagram_layers.lengths && app.diagram_layers.diameters);
-}
 ```
 (`test_app()` is the confirmed constructor at `ui_tests.rs:36`, used by the sibling `VisualMode::Spring3d` tests.)
 
@@ -1350,9 +1329,9 @@ fn diagram_layer_toggle_flips_exactly_its_group() {
 Run: `cargo test -p springmaker ui_tests::visual_toggle_round_trips_through_diagram_mode`
 Expected: FAIL — `VisualMode::Diagram` not found.
 
-- [ ] **Step 3: Extend `VisualMode`, `Message`, and `App` state**
+- [ ] **Step 3: Add the `VisualMode::Diagram` variant**
 
-`app.rs` — enum:
+`app.rs` — enum (the `Message` variants, `App` fields, defaults, and update arms already exist from Task 4; add ONLY the variant):
 ```rust
 pub enum VisualMode {
     #[default]
@@ -1361,54 +1340,8 @@ pub enum VisualMode {
     Diagram,
 }
 ```
-`app.rs` — `Message` (near `Zoom`/`Orbit`):
-```rust
-    /// 2D-diagram wheel-zoom delta (published by `DiagramCanvas::update`),
-    /// accumulated by the `DiagramZoom` arm via `diagram::zoom_step`.
-    DiagramZoom(f32),
-    /// 2D-diagram drag-pan delta (dx, dy) in px, accumulated via `diagram::pan_step`.
-    DiagramPan(f32, f32),
-    /// Toggle one 2D-diagram dimension layer.
-    DiagramLayer(crate::diagram::DimLayer),
-```
-`app.rs` — `App` fields (near `orbit`/`zoom`/`results_visual`):
-```rust
-    pub diagram_view: crate::diagram::DiagramView,
-    pub diagram_layers: crate::diagram::DimLayers,
-```
-`app.rs` — defaults (near `orbit: ... , zoom: 1.0`):
-```rust
-            diagram_view: crate::diagram::DiagramView::default(),
-            diagram_layers: crate::diagram::DimLayers::default(),
-```
 
-- [ ] **Step 4: Add the update arms (no recompute)**
-
-`app.rs`, next to the `Message::Zoom` arm:
-```rust
-            // Same non-recompute shape as `Zoom`/`Orbit`: `zoom_step`/`pan_step`
-            // are the single writers, finiteness-guarded, so the view stays valid
-            // by induction. Layer toggles are pure view state.
-            Message::DiagramZoom(delta) => {
-                self.diagram_view = crate::diagram::zoom_step(self.diagram_view, delta);
-                false
-            }
-            Message::DiagramPan(dx, dy) => {
-                self.diagram_view = crate::diagram::pan_step(self.diagram_view, dx, dy);
-                false
-            }
-            Message::DiagramLayer(layer) => {
-                let l = &mut self.diagram_layers;
-                match layer {
-                    crate::diagram::DimLayer::Lengths => l.lengths = !l.lengths,
-                    crate::diagram::DimLayer::Diameters => l.diameters = !l.diameters,
-                    crate::diagram::DimLayer::Coils => l.coils = !l.coils,
-                }
-                false
-            }
-```
-
-- [ ] **Step 5: Extend `visual_toggle` and `results_visual_element`; add the layer row**
+- [ ] **Step 4: Extend `visual_toggle` and `results_visual_element`; add the layer row**
 
 `widgets.rs` — `visual_toggle`:
 ```rust
@@ -1459,7 +1392,7 @@ pub(crate) fn diagram_layer_toggle(pal: &'static Palette, layers: crate::diagram
 ```
 **Implementer note (verified):** there is no existing `toggle_chip` helper. `segmented` (`widgets.rs:547`) is single-select, so it doesn't fit three independent on/off toggles. Build `diagram_layer_toggle` as a `row![]` of three `button`s (imports `button`, `row`, `SP_XS` already in `widgets.rs`), each styled via the existing `segmented_style` (`widgets.rs:506`) with the pressed/selected style when its layer is on and the unselected style when off — so the toggles visually match the segmented controls in both palettes. Each button's `on_press` is `Message::DiagramLayer(<layer>)`.
 
-- [ ] **Step 6: Wire the compression view**
+- [ ] **Step 5: Wire the compression view**
 
 `springmaker/src/compression/view.rs` — extend the `results_visual_element` call with the `diagram` closure, and render the layer row when in Diagram mode:
 ```rust
@@ -1486,27 +1419,55 @@ let controls = if app.results_visual == crate::app::VisualMode::Diagram {
 ```
 Match the exact column-assembly idiom already in `compression/view.rs` (it uses `column![...]` with the `visual_toggle` and `visual`); insert the optional `controls` between them following that file's spacing/`push` pattern.
 
-- [ ] **Step 7: Run tests to verify pass**
+- [ ] **Step 6: Run tests + fix the other families' compile**
 
-Run: `cargo test -p springmaker ui_tests` then `cargo test -p springmaker`
-Expected: PASS. The other four families' `results_visual_element` calls now fail to compile (missing 4th arg) — fix each minimally in this same step by passing a `diagram` closure that builds from their `scene_model` + a **temporary** empty `Vec::new()` dims, so the workspace compiles; real per-family dims land in Tasks 6/8/9/10. Example for each family `view.rs`:
+Run: `cargo test -p springmaker ui_tests` then `cargo build -p springmaker`. The other four families' `results_visual_element` calls now fail to compile (missing 4th arg) — fix each minimally by passing a `diagram` closure that builds from their `scene_model` + a **temporary** empty `Vec::new()` dims, so the workspace compiles; real per-family dims land in Tasks 6/8/9/10. Example for each family `view.rs`:
 ```rust
 || crate::diagram::DiagramInput::new(
     crate::<family>::scene_model::<family>_scene(&outcome.<design_expr>),
     Vec::new(), // dims added in the family's diagram task
 ),
 ```
+(For assembly, the scene builder takes the outcome directly — match its existing `assembly_scene(outcome)` call shape.)
+
+- [ ] **Step 7: Deferred polish — draw arrowheads (D1) and center dimension text (D2)**
+
+Now that the diagram is visible, consume the layout's `arrows` output (Task-4 review deferral D1) and fix the label anchor (D2). In `diagram/canvas.rs` `draw()`:
+
+Draw an arrowhead at each `LayoutedDim.arrows` entry — a constant-px V at the transformed anchor, pointing along the stored model-space direction mapped to screen (the affine flips y, so negate the direction's sin component). Add near the dimension-line drawing loop:
+```rust
+use std::f64::consts::PI;
+const ARROW_LEN: f32 = 7.0;   // screen px, constant regardless of zoom
+const ARROW_HALF: f64 = 0.42; // ~24° half-angle
+for (anchor, dir) in &d.arrows {
+    let tip = t.point(*anchor);
+    // Model→screen direction: uniform positive scale keeps the angle, the
+    // y-flip negates the sin component.
+    let screen_dir = (-dir.sin()).atan2(dir.cos());
+    for barb in [screen_dir + PI - ARROW_HALF, screen_dir + PI + ARROW_HALF] {
+        let end = iced::Point::new(
+            tip.x + ARROW_LEN * barb.cos() as f32,
+            tip.y + ARROW_LEN * barb.sin() as f32,
+        );
+        frame.stroke(&Path::line(tip, end), Stroke::default().with_color(self.dim).with_width(1.0));
+    }
+}
+```
+For D2, center the dimension text on its layout anchor instead of the default top-left. Set the `Text`'s horizontal + vertical alignment to centered — verify the exact iced 0.14 field/enum spelling against `plot/canvas.rs` (which draws chart labels via `fill_text`) and use whatever it uses (e.g. `align_x: iced::alignment::Horizontal::Center`, `align_y: iced::alignment::Vertical::Center`, or the `Text { horizontal_alignment, vertical_alignment, .. }` form for this iced version). Keep the constant `size: 12.0`.
+
+No unit test (draw code; no machine snapshot). Verify visually in the Step 8 smoke run: arrowheads sit at the dimension-line ends pointing outward toward the extension lines, and labels are centered on their anchors.
 
 - [ ] **Step 8: Manual smoke + commit**
 
-Build and run the app (`cargo run -p springmaker`), switch a solved compression design to the **2D** segment, confirm the silhouette draws, layer toggles show/hide callouts, and scroll/drag zoom/pan. Then:
+Build and run the app (`cargo run -p springmaker`), switch a solved compression design to the **2D** segment, confirm the silhouette draws with the crossing double-strand look, dimension lines carry arrowheads and centered labels, layer toggles show/hide callout groups, and scroll/drag zoom/pan. Then:
 ```bash
 cargo fmt -p springmaker && cargo clippy -p springmaker --all-targets -- -D warnings
 cargo clippy -p springmaker --all-targets --no-default-features -- -D warnings
-cargo doc -p springmaker --no-deps -D warnings && typos
-git add springmaker/src/app.rs springmaker/src/widgets.rs springmaker/src/*/view.rs springmaker/src/ui_tests.rs
+RUSTDOCFLAGS="-D warnings" cargo doc -p springmaker --no-deps && typos
+git add springmaker/src/app.rs springmaker/src/widgets.rs springmaker/src/diagram/canvas.rs springmaker/src/*/view.rs springmaker/src/ui_tests.rs
 git commit -m "feat(diagram): wire VisualMode::Diagram end-to-end for compression"
 ```
+(commit trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`)
 
 ---
 
