@@ -2974,9 +2974,34 @@ fn diagram_zoom_and_pan_do_not_recompute_and_stay_finite() {
 
 #[test]
 fn diagram_layer_toggle_flips_exactly_its_group() {
-    let mut app = test_app();
-    assert!(app.diagram_layers.coils);
-    app.update(Message::DiagramLayer(crate::diagram::DimLayer::Coils));
-    assert!(!app.diagram_layers.coils);
-    assert!(app.diagram_layers.lengths && app.diagram_layers.diameters);
+    use crate::diagram::{DimLayer, DimLayers};
+
+    fn triple(l: DimLayers) -> (bool, bool, bool) {
+        (l.lengths, l.diameters, l.coils)
+    }
+
+    // Each layer must flip ONLY its own field and leave the other two
+    // untouched — pins every arm of the `DiagramLayer` match against a
+    // copy-paste bug (the single-`Coils` version couldn't catch a wrong
+    // `Lengths`/`Diameters` arm). Toggling twice must restore the default.
+    for (layer, expected) in [
+        (DimLayer::Lengths, (false, true, true)),
+        (DimLayer::Diameters, (true, false, true)),
+        (DimLayer::Coils, (true, true, false)),
+    ] {
+        let mut app = test_app();
+        assert_eq!(triple(app.diagram_layers), (true, true, true));
+        app.update(Message::DiagramLayer(layer));
+        assert_eq!(
+            triple(app.diagram_layers),
+            expected,
+            "toggling {layer:?} must flip only its own field"
+        );
+        app.update(Message::DiagramLayer(layer));
+        assert_eq!(
+            triple(app.diagram_layers),
+            (true, true, true),
+            "toggling {layer:?} again must restore the default"
+        );
+    }
 }

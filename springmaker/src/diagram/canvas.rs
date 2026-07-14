@@ -60,7 +60,7 @@ pub struct DiagramCanvas {
     laid_out: Vec<LayoutedDim>,
     view: DiagramView,
     wire: Color,
-    ink: Color,
+    dim: Color,
 }
 
 #[derive(Default)]
@@ -149,7 +149,7 @@ impl canvas::Program<Message> for DiagramCanvas {
         for d in &self.laid_out {
             for (a, b) in &d.lines {
                 let seg = Path::line(t.point(*a), t.point(*b));
-                frame.stroke(&seg, Stroke::default().with_color(self.ink).with_width(1.0));
+                frame.stroke(&seg, Stroke::default().with_color(self.dim).with_width(1.0));
             }
             if let Some((vertex, radius, start_deg, sweep_deg)) = d.arc {
                 let arc = Path::new(|bld| {
@@ -164,14 +164,14 @@ impl canvas::Program<Message> for DiagramCanvas {
                         }
                     }
                 });
-                frame.stroke(&arc, Stroke::default().with_color(self.ink).with_width(1.0));
+                frame.stroke(&arc, Stroke::default().with_color(self.dim).with_width(1.0));
             }
             let (anchor, label) = &d.text;
             let (tx, ty) = t.apply(*anchor);
             frame.fill_text(Text {
                 content: label.clone(),
                 position: Point::new(tx, ty),
-                color: self.ink,
+                color: self.dim,
                 size: 12.0.into(), // constant px — the CAD text-size exception
                 ..Text::default()
             });
@@ -216,8 +216,8 @@ pub fn diagram_element(
                 projected,
                 laid_out,
                 view,
-                wire: pal.ink,  // primary stroke token (Palette in app.rs)
-                ink: pal.muted, // muted dimension-line + text token
+                wire: pal.ink,  // primary wire-stroke token (Palette in app.rs)
+                dim: pal.muted, // muted dimension-line + text token
             })
             .width(Length::Fill)
             .height(Length::Fixed(crate::plot::CHART_H as f32))
@@ -250,18 +250,61 @@ mod tests {
 
     #[test]
     fn fit_transform_centers_and_scales_bounds_into_the_canvas() {
-        // A 60×22 model box fit into a 600×300 canvas (with margin) maps the
-        // box center to the canvas center and keeps aspect ratio (uniform scale).
+        // A 60×22 model box fit into a 600×300 canvas (with margin). ASYMMETRIC
+        // radial bounds (0..22, so cy = 11 ≠ 0) — a symmetric box would make the
+        // `cy * scale` term in `offset.y` vanish and could not catch a dropped
+        // y-flip or a wrong `offset.y` sign.
         let b = crate::diagram::Bounds {
             axial_min: 0.0,
             axial_max: 60.0,
-            radial_min: -11.0,
-            radial_max: 11.0,
+            radial_min: 0.0,
+            radial_max: 22.0,
         };
         let t = fit_transform(&b, 600.0, 300.0, DiagramView::default());
-        let center_model = (30.0, 0.0);
-        let (cx, cy) = t.apply(center_model);
-        assert!((cx - 300.0).abs() < 1.0 && (cy - 150.0).abs() < 1.0);
+
+        // The model center (cx=30, cy=11) maps to the canvas center.
+        let (mx, my) = t.apply((30.0, 11.0));
+        assert!(
+            (mx - 300.0).abs() < 1.0 && (my - 150.0).abs() < 1.0,
+            "center mapped to ({mx}, {my}), expected ~(300, 150)"
+        );
         assert!(t.scale > 0.0);
+
+        // The top-right envelope corner (60, 22) pins three things at once:
+        // axial 60 > cx 30 ⇒ x RIGHT of center (> 300); radial 22 > cy 11 AND
+        // radial grows DOWNWARD on screen ⇒ the corner sits HIGHER = SMALLER y
+        // (< 150). Off-center on both axes, so it survives even if only one of
+        // scale/flip/offset were wrong.
+        let (crx, cry) = t.apply((60.0, 22.0));
+        assert!(
+            crx > 300.0,
+            "top-right corner x {crx} must be right of center"
+        );
+        assert!(cry < 150.0, "top-right corner y {cry} must be above center");
+        let dist1 = ((crx - 300.0).powi(2) + (cry - 150.0).powi(2)).sqrt();
+
+        // Zoom pivots on the center: at zoom 2 the center still maps to the
+        // canvas center, but the same corner sits FURTHER from it.
+        let tz = fit_transform(
+            &b,
+            600.0,
+            300.0,
+            DiagramView {
+                zoom: 2.0,
+                pan: iced::Vector::ZERO,
+            },
+        );
+        let (zmx, zmy) = tz.apply((30.0, 11.0));
+        assert!(
+            (zmx - 300.0).abs() < 1.0 && (zmy - 150.0).abs() < 1.0,
+            "zoom must pivot on center; got ({zmx}, {zmy})"
+        );
+        assert!(tz.scale > 0.0);
+        let (zcx, zcy) = tz.apply((60.0, 22.0));
+        let dist2 = ((zcx - 300.0).powi(2) + (zcy - 150.0).powi(2)).sqrt();
+        assert!(
+            dist2 > dist1,
+            "zoomed corner distance {dist2} must exceed unzoomed {dist1}"
+        );
     }
 }
