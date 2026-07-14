@@ -108,6 +108,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::assembly::scene_model::assembly_scene(outcome),
                 || crate::viz::sdf::assembly_sdf(outcome),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::assembly::scene_model::assembly_scene(outcome),
+                        Vec::new(), // dims added in the assembly diagram task
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

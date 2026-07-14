@@ -1684,7 +1684,8 @@ fn capped_body_shows_placeholder_even_when_shader_is_available() {
 /// the SDF scene would allocate geometry `spring3d_element` immediately
 /// discards. The `sdf3d` closure here panics if called; reaching the end
 /// without panicking proves it was skipped (and the panicking `chart` proves
-/// the Chart arm was not taken either — only `wire3d` runs).
+/// the Chart arm was not taken either — only `wire3d` runs). The panicking
+/// `diagram` closure extends the same pin to the Diagram arm added in Task 5.
 #[test]
 fn no_adapter_skips_building_the_sdf_scene() {
     let mut app = test_app();
@@ -1699,6 +1700,7 @@ fn no_adapter_skips_building_the_sdf_scene() {
             polylines: Vec::new(),
         },
         || panic!("sdf3d must not be built when shader_available is false"),
+        || panic!("diagram must not be built on the Spring3d path"),
     );
 }
 
@@ -3004,4 +3006,19 @@ fn diagram_layer_toggle_flips_exactly_its_group() {
             "toggling {layer:?} again must restore the default"
         );
     }
+}
+
+// --------------------------------------------------------------------------
+// 2D diagram — VisualMode::Diagram wiring (Task 5). The Diagram*/diagram_*
+// message and state round trips are pinned above (Task 4); this pins the
+// third `results_visual` slot end to end.
+// --------------------------------------------------------------------------
+
+#[test]
+fn visual_toggle_round_trips_through_diagram_mode() {
+    let mut app = test_app();
+    app.update(Message::Visual(VisualMode::Diagram));
+    assert_eq!(app.results_visual, VisualMode::Diagram);
+    app.update(Message::Visual(VisualMode::Chart));
+    assert_eq!(app.results_visual, VisualMode::Chart);
 }

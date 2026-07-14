@@ -118,6 +118,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::conical::scene_model::conical_scene(&outcome.design),
                 || crate::viz::sdf::conical_sdf(&outcome.design),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::conical::scene_model::conical_scene(&outcome.design),
+                        Vec::new(), // dims added in the conical diagram task
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

@@ -574,20 +574,25 @@ pub(crate) fn visual_toggle(
 ) -> Element<'static, Message> {
     segmented(
         pal,
-        &[("Chart", VisualMode::Chart), ("3D", VisualMode::Spring3d)],
+        &[
+            ("Chart", VisualMode::Chart),
+            ("3D", VisualMode::Spring3d),
+            ("2D", VisualMode::Diagram),
+        ],
         selected,
         Message::Visual,
     )
 }
 
-/// The results panel's shared visual slot: chart or orbitable 3D scene,
-/// selected by `app.results_visual` — identical dispatch in every family
-/// (compression, conical, extension, torsion, assembly), collapsing five
-/// byte-identical `match` arms into one call (simplifier F1). `chart`/
-/// `wire3d`/`sdf3d` are `FnOnce` so only the geometry actually needed is
-/// BUILT per render — laziness preserved: an eagerly-built chart or scene
-/// would be thrown away every frame the OTHER visual is active (orbit drags
-/// re-render every frame while the shaded/wireframe path is showing).
+/// The results panel's shared visual slot: chart, orbitable 3D scene, or 2D
+/// engineering diagram, selected by `app.results_visual` — identical dispatch
+/// in every family (compression, conical, extension, torsion, assembly),
+/// collapsing five byte-identical `match` arms into one call (simplifier F1).
+/// `chart`/`wire3d`/`sdf3d`/`diagram` are `FnOnce` so only the geometry
+/// actually needed is BUILT per render — laziness preserved: an eagerly-built
+/// chart or scene would be thrown away every frame a DIFFERENT visual is
+/// active (orbit drags re-render every frame while the shaded/wireframe path
+/// is showing).
 ///
 /// The wireframe and SDF scenes are separate closures because `sdf3d` is
 /// invoked ONLY when a GPU adapter is present (`app.shader_available`): on a
@@ -600,6 +605,7 @@ pub(crate) fn results_visual_element<'a>(
     chart: impl FnOnce() -> Element<'a, Message>,
     wire3d: impl FnOnce() -> crate::viz::SceneData,
     sdf3d: impl FnOnce() -> crate::viz::sdf::SdfScene,
+    diagram: impl FnOnce() -> crate::diagram::DiagramInput,
 ) -> Element<'a, Message> {
     match app.results_visual {
         VisualMode::Chart => chart(),
@@ -619,7 +625,35 @@ pub(crate) fn results_visual_element<'a>(
                 app.shader_available,
             )
         }
+        VisualMode::Diagram => {
+            crate::diagram::diagram_element(pal, diagram(), app.diagram_view, app.diagram_layers)
+        }
     }
+}
+
+/// The 2D-diagram layer toggles (lengths / diameters / coils). Rendered above
+/// the canvas in Diagram mode only. Each button flips exactly its own group —
+/// unlike `segmented`'s single-select `on_press` omission on the selected
+/// option, every chip here always carries `on_press` because toggling the
+/// already-on layer off is the whole point of a multi-select toggle group.
+pub(crate) fn diagram_layer_toggle(
+    pal: &'static Palette,
+    layers: crate::diagram::DimLayers,
+) -> Element<'static, Message> {
+    use crate::diagram::DimLayer;
+    let chip = |label: &'static str, on: bool, layer: DimLayer| {
+        button(text(label).size(SZ_LABEL))
+            .style(segmented_style(pal, on))
+            .padding([SP_XS, SP_MD])
+            .on_press(Message::DiagramLayer(layer))
+    };
+    row![
+        chip("Lengths", layers.lengths, DimLayer::Lengths),
+        chip("Diameters", layers.diameters, DimLayer::Diameters),
+        chip("Coils", layers.coils, DimLayer::Coils),
+    ]
+    .spacing(SP_XS)
+    .into()
 }
 
 // ── Labeled input ────────────────────────────────────────────────────────────

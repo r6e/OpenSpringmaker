@@ -315,6 +315,12 @@ pub(crate) fn results_panel(app: &App) -> Element<'_, Message> {
                 },
                 || crate::torsion::scene_model::torsion_scene(&outcome.design),
                 || crate::viz::sdf::torsion_sdf(&outcome.design),
+                || {
+                    crate::diagram::DiagramInput::new(
+                        crate::torsion::scene_model::torsion_scene(&outcome.design),
+                        Vec::new(), // dims added in the torsion diagram task
+                    )
+                },
             );
             let toggle = visual_toggle(pal, app.results_visual);
 

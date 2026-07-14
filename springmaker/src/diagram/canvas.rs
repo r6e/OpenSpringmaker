@@ -5,12 +5,16 @@
 //! `DiagramZoom`; drag publishes `DiagramPan` — deltas, never absolute values
 //! read back from `self` (the `OrbitCanvas` stale-base rule).
 
+use std::f64::consts::PI;
+
 use crate::app::{Message, Palette};
 use crate::diagram::{
     layout, project_silhouette, Bounds, DiagramView, DimLayers, LayoutedDim, Projected, P2,
 };
+use iced::alignment::Vertical;
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Event, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::text::Alignment as TextAlignment;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, Vector};
 
 /// A uniform-scale affine from model mm `(axial, radial)` to screen px.
@@ -143,9 +147,9 @@ impl canvas::Program<Message> for DiagramCanvas {
             );
         }
 
-        // Dimensions: lines, arcs, constant-px text. (`d.arrows` — arrowhead
-        // anchor + direction — is laid out by `layout` but not yet drawn
-        // here; the line + text already carry the callout unambiguously.)
+        // Dimensions: lines, arcs, arrowheads, constant-px centered text.
+        const ARROW_LEN: f32 = 7.0; // screen px, constant regardless of zoom
+        const ARROW_HALF: f64 = 0.42; // ~24° half-angle
         for d in &self.laid_out {
             for (a, b) in &d.lines {
                 let seg = Path::line(t.point(*a), t.point(*b));
@@ -166,6 +170,22 @@ impl canvas::Program<Message> for DiagramCanvas {
                 });
                 frame.stroke(&arc, Stroke::default().with_color(self.dim).with_width(1.0));
             }
+            for (anchor, dir) in &d.arrows {
+                let tip = t.point(*anchor);
+                // Model→screen direction: uniform positive scale keeps the
+                // angle, the y-flip negates the sin component.
+                let screen_dir = (-dir.sin()).atan2(dir.cos());
+                for barb in [screen_dir + PI - ARROW_HALF, screen_dir + PI + ARROW_HALF] {
+                    let end = Point::new(
+                        tip.x + ARROW_LEN * barb.cos() as f32,
+                        tip.y + ARROW_LEN * barb.sin() as f32,
+                    );
+                    frame.stroke(
+                        &Path::line(tip, end),
+                        Stroke::default().with_color(self.dim).with_width(1.0),
+                    );
+                }
+            }
             let (anchor, label) = &d.text;
             let (tx, ty) = t.apply(*anchor);
             frame.fill_text(Text {
@@ -173,6 +193,8 @@ impl canvas::Program<Message> for DiagramCanvas {
                 position: Point::new(tx, ty),
                 color: self.dim,
                 size: 12.0.into(), // constant px — the CAD text-size exception
+                align_x: TextAlignment::Center,
+                align_y: Vertical::Center,
                 ..Text::default()
             });
         }

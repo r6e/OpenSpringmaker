@@ -271,6 +271,7 @@ pub enum VisualMode {
     #[default]
     Chart,
     Spring3d,
+    Diagram,
 }
 
 /// All UI events.
