@@ -10,16 +10,7 @@ pub fn dimensions(design: &AssemblyDesign) -> Vec<Dimension> {
     let ls = design.solid_length.millimeters();
     let mut dims = vec![
         // Overall free length (reference; series includes schematic gaps).
-        Dimension {
-            kind: DimKind::Linear {
-                from: (0.0, 0.0),
-                to: (l0, 0.0),
-            },
-            layer: DimLayer::Lengths,
-            value: l0,
-            label: format!("L\u{2080} {}", common::mm(l0)),
-            at: (l0 / 2.0, 0.0),
-        },
+        common::free_length(l0),
         Dimension {
             kind: DimKind::Linear {
                 from: (0.0, 0.0),
