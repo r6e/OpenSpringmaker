@@ -153,7 +153,7 @@ pub(crate) fn unit_length_label(us: UnitSystem) -> &'static str {
 /// Label for the optional inactive-coil override input, with the end-type default
 /// (Shigley Table 10-1 count) surfaced inline. The `text_input` placeholder is
 /// hard-coded and not presenter-reachable (ADR 0008), so the default hint lives in
-/// the label instead. Falls back to a bare label when the end type is unparseable.
+/// the label instead. Falls back to a bare label when the end type cannot be parsed.
 pub(crate) fn inactive_coils_label(end_type: &str) -> String {
     match springcore::parse_end_type(end_type) {
         Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
