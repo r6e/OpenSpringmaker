@@ -1,0 +1,17 @@
+material = "Chrome-Vanadium"
+unit_system = "Metric"
+
+[design]
+family = "Torsion"
+type = "PowerUser"
+wire_dia_mm = 2.5
+mean_dia_mm = 20.0
+body_coils = 5.25
+leg1_mm = 45.0
+leg2_mm = 40.0
+friction_model = "ShigleyFriction"
+moments_nmm = [
+    150.0,
+    350.0,
+    550.0,
+]

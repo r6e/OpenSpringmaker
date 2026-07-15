@@ -1,0 +1,17 @@
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Compression"
+type = "PowerUser"
+end_type = "squared_ground"
+fixity = "fixed_fixed"
+wire_dia_mm = 3.0
+mean_dia_mm = 21.0
+active = 8.0
+free_length_mm = 70.0
+loads_n = [
+    50.0,
+    150.0,
+    250.0,
+]

@@ -1,0 +1,19 @@
+material = "Stainless 302"
+unit_system = "Metric"
+
+[design]
+family = "Extension"
+type = "PowerUser"
+wire_dia_mm = 2.0
+mean_dia_mm = 16.0
+active = 10.0
+free_length_mm = 55.0
+initial_tension_n = 8.0
+loads_n = [
+    15.0,
+    35.0,
+    55.0,
+]
+
+[design.hooks]
+mode = "Default"
