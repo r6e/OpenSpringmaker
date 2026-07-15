@@ -179,6 +179,17 @@ pub fn solve_min_weight(
     }
 
     let inactive = req.end_type.resolve_inactive(req.inactive_coils);
+    // Validate the resolved inactive count at entry, parity with the guards above. The
+    // scenario path checks a persisted spec in min_weight_request_from_spec, but a direct
+    // MinWeightRequest caller bypasses that. Without this, a non-finite override poisons
+    // solid_length/buckling and every candidate is filtered by the loop below, so the
+    // function returns Infeasible — masking invalid input as a geometry failure — instead
+    // of InconsistentInputs.
+    if !(inactive.is_finite() && inactive >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "inactive coils must be a finite number ≥ 0".into(),
+        ));
+    }
 
     let mut best: Option<MinWeightSolution> = None;
 
@@ -219,22 +230,15 @@ pub fn solve_min_weight(
         ) {
             continue;
         }
-        // `?` is safe here: wire is finite-positive (candidate validation), mean ≥ c_min·d > d
-        // (c_min ≥ floor > 1), active ≥ 1, free_length = solid + positive travel > solid, and
-        // d is in the material range (best_mean_dia's min_tensile_strength(d) already
-        // succeeded) — so none of THOSE guards can trip inside solve_forward. `inactive`,
-        // however, is NOT pre-filtered above: it is validated downstream inside
-        // solve_forward itself (finite, ≥ 0), reached via this `?`. A bad `inactive`
-        // (e.g. a negative or non-finite override surviving a persisted-spec load) is
-        // therefore not caught here — it correctly propagates as solve_forward's
-        // InconsistentInputs error rather than being silently accepted. Do not add a
-        // redundant `inactive` guard here: deleting it would still yield the same
-        // InconsistentInputs from solve_forward's `?`, making it an un-killable mutation
-        // survivor. (Unlike the extension optimizer, which uses skip-on-Err because its
-        // fixed-hook C2 ≤ 1 case is a live per-candidate failure; compression has no such
-        // per-candidate error mode among the guards above, so adding a skip branch for
-        // those would be unreachable dead code. If a future per-candidate error mode is
-        // added among them, switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
+        // `?` is safe here: every solve_forward guard is pre-satisfied — wire is
+        // finite-positive (candidate validation), mean ≥ c_min·d > d (c_min ≥ floor > 1),
+        // active ≥ 1, free_length = solid + positive travel > solid, d is in the material
+        // range (best_mean_dia's min_tensile_strength(d) already succeeded), and inactive is
+        // finite/≥ 0 (entry guard above). So this never aborts a valid solve. (Unlike the
+        // extension optimizer, which uses skip-on-Err because its fixed-hook C2 ≤ 1 case is a
+        // live per-candidate failure; compression has no such per-candidate error mode, so a
+        // skip branch would be unreachable dead code. If a future per-candidate error mode is
+        // added, switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
         let design = solve_forward(
             material,
             req.end_type,
@@ -1109,6 +1113,27 @@ mod tests {
         let mut req = base_request(vec![2.0]);
         req.max_outer_dia = Some(Length::from_millimeters(0.0));
         assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_inactive_rejected() {
+        // A non-finite inactive override poisons solid_length/buckling for every
+        // candidate, so WITHOUT the entry guard the loop filters them all and returns
+        // Infeasible — masking bad input as a geometry failure. `+inf` (not NaN) is the
+        // value that also kills the `&&`→`||` mutant on the guard: `inf.is_finite()` is
+        // false but `inf >= 0` is true.
+        let mut req = base_request(vec![2.0]);
+        req.inactive_coils = Some(f64::INFINITY);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn zero_inactive_is_accepted() {
+        // Pins the `>= 0` boundary so a `>` mutant on the inactive guard dies: a zero
+        // inactive count is physically valid and must solve, not be rejected.
+        let mut req = base_request(vec![2.0]);
+        req.inactive_coils = Some(0.0);
+        assert_accepted(&req);
     }
 
     /// Raising the inactive count never lowers the minimum achievable mass (each dead
