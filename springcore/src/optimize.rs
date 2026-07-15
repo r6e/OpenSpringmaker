@@ -1117,11 +1117,10 @@ mod tests {
 
     #[test]
     fn non_finite_inactive_rejected() {
-        // A non-finite inactive override poisons solid_length/buckling for every
-        // candidate, so WITHOUT the entry guard the loop filters them all and returns
-        // Infeasible — masking bad input as a geometry failure. `+inf` (not NaN) is the
-        // value that also kills the `&&`→`||` mutant on the guard: `inf.is_finite()` is
-        // false but `inf >= 0` is true.
+        // See the entry guard in `solve_min_weight` for why a non-finite inactive is
+        // masked as Infeasible without it. `+inf` (not NaN) is the value that kills the
+        // guard's `&&`→`||` mutant: `inf.is_finite()` is false but `inf >= 0` is true, so
+        // the operators disagree — NaN makes both operands false, distinguishing nothing.
         let mut req = base_request(vec![2.0]);
         req.inactive_coils = Some(f64::INFINITY);
         assert_inconsistent(&req);

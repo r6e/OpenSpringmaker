@@ -454,8 +454,9 @@ mod tests {
         );
     }
 
-    /// A non-default inactive count adds coils to total and grows free/solid by d
-    /// each, while rate is unchanged (rate depends only on active).
+    /// A non-default inactive count adds coils to total and grows free/solid by d each,
+    /// while rate and natural frequency stay bit-identical (both depend only on active),
+    /// as pinned by `assert_inactive_override_pins`.
     #[test]
     fn power_user_honors_inactive_override() {
         let base = PowerUser {
@@ -484,7 +485,7 @@ mod tests {
                 CurvatureCorrection::Bergstrasser,
             )
             .unwrap();
-        assert_inactive_override_pins(&d0, &d1, Length::from_millimeters(2.0));
+        assert_inactive_override_pins(&d0, &d1, base.wire_dia);
     }
 
     /// Permanent regression coverage: `TwoLoad`, `RateBased`, and `Dimensional` route
