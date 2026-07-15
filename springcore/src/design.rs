@@ -75,6 +75,7 @@ pub fn solve_forward(
     wire_dia: Length,
     mean_dia: Length,
     active: f64,
+    inactive: f64,
     free_length: Length,
     loads: &[Force],
     correction: CurvatureCorrection,
@@ -110,6 +111,15 @@ pub fn solve_forward(
             "active coils must be a positive finite number".into(),
         ));
     }
+    // Inactive (dead) coil count must be finite and non-negative. The persistence
+    // path (`solve_with_material`) builds scenario structs straight from a loaded
+    // TOML and bypasses the GUI form's parse guard, so a negative `inactive_coils`
+    // would otherwise yield a silently-wrong total/solid geometry here.
+    if !(inactive.is_finite() && inactive >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "inactive coils must be a finite number ≥ 0".into(),
+        ));
+    }
     // Free length must be finite and positive; a non-finite L0 propagates into pitch
     // and buckling and the per-load lengths.
     if !(free_length.meters().is_finite() && free_length.meters() > 0.0) {
@@ -137,8 +147,8 @@ pub fn solve_forward(
 
     let index = spring_index(mean_dia, wire_dia);
     let rate = spring_rate(material.shear_modulus, wire_dia, mean_dia, active);
-    let total_coils = end_type.total_coils(active);
-    let solid_length = end_type.solid_length(wire_dia, active);
+    let total_coils = end_type.total_coils(active, inactive);
+    let solid_length = end_type.solid_length(wire_dia, active, inactive);
     // Free length cannot be below solid length — the coils physically cannot
     // compress past solid. Beyond being impossible geometry, it makes the
     // solid force F = k·(L0 − Ls) negative, which yields negative stress and a
@@ -152,7 +162,7 @@ pub fn solve_forward(
             min_free_length_m: solid_length.meters(),
         });
     }
-    let pitch = end_type.pitch_from_free_length(wire_dia, active, free_length);
+    let pitch = end_type.pitch_from_free_length(wire_dia, active, free_length, inactive);
     let nat_freq = natural_frequency(
         wire_dia,
         mean_dia,
@@ -417,6 +427,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -501,6 +512,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Wahl,
@@ -731,6 +743,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(6.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -757,6 +770,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(2.0), // mean == wire → rejected
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -779,6 +793,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             0.0, // active = 0 → rejected
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -801,6 +816,7 @@ mod tests {
             Length::from_millimeters(0.0), // wire = 0 → rejected
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -823,6 +839,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(f64::INFINITY), // mean = +Inf → rejected
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -844,6 +861,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(0.0), // free length = 0 → rejected
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -865,6 +883,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(f64::INFINITY), // free length = +Inf → rejected
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -886,6 +905,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(f64::NAN)], // NaN load → rejected
             crate::CurvatureCorrection::Bergstrasser,
@@ -909,6 +929,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(20.0), // L0 = 20mm < Ls = 24mm → rejected
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -942,6 +963,7 @@ mod tests {
             Length::from_millimeters(10.0), // out of range for music wire
             Length::from_millimeters(80.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(50.0), // < solid (120mm) — also invalid
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -965,6 +987,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(24.0), // L0 == Ls = d(Na+2) = 24mm
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -985,6 +1008,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(-5.0)], // negative load → rejected
             crate::CurvatureCorrection::Bergstrasser,
@@ -1007,6 +1031,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(0.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1029,6 +1054,7 @@ mod tests {
                 Length::from_millimeters(2.0),
                 Length::from_millimeters(20.0),
                 10.0,
+                EndType::SquaredGround.end_coils(),
                 Length::from_millimeters(60.0),
                 &[Force::from_newtons(30.0)],
                 corr,
@@ -1060,6 +1086,7 @@ mod tests {
             Length::from_millimeters(5.0),
             Length::from_millimeters(3.0), // mean < wire → rejected
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1083,6 +1110,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(2.001), // mean just above wire → accepted
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(1.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1104,6 +1132,7 @@ mod tests {
             Length::from_millimeters(1.0),
             Length::from_millimeters(8.0),
             6.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(5.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1126,6 +1155,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(1e200), // huge but finite — overflows D³ → rate=0
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1156,6 +1186,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_meters(100.0),
             7.9e-314,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(4.0), // == 2d ⇒ pitch = 0, L0 == Ls
             &[],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1185,6 +1216,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_meters(1e10),
             1e-150,
+            EndType::SquaredGround.end_coils(),
             Length::from_meters(3e158),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1196,6 +1228,68 @@ mod tests {
                     if m == "solve produced a non-finite result (inputs exceed the representable range)"
             ),
             "expected output-guard error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn negative_inactive_is_rejected() {
+        let err = solve_forward(
+            &crate::test_support::music_wire(),
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            -1.0, // inactive
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        );
+        assert!(matches!(err, Err(SpringError::InconsistentInputs(m)) if m.contains("inactive")));
+    }
+
+    /// inactive == 0.0 must be ACCEPTED — pins the `>= 0.0` (not `> 0.0`) boundary.
+    /// SquaredGround, d=2mm, Na=10, inactive=0 (not the end-type default of 2):
+    /// Nt = Na + Ni = 10 + 0 = 10; Ls = d*Nt (ground) = 2*10 = 20 mm.
+    #[test]
+    fn solve_forward_accepts_zero_inactive() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            0.0, // inactive = 0 → accepted, not the SquaredGround default of 2
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_relative_eq!(design.total_coils, 10.0, max_relative = 1e-12);
+        assert_relative_eq!(design.solid_length.millimeters(), 20.0, max_relative = 1e-9);
+    }
+
+    /// A non-finite inactive count must be rejected with the inactive-specific message.
+    #[test]
+    fn solve_forward_rejects_non_finite_inactive() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            f64::INFINITY, // inactive = +Inf → rejected
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&result, Err(SpringError::InconsistentInputs(m)) if m.contains("inactive")),
+            "non-finite inactive must be rejected with the inactive-specific message, got {result:?}"
         );
     }
 }

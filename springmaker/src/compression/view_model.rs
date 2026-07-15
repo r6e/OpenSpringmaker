@@ -11,8 +11,9 @@ use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_rate_label,
-    unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    inactive_coils_label, overstress_emphasis, resolved_material, unit_force_label,
+    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
+    LoadTable, ResultRow, StatusLine,
 };
 use springcore::{BindingConstraint, Material, SpringDesign, UnitSystem};
 
@@ -258,6 +259,8 @@ pub fn inputs_view(app: &App) -> InputsView {
     let force = unit_force_label(us);
     let rate = unit_rate_label(us);
 
+    let inactive_label = inactive_coils_label(&f.end_type);
+
     if f.scenario == ScenarioKind::MinWeight {
         return InputsView {
             primary: vec![
@@ -274,6 +277,7 @@ pub fn inputs_view(app: &App) -> InputsView {
                     Field::CandidateDiameters,
                 ),
                 FieldDescriptor::new("Clash allowance (fraction)", Field::ClashAllowance),
+                FieldDescriptor::new(inactive_label.clone(), Field::Inactive),
             ],
             fatigue: Vec::new(),
         };
@@ -333,6 +337,7 @@ pub fn inputs_view(app: &App) -> InputsView {
         }
         ScenarioKind::MinWeight => unreachable!("MinWeight handled by the early return above"),
     }
+    primary.push(FieldDescriptor::new(inactive_label, Field::Inactive));
 
     let fatigue = vec![
         FieldDescriptor::new(format!("Min cycle force ({force})"), Field::FatigueMin),
@@ -697,6 +702,7 @@ mod tests {
                 Field::MaxOuterDia,
                 Field::CandidateDiameters,
                 Field::ClashAllowance,
+                Field::Inactive,
             ]
         );
     }
@@ -712,12 +718,32 @@ mod tests {
                 Field::Rate,
                 Field::FreeLength,
                 Field::Loads,
+                Field::Inactive,
             ]
         );
         assert_eq!(
             fields(&v.fatigue),
             vec![Field::FatigueMin, Field::FatigueMax]
         );
+    }
+
+    #[test]
+    fn inputs_view_includes_inactive_with_end_type_default_hint() {
+        // rate_based_metric() is already end_type "squared_ground" (default inactive = 2);
+        // override the scenario to PowerUser to match the brief's fixture intent.
+        let form = FormState {
+            scenario: ScenarioKind::PowerUser,
+            ..rate_based_metric()
+        };
+        let app = app_with(form);
+        let inputs = inputs_view(&app);
+        let fd = inputs
+            .primary
+            .iter()
+            .find(|f| matches!(f.field, Field::Inactive))
+            .expect("inactive descriptor present");
+        assert!(fd.label.contains("Inactive coils"));
+        assert!(fd.label.contains("default 2"), "label was {:?}", fd.label);
     }
 
     #[test]

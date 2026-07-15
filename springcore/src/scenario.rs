@@ -23,6 +23,7 @@ pub struct PowerUser {
     pub wire_dia: Length,
     pub mean_dia: Length,
     pub active: f64,
+    pub inactive_coils: Option<f64>,
     pub free_length: Length,
     pub loads: Vec<Force>,
 }
@@ -36,6 +37,7 @@ impl Scenario for PowerUser {
             self.wire_dia,
             self.mean_dia,
             self.active,
+            self.end_type.resolve_inactive(self.inactive_coils),
             self.free_length,
             &self.loads,
             correction,
@@ -52,6 +54,7 @@ pub struct TwoLoad {
     pub mean_dia: Length,
     pub point1: (Force, Length),
     pub point2: (Force, Length),
+    pub inactive_coils: Option<f64>,
 }
 
 impl Scenario for TwoLoad {
@@ -90,6 +93,7 @@ impl Scenario for TwoLoad {
             self.wire_dia,
             self.mean_dia,
             active,
+            self.end_type.resolve_inactive(self.inactive_coils),
             free_length,
             &[f1, f2],
             correction,
@@ -105,6 +109,7 @@ pub struct RateBased {
     pub wire_dia: Length,
     pub mean_dia: Length,
     pub rate: SpringRate,
+    pub inactive_coils: Option<f64>,
     pub free_length: Length,
     pub loads: Vec<Force>,
 }
@@ -132,6 +137,7 @@ impl Scenario for RateBased {
             self.wire_dia,
             self.mean_dia,
             active,
+            self.end_type.resolve_inactive(self.inactive_coils),
             self.free_length,
             &self.loads,
             correction,
@@ -147,6 +153,7 @@ pub struct Dimensional {
     pub wire_dia: Length,
     pub outer_dia: Length,
     pub active: f64,
+    pub inactive_coils: Option<f64>,
     pub free_length: Length,
     pub loads: Vec<Force>,
 }
@@ -168,6 +175,7 @@ impl Scenario for Dimensional {
             self.wire_dia,
             mean,
             self.active,
+            self.end_type.resolve_inactive(self.inactive_coils),
             self.free_length,
             &self.loads,
             correction,
@@ -190,6 +198,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -212,6 +221,7 @@ mod tests {
             mean_dia: Length::from_millimeters(20.0),
             point1: (Force::from_newtons(10.0), Length::from_millimeters(55.0)),
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
+            inactive_coils: None,
         };
         let d = s
             .solve(
@@ -234,6 +244,7 @@ mod tests {
             mean_dia: Length::from_millimeters(20.0),
             point1: (Force::from_newtons(20.0), Length::from_millimeters(55.0)),
             point2: (Force::from_newtons(10.0), Length::from_millimeters(50.0)),
+            inactive_coils: None,
         };
         assert!(matches!(
             s.solve(
@@ -252,6 +263,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
             rate: SpringRate::from_newtons_per_meter(2000.0),
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -274,6 +286,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             outer_dia: Length::from_millimeters(22.0),
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -296,6 +309,7 @@ mod tests {
             wire_dia: Length::from_millimeters(5.0),
             outer_dia: Length::from_millimeters(5.0), // mean = 0 → rejected
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -320,6 +334,7 @@ mod tests {
             wire_dia: Length::from_millimeters(5.0),
             outer_dia: Length::from_millimeters(3.0), // mean = −2 mm → rejected
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -345,6 +360,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
             rate: SpringRate::from_newtons_per_meter(0.0),
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -368,6 +384,7 @@ mod tests {
                 Length::from_millimeters(f64::NAN),
             ),
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
+            inactive_coils: None,
         };
         assert!(
             matches!(s.solve(&crate::test_support::music_wire(), CurvatureCorrection::Bergstrasser),
@@ -385,6 +402,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             outer_dia: Length::from_millimeters(f64::INFINITY),
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -406,6 +424,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             outer_dia: Length::from_millimeters(0.0),
             active: 10.0,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
@@ -414,5 +433,152 @@ mod tests {
                 Err(crate::SpringError::InconsistentInputs(m)) if m == "outer diameter must be a positive finite number"),
             "outer_dia == 0 must be rejected with the OD message"
         );
+    }
+
+    /// Assert that bumping the inactive override one coil above the end-type default adds
+    /// exactly one coil to `total_coils` and one wire diameter to `solid_length`, while
+    /// `rate` and `natural_frequency` stay bit-identical (both depend only on active). The
+    /// solid delta is one wire diameter for both ground (`Ls = d·Nt`) and non-ground
+    /// (`Ls = d·(Nt+1)`) ends.
+    fn assert_inactive_override_pins(d0: &SpringDesign, d1: &SpringDesign, wire_dia: Length) {
+        assert_relative_eq!(d1.total_coils - d0.total_coils, 1.0, max_relative = 1e-9);
+        assert_relative_eq!(
+            d1.solid_length.meters() - d0.solid_length.meters(),
+            wire_dia.meters(),
+            max_relative = 1e-9
+        );
+        assert_eq!(d1.rate, d0.rate, "rate must be bit-identical");
+        assert_eq!(
+            d1.natural_frequency, d0.natural_frequency,
+            "natural_frequency must be bit-identical"
+        );
+    }
+
+    /// A non-default inactive count adds coils to total and grows free/solid by d each,
+    /// while rate and natural frequency stay bit-identical (both depend only on active),
+    /// as pinned by `assert_inactive_override_pins`.
+    #[test]
+    fn power_user_honors_inactive_override() {
+        let base = PowerUser {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            active: 10.0,
+            inactive_coils: None,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        let d0 = base
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
+        let bumped = PowerUser {
+            inactive_coils: Some(3.0),
+            ..base.clone()
+        }; // default is 2 → +1 coil
+        let d1 = bumped
+            .solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser,
+            )
+            .unwrap();
+        assert_inactive_override_pins(&d0, &d1, base.wire_dia);
+    }
+
+    /// Permanent regression coverage: `TwoLoad`, `RateBased`, and `Dimensional` route
+    /// `inactive_coils` through the same `solve_forward` call as `PowerUser` (see
+    /// `power_user_honors_inactive_override`) — this pins that bumping the inactive
+    /// override one coil above the end-type default adds exactly one coil to
+    /// `total_coils`, one wire diameter to `solid_length`, and leaves `rate` and
+    /// `natural_frequency` bit-identical for all three, not just PowerUser.
+    #[test]
+    fn other_scenarios_honor_inactive_override() {
+        let end_type = EndType::Squared; // non-ground; ne = 2.0
+        let ne = end_type.end_coils();
+        let wire_dia = Length::from_millimeters(2.0);
+        let mean_dia = Length::from_millimeters(20.0);
+        let music_wire = crate::test_support::music_wire();
+        let correction = CurvatureCorrection::Bergstrasser;
+
+        let two_load = |inactive_coils| TwoLoad {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            mean_dia,
+            point1: (Force::from_newtons(10.0), Length::from_millimeters(55.0)),
+            point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
+            inactive_coils,
+        };
+        assert_inactive_override_pins(
+            &two_load(None).solve(&music_wire, correction).unwrap(),
+            &two_load(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+            wire_dia,
+        );
+
+        let rate_based = |inactive_coils| RateBased {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            mean_dia,
+            rate: SpringRate::from_newtons_per_meter(2000.0),
+            inactive_coils,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert_inactive_override_pins(
+            &rate_based(None).solve(&music_wire, correction).unwrap(),
+            &rate_based(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+            wire_dia,
+        );
+
+        let dimensional = |inactive_coils| Dimensional {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            outer_dia: Length::from_millimeters(22.0),
+            active: 10.0,
+            inactive_coils,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert_inactive_override_pins(
+            &dimensional(None).solve(&music_wire, correction).unwrap(),
+            &dimensional(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+            wire_dia,
+        );
+    }
+
+    /// Enough extra dead coils push solid length above the user's fixed free length,
+    /// tripping the existing FreeLengthBelowMinimum guard (no new guard needed).
+    #[test]
+    fn over_specified_inactive_trips_free_below_solid() {
+        // SquaredGround, d=2mm, Na=10 → solid = d*(Na+Ni). At Ni=2, solid=24mm.
+        // free=26mm leaves 2mm (1 extra coil) of headroom; Ni=4 → solid=28mm > 26mm.
+        let over = PowerUser {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            wire_dia: Length::from_millimeters(2.0),
+            mean_dia: Length::from_millimeters(20.0),
+            active: 10.0,
+            inactive_coils: Some(4.0),
+            free_length: Length::from_millimeters(26.0),
+            loads: vec![Force::from_newtons(5.0)],
+        };
+        assert!(matches!(
+            over.solve(
+                &crate::test_support::music_wire(),
+                CurvatureCorrection::Bergstrasser
+            ),
+            Err(SpringError::FreeLengthBelowMinimum { .. })
+        ));
     }
 }

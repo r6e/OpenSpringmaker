@@ -778,6 +778,7 @@ impl App {
                         F::MeanDia => m.mean_dia = v,
                         F::Active => m.active = v,
                         F::FreeLength => m.free_length = v,
+                        F::Inactive => m.inactive = v,
                     }
                     true
                 } else {
@@ -1116,6 +1117,7 @@ impl App {
             Field::FreeLength => f.free_length = value,
             Field::Rate => f.rate = value,
             Field::Loads => f.loads = value,
+            Field::Inactive => f.inactive = value,
             Field::Force1 => f.force1 = value,
             Field::Length1 => f.length1 = value,
             Field::Force2 => f.force2 = value,
@@ -1196,6 +1198,7 @@ impl App {
             CF::Active => f.active = value,
             CF::FreeLength => f.free_length = value,
             CF::Loads => f.loads = value,
+            CF::Inactive => f.inactive = value,
         }
     }
 
@@ -2299,6 +2302,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10".into(),
+            inactive: String::new(),
         };
         let con_out = con_parse_and_solve(
             &con_form,
@@ -2354,6 +2358,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10".into(),
+            inactive: String::new(),
         };
         let con_out = con_parse_and_solve(
             &con_form,
@@ -2404,6 +2409,7 @@ mod tests {
                 active: 10.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0],
+                inactive_coils: None,
             }),
         });
         assert_eq!(app.family, springcore::Family::Conical);
@@ -2431,6 +2437,7 @@ mod tests {
                     mean_dia_mm: 20.0,
                     active: 10.0,
                     free_length_mm: 60.0,
+                    inactive_coils: None,
                 }],
             }),
         });
@@ -2753,6 +2760,7 @@ mod tests {
                 mean_dia: "20".into(),
                 active: "10".into(),
                 free_length: "60".into(),
+                inactive: String::new(),
             }],
         };
         let asm_out = asm_parse_and_solve(

@@ -73,6 +73,7 @@ fn con_field_value(form: &crate::conical::form::ConFormState, field: Field) -> &
         Field::Active => &form.active,
         Field::FreeLength => &form.free_length,
         Field::Loads => &form.loads,
+        Field::Inactive => &form.inactive,
     }
 }
 
@@ -85,6 +86,7 @@ pub(crate) fn con_field_id(field: Field) -> &'static str {
         Field::Active => "con-active",
         Field::FreeLength => "con-free-length",
         Field::Loads => "con-loads",
+        Field::Inactive => "con-inactive",
     }
 }
 

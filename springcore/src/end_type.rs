@@ -23,20 +23,30 @@ impl EndType {
         }
     }
 
-    /// Total coils from active coils: Nt = Na + Ne (Shigley Table 10-1).
-    pub fn total_coils(self, active: f64) -> f64 {
-        active + self.end_coils()
+    /// Resolve an optional user-supplied inactive-coil count to a concrete value,
+    /// defaulting to this end type's Shigley Table 10-1 count when unset. Single
+    /// source of the "None = end-type default" rule for every family.
+    pub fn resolve_inactive(self, inactive: Option<f64>) -> f64 {
+        inactive.unwrap_or(self.end_coils())
     }
 
-    /// Active coils from total coils: Na = Nt - Ne.
+    /// Total coils: Nt = Na + Ni (Ni = inactive count; Shigley Table 10-1 at the default).
+    pub fn total_coils(self, active: f64, inactive: f64) -> f64 {
+        active + inactive
+    }
+
+    /// Active coils under the *default* inactive count: `Na = Nt - Ne`, where `Ne =
+    /// end_coils()`. NOTE: this is the end-type-default inverse and is NOT inactive-aware —
+    /// when a design specifies a non-default inactive count `Ni`, the true active count is
+    /// `total - Ni`, not `total - Ne`. Only valid at `Ni == Ne`. (Currently test-only.)
     pub fn active_coils(self, total: f64) -> f64 {
         total - self.end_coils()
     }
 
-    /// Solid (fully compressed) length (Shigley Table 10-1).
-    pub fn solid_length(self, wire_dia: Length, active: f64) -> Length {
+    /// Solid (fully compressed) length (Shigley Table 10-1, generalized to Ni).
+    pub fn solid_length(self, wire_dia: Length, active: f64, inactive: f64) -> Length {
         let d = wire_dia.meters();
-        let nt = self.total_coils(active);
+        let nt = self.total_coils(active, inactive);
         let ls = match self {
             // Ground ends: Ls = d * Nt
             Self::PlainGround | Self::SquaredGround => d * nt,
@@ -46,28 +56,36 @@ impl EndType {
         Length::from_meters(ls)
     }
 
-    /// Free length from pitch (Shigley Table 10-1).
-    pub fn free_length(self, wire_dia: Length, active: f64, pitch: Length) -> Length {
+    /// Free length from pitch: base per-end formula + (Ni − Ne)·d additive closed-coil term.
+    pub fn free_length(
+        self,
+        wire_dia: Length,
+        active: f64,
+        pitch: Length,
+        inactive: f64,
+    ) -> Length {
         let d = wire_dia.meters();
         let p = pitch.meters();
-        let l0 = match self {
+        let base = match self {
             Self::Plain => p * active + d,
             Self::PlainGround => p * (active + 1.0),
             Self::Squared => p * active + 3.0 * d,
             Self::SquaredGround => p * active + 2.0 * d,
         };
-        Length::from_meters(l0)
+        Length::from_meters(base + d * (inactive - self.end_coils()))
     }
 
-    /// Pitch that yields a given free length (inverse of `free_length`).
+    /// Pitch that yields a given free length (inverse of `free_length`, generalized to Ni).
     pub fn pitch_from_free_length(
         self,
         wire_dia: Length,
         active: f64,
         free_length: Length,
+        inactive: f64,
     ) -> Length {
         let d = wire_dia.meters();
-        let l0 = free_length.meters();
+        // Subtract the additive closed-coil term, then invert the base per-end formula.
+        let l0 = free_length.meters() - d * (inactive - self.end_coils());
         let p = match self {
             Self::Plain => (l0 - d) / active,
             Self::PlainGround => l0 / (active + 1.0),
@@ -84,29 +102,39 @@ mod tests {
     use approx::assert_relative_eq;
 
     #[test]
+    fn resolve_inactive_defaults_to_end_coils_else_passes_through() {
+        assert_eq!(EndType::SquaredGround.resolve_inactive(None), 2.0);
+        assert_eq!(EndType::Plain.resolve_inactive(None), 0.0);
+        assert_eq!(EndType::PlainGround.resolve_inactive(None), 1.0);
+        assert_eq!(EndType::SquaredGround.resolve_inactive(Some(3.5)), 3.5);
+        assert_eq!(EndType::Plain.resolve_inactive(Some(0.0)), 0.0);
+    }
+
+    #[test]
     fn squared_ground_relations() {
         let e = EndType::SquaredGround;
         let d = Length::from_millimeters(2.0);
         let na = 8.0;
-        assert_relative_eq!(e.total_coils(na), 10.0, max_relative = 1e-12);
+        assert_relative_eq!(e.total_coils(na, e.end_coils()), 10.0, max_relative = 1e-12);
         assert_relative_eq!(e.active_coils(10.0), 8.0, max_relative = 1e-12);
         // Solid length = d * Nt = 2 mm * 10 = 20 mm
         assert_relative_eq!(
-            e.solid_length(d, na).millimeters(),
+            e.solid_length(d, na, e.end_coils()).millimeters(),
             20.0,
             max_relative = 1e-12
         );
         // Free length = p*Na + 2d, with p = 5 mm: 40 + 4 = 44 mm
         let p = Length::from_millimeters(5.0);
         assert_relative_eq!(
-            e.free_length(d, na, p).millimeters(),
+            e.free_length(d, na, p, e.end_coils()).millimeters(),
             44.0,
             max_relative = 1e-12
         );
         // Inverse: pitch from free length recovers 5 mm
         let l0 = Length::from_millimeters(44.0);
         assert_relative_eq!(
-            e.pitch_from_free_length(d, na, l0).millimeters(),
+            e.pitch_from_free_length(d, na, l0, e.end_coils())
+                .millimeters(),
             5.0,
             max_relative = 1e-12
         );
@@ -117,16 +145,20 @@ mod tests {
         let e = EndType::Plain;
         let d = Length::from_millimeters(1.0);
         // Nt = Na; Ls = d(Nt+1)
-        assert_relative_eq!(e.total_coils(10.0), 10.0, max_relative = 1e-12);
         assert_relative_eq!(
-            e.solid_length(d, 10.0).millimeters(),
+            e.total_coils(10.0, e.end_coils()),
+            10.0,
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            e.solid_length(d, 10.0, e.end_coils()).millimeters(),
             11.0,
             max_relative = 1e-12
         );
         // L0 = p*Na + d, p = 3 mm: 30 + 1 = 31 mm
         let p = Length::from_millimeters(3.0);
         assert_relative_eq!(
-            e.free_length(d, 10.0, p).millimeters(),
+            e.free_length(d, 10.0, p, e.end_coils()).millimeters(),
             31.0,
             max_relative = 1e-12
         );
@@ -139,7 +171,7 @@ mod tests {
         // L0 = p*(Na+1), p = 2 mm, Na = 9: 2*10 = 20 mm
         let p = Length::from_millimeters(2.0);
         assert_relative_eq!(
-            e.free_length(d, 9.0, p).millimeters(),
+            e.free_length(d, 9.0, p, e.end_coils()).millimeters(),
             20.0,
             max_relative = 1e-12
         );
@@ -157,14 +189,14 @@ mod tests {
         let na = 5.0;
         // p*Na + 3*d = 2*5 + 3*7 = 31
         assert_relative_eq!(
-            e.free_length(d, na, p).millimeters(),
+            e.free_length(d, na, p, e.end_coils()).millimeters(),
             31.0,
             max_relative = 1e-12
         );
         // Also verify solid length for Squared (non-ground: Ls = d*(Nt+1)).
         // Nt = Na + end_coils = 5 + 2 = 7; Ls = 7*(7+1) = 56 mm.
         assert_relative_eq!(
-            e.solid_length(d, na).millimeters(),
+            e.solid_length(d, na, e.end_coils()).millimeters(),
             56.0,
             max_relative = 1e-12
         );
@@ -183,7 +215,8 @@ mod tests {
         let na = 5.0;
         let l0 = Length::from_millimeters(16.0);
         assert_relative_eq!(
-            e.pitch_from_free_length(d, na, l0).millimeters(),
+            e.pitch_from_free_length(d, na, l0, e.end_coils())
+                .millimeters(),
             3.0,
             max_relative = 1e-12
         );
@@ -199,7 +232,8 @@ mod tests {
         let na = 9.0;
         let l0 = Length::from_millimeters(20.0);
         assert_relative_eq!(
-            e.pitch_from_free_length(d, na, l0).millimeters(),
+            e.pitch_from_free_length(d, na, l0, e.end_coils())
+                .millimeters(),
             2.0,
             max_relative = 1e-12
         );
@@ -217,9 +251,100 @@ mod tests {
         let na = 5.0;
         let l0 = Length::from_millimeters(31.0);
         assert_relative_eq!(
-            e.pitch_from_free_length(d, na, l0).millimeters(),
+            e.pitch_from_free_length(d, na, l0, e.end_coils())
+                .millimeters(),
             2.0,
             max_relative = 1e-12
         );
+    }
+
+    /// Backward-compat lock: at inactive = end_coils(), every geometry output equals
+    /// the pre-generalization value for all four end types. Fixture: d=2mm, Na=8.
+    #[test]
+    fn inactive_equals_end_coils_reproduces_baseline() {
+        let d = Length::from_millimeters(2.0);
+        let na = 8.0;
+        for e in [
+            EndType::Plain,
+            EndType::PlainGround,
+            EndType::Squared,
+            EndType::SquaredGround,
+        ] {
+            let ne = e.end_coils();
+            assert_relative_eq!(e.total_coils(na, ne), na + ne, max_relative = 1e-12);
+            // free(p=d) == solid holds for every end type at the default.
+            let free_at_d = e.free_length(d, na, d, ne);
+            assert_relative_eq!(
+                free_at_d.meters(),
+                e.solid_length(d, na, ne).meters(),
+                max_relative = 1e-12
+            );
+        }
+    }
+
+    /// The free(pitch=d) == solid invariant is preserved for ALL inactive values
+    /// (including fractional), for every end type. This is what keeps the
+    /// FreeLengthBelowMinimum guard correct with zero change.
+    #[test]
+    fn free_at_solid_pitch_equals_solid_for_all_inactive() {
+        let d = Length::from_millimeters(2.0);
+        let na = 8.0;
+        for e in [
+            EndType::Plain,
+            EndType::PlainGround,
+            EndType::Squared,
+            EndType::SquaredGround,
+        ] {
+            for ni in [0.0, 1.0, 2.0, 2.5, 4.0] {
+                let free_at_d = e.free_length(d, na, d, ni).meters();
+                let solid = e.solid_length(d, na, ni).meters();
+                assert_relative_eq!(free_at_d, solid, max_relative = 1e-12);
+            }
+        }
+    }
+
+    /// Additive closed-coil term: each unit increase in inactive adds exactly d to
+    /// both free length and solid length, for every end type.
+    #[test]
+    fn each_extra_inactive_coil_adds_one_wire_diameter() {
+        let d = Length::from_millimeters(2.0);
+        let p = Length::from_millimeters(5.0);
+        let na = 8.0;
+        for e in [
+            EndType::Plain,
+            EndType::PlainGround,
+            EndType::Squared,
+            EndType::SquaredGround,
+        ] {
+            let ne = e.end_coils();
+            let free0 = e.free_length(d, na, p, ne).meters();
+            let free1 = e.free_length(d, na, p, ne + 1.0).meters();
+            let solid0 = e.solid_length(d, na, ne).meters();
+            let solid1 = e.solid_length(d, na, ne + 1.0).meters();
+            assert_relative_eq!(free1 - free0, d.meters(), max_relative = 1e-12);
+            assert_relative_eq!(solid1 - solid0, d.meters(), max_relative = 1e-12);
+        }
+    }
+
+    /// pitch_from_free_length inverts free_length under a non-default inactive count.
+    #[test]
+    fn pitch_inverts_free_length_under_nondefault_inactive() {
+        let d = Length::from_millimeters(2.0);
+        let na = 8.0;
+        let p = Length::from_millimeters(5.0);
+        for e in [
+            EndType::Plain,
+            EndType::PlainGround,
+            EndType::Squared,
+            EndType::SquaredGround,
+        ] {
+            let ni = e.end_coils() + 2.0;
+            let l0 = e.free_length(d, na, p, ni);
+            assert_relative_eq!(
+                e.pitch_from_free_length(d, na, l0, ni).millimeters(),
+                5.0,
+                max_relative = 1e-12
+            );
+        }
     }
 }

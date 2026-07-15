@@ -197,6 +197,21 @@ pub(crate) fn non_negative_length_mm(field: &str, value: &str, us: UnitSystem) -
     non_negative_to_si(field, value, us, |v| Length::from_inches(v).millimeters())
 }
 
+/// Parse an optional non-negative count field: blank → None; else a finite ≥ 0
+/// number. Shared by every family's optional inactive-coil input.
+pub(crate) fn optional_non_negative_num(field: &str, value: &str) -> Result<Option<f64>> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let v = num(field, value)?; // finite check
+    if v < 0.0 {
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be ≥ 0"
+        )));
+    }
+    Ok(Some(v))
+}
+
 /// Like `num` but requires the value to be >= 0 (zero allowed, negative rejected).
 pub(crate) fn non_negative_force_n(field: &str, value: &str, us: UnitSystem) -> Result<f64> {
     non_negative_to_si(field, value, us, |v| Force::from_pounds_force(v).newtons())
@@ -350,6 +365,28 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use springcore::SpringError;
+
+    #[test]
+    fn optional_non_negative_num_parses_blank_and_values() {
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "   ").unwrap(),
+            None
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "2").unwrap(),
+            Some(2.0)
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "1.5").unwrap(),
+            Some(1.5)
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "0").unwrap(),
+            Some(0.0)
+        );
+        assert!(optional_non_negative_num("inactive coils", "-1").is_err());
+        assert!(optional_non_negative_num("inactive coils", "abc").is_err());
+    }
 
     #[test]
     fn moment_nmm_metric_passthrough_and_positive() {

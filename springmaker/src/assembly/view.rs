@@ -9,7 +9,7 @@ use crate::assembly::view_model::{
     asm_results_view, AsmMemberResultView, AsmPopulatedResults, AsmResultsView,
 };
 use crate::picker::{find_by_key, KeyLabel, END_TYPES, FIXITIES, TOPOLOGIES};
-use crate::presenter::LoadTable;
+use crate::presenter::{inactive_coils_label, LoadTable};
 use crate::widgets::{
     danger_button_style, emphasis_color, field_label, ghost_button_style, labeled_input,
     material_picker_for_member, member_sub_card, panel_container, render_governing_rate,
@@ -340,6 +340,7 @@ pub(crate) fn asm_member_field_id(index: usize, field: MemberField) -> String {
         MeanDia => "mean-dia",
         Active => "active",
         FreeLength => "free-length",
+        Inactive => "inactive",
     };
     format!("asm-member-{index}-{leaf}")
 }
@@ -362,6 +363,7 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
     }
 
     let selected_end = find_by_key(END_TYPES, &m.end_type).copied();
+    let inactive_label = inactive_coils_label(&m.end_type);
 
     column![
         header,
@@ -400,6 +402,13 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
             &m.free_length,
             asm_member_field_id(index, F::FreeLength),
             move |v| Message::AsmField(index, F::FreeLength, v)
+        ),
+        labeled_input(
+            pal,
+            &inactive_label,
+            &m.inactive,
+            asm_member_field_id(index, F::Inactive),
+            move |v| Message::AsmField(index, F::Inactive, v)
         ),
     ]
     .spacing(SP_ROW)

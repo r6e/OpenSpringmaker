@@ -6,8 +6,9 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_stress_label,
-    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    inactive_coils_label, overstress_emphasis, resolved_material, unit_force_label,
+    unit_length_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable,
+    ResultRow, StatusLine,
 };
 use springcore::Material;
 
@@ -157,10 +158,11 @@ fn con_load_table(
 
 // ── Inputs panel ──────────────────────────────────────────────────────────────
 
-/// The six labeled inputs, in display order.
+/// The seven labeled inputs, in display order.
 pub fn con_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let len = unit_length_label(app.unit_system);
     let force = unit_force_label(app.unit_system);
+    let inactive_label = inactive_coils_label(&app.conical.end_type);
     vec![
         FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
         FieldDescriptor::new(format!("Large mean diameter ({len})"), Field::LargeMeanDia),
@@ -168,6 +170,7 @@ pub fn con_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
         FieldDescriptor::new("Active coils".to_string(), Field::Active),
         FieldDescriptor::new(format!("Free length ({len})"), Field::FreeLength),
         FieldDescriptor::new(format!("Loads ({force}, comma-separated)"), Field::Loads),
+        FieldDescriptor::new(inactive_label, Field::Inactive),
     ]
 }
 
@@ -225,6 +228,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10, 25".into(),
+            inactive: String::new(),
         }
     }
 
@@ -301,6 +305,19 @@ mod tests {
             .find(|r| r.label == "Solid length (conservative)")
             .unwrap();
         assert_eq!(solid.value, "24.0000", "Solid length must be 24.0000 mm");
+    }
+
+    #[test]
+    fn inputs_view_includes_inactive_with_end_type_default_hint() {
+        // metric_form() is already end_type "squared_ground" (default inactive = 2).
+        let app = fresh_app_conical();
+        let inputs = con_inputs_view(&app);
+        let fd = inputs
+            .iter()
+            .find(|f| matches!(f.field, Field::Inactive))
+            .expect("inactive descriptor present");
+        assert!(fd.label.contains("Inactive coils"));
+        assert!(fd.label.contains("default 2"), "label was {:?}", fd.label);
     }
 
     // ── results_view_maps_error_empty_populated ─────────────────────────────

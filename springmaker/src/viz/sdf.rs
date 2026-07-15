@@ -3160,6 +3160,7 @@ mod tests {
             wire_dia: Length::from_millimeters(2.0),
             mean_dia: Length::from_millimeters(20.0),
             active,
+            inactive_coils: None,
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0), Force::from_newtons(30.0)],
         }
@@ -3425,6 +3426,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10, 25".into(),
+            inactive: String::new(),
         };
         crate::conical::form::parse_and_solve(
             &form,

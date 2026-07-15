@@ -46,6 +46,9 @@ pub struct MinWeightRequest {
     pub candidate_diameters: Vec<Length>,
     /// Fractional clearance kept before solid at max force (SMI ~0.10–0.15).
     pub clash_allowance: f64,
+    /// Override for the inactive-coil count; `None` resolves to the end type's
+    /// Shigley Table 10-1 default via [`EndType::resolve_inactive`].
+    pub inactive_coils: Option<f64>,
 }
 
 /// The chosen design and why it is limited.
@@ -175,6 +178,19 @@ pub fn solve_min_weight(
         }
     }
 
+    let inactive = req.end_type.resolve_inactive(req.inactive_coils);
+    // Validate the resolved inactive count at entry, parity with the guards above. The
+    // scenario path checks a persisted spec in min_weight_request_from_spec, but a direct
+    // MinWeightRequest caller bypasses that. Without this, a non-finite override poisons
+    // solid_length/buckling and every candidate is filtered by the loop below, so the
+    // function returns Infeasible — masking invalid input as a geometry failure — instead
+    // of InconsistentInputs.
+    if !(inactive.is_finite() && inactive >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "inactive coils must be a finite number ≥ 0".into(),
+        ));
+    }
+
     let mut best: Option<MinWeightSolution> = None;
 
     for &d in &req.candidate_diameters {
@@ -198,7 +214,7 @@ pub fn solve_min_weight(
         if !active.is_finite() || active < 1.0 {
             continue; // non-finite or fewer than one active coil is unphysical
         }
-        let solid = req.end_type.solid_length(d, active);
+        let solid = req.end_type.solid_length(d, active, inactive);
         let travel = req.max_force.newtons() / req.required_rate.newtons_per_meter();
         let free_length =
             Length::from_meters(solid.meters() + travel * (1.0 + req.clash_allowance));
@@ -214,15 +230,15 @@ pub fn solve_min_weight(
         ) {
             continue;
         }
-        // `?` is safe here: every solve_forward error mode is already pre-filtered by the
-        // guards above — wire is finite-positive (candidate validation), mean ≥ c_min·d > d
-        // (c_min ≥ floor > 1), active ≥ 1, free_length = solid + positive travel > solid, and
-        // d is in the material range (best_mean_dia's min_tensile_strength(d) already
-        // succeeded). So this never aborts a valid solve. (Unlike the extension optimizer,
-        // which uses skip-on-Err because its fixed-hook C2 ≤ 1 case is a live per-candidate
-        // failure; compression has no such per-candidate error mode, so adding a skip branch
-        // here would be unreachable dead code. If a future per-candidate error mode is added,
-        // switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
+        // `?` is safe here: every solve_forward guard is pre-satisfied — wire is
+        // finite-positive (candidate validation), mean ≥ c_min·d > d (c_min ≥ floor > 1),
+        // active ≥ 1, free_length = solid + positive travel > solid, d is in the material
+        // range (best_mean_dia's min_tensile_strength(d) already succeeded), and inactive is
+        // finite/≥ 0 (entry guard above). So this never aborts a valid solve. (Unlike the
+        // extension optimizer, which uses skip-on-Err because its fixed-hook C2 ≤ 1 case is a
+        // live per-candidate failure; compression has no such per-candidate error mode, so a
+        // skip branch would be unreachable dead code. If a future per-candidate error mode is
+        // added, switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
         let design = solve_forward(
             material,
             req.end_type,
@@ -230,6 +246,7 @@ pub fn solve_min_weight(
             d,
             mean,
             active,
+            inactive,
             free_length,
             &[req.max_force],
             correction,
@@ -269,6 +286,7 @@ mod tests {
                 .map(Length::from_millimeters)
                 .collect(),
             clash_allowance: 0.15,
+            inactive_coils: None,
         }
     }
 
@@ -290,6 +308,7 @@ mod tests {
                 .map(Length::from_millimeters)
                 .collect(),
             clash_allowance: 0.15,
+            inactive_coils: None,
         }
     }
 
@@ -311,6 +330,7 @@ mod tests {
                 .map(Length::from_millimeters)
                 .collect(),
             clash_allowance: 0.15,
+            inactive_coils: None,
         }
     }
 
@@ -369,6 +389,7 @@ mod tests {
             max_outer_dia: None,
             candidate_diameters: vec![Length::from_millimeters(2.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         assert!(
             matches!(
@@ -592,6 +613,7 @@ mod tests {
             max_outer_dia: None,
             candidate_diameters: vec![Length::from_millimeters(2.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         assert!(
             matches!(
@@ -616,6 +638,7 @@ mod tests {
             max_outer_dia: None,
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         assert!(
             solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).is_ok(),
@@ -737,6 +760,7 @@ mod tests {
             max_outer_dia: Some(Length::from_millimeters(27.0)),
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         // Binding must stay Index (uncapped OD == od_max, strict > means cap doesn't fire).
@@ -781,6 +805,7 @@ mod tests {
             max_outer_dia: Some(Length::from_millimeters(15.0)),
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser);
         assert!(
@@ -824,6 +849,7 @@ mod tests {
             max_outer_dia: None,
             candidate_diameters: vec![Length::from_millimeters(3.0)],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let sol = solve_min_weight(&m, &req, CurvatureCorrection::Bergstrasser).unwrap();
         // na must be exactly 1.0 (IEEE 754: numerator and denominator converge to same bits).
@@ -1087,6 +1113,109 @@ mod tests {
         let mut req = base_request(vec![2.0]);
         req.max_outer_dia = Some(Length::from_millimeters(0.0));
         assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn non_finite_inactive_rejected() {
+        // See the entry guard in `solve_min_weight` for why a non-finite inactive is
+        // masked as Infeasible without it. `+inf` (not NaN) is the value that kills the
+        // guard's `&&`→`||` mutant: `inf.is_finite()` is false but `inf >= 0` is true, so
+        // the operators disagree — NaN makes both operands false, distinguishing nothing.
+        let mut req = base_request(vec![2.0]);
+        req.inactive_coils = Some(f64::INFINITY);
+        assert_inconsistent(&req);
+    }
+
+    #[test]
+    fn zero_inactive_is_accepted() {
+        // Pins the `>= 0` boundary so a `>` mutant on the inactive guard dies: a zero
+        // inactive count is physically valid and must solve, not be rejected.
+        let mut req = base_request(vec![2.0]);
+        req.inactive_coils = Some(0.0);
+        assert_accepted(&req);
+    }
+
+    /// Raising the inactive count never lowers the minimum achievable mass (each dead
+    /// coil is extra wire). The winning (d, D, active) MAY shift, so assert on mass,
+    /// not on unchanged geometry.
+    #[test]
+    fn min_weight_mass_is_nondecreasing_in_inactive() {
+        let base = MinWeightRequest {
+            end_type: EndType::SquaredGround,
+            fixity: EndFixity::FixedFixed,
+            required_rate: SpringRate::from_newtons_per_meter(2000.0),
+            max_force: Force::from_newtons(50.0),
+            index_bounds: (4.0, 12.0),
+            max_outer_dia: None,
+            candidate_diameters: vec![Length::from_millimeters(2.0), Length::from_millimeters(3.0)],
+            clash_allowance: 0.15,
+            inactive_coils: None,
+        };
+        let m0 = solve_min_weight(
+            &crate::test_support::music_wire(),
+            &base,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap()
+        .mass_kg;
+        let bumped = MinWeightRequest {
+            inactive_coils: Some(4.0),
+            ..base.clone()
+        };
+        let m1 = solve_min_weight(
+            &crate::test_support::music_wire(),
+            &bumped,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap()
+        .mass_kg;
+        assert!(m1 >= m0 - 1e-15, "mass must not decrease: m0={m0}, m1={m1}");
+    }
+
+    /// `min_weight_mass_is_nondecreasing_in_inactive` alone can't distinguish "the
+    /// override is wired" from "the override is silently ignored" — if
+    /// `solve_min_weight` fell back to `req.end_type.end_coils()` instead of
+    /// resolving `req.inactive_coils`, both sides of that test would be identical
+    /// and the `>=` bound would still pass. Pin the wiring directly: at a fixed,
+    /// Index-binding geometry (d, D, Na are independent of the inactive count —
+    /// `best_mean_dia` and `active_coils_for_rate` never see it), total_coils must
+    /// grow by EXACTLY the override delta, and mass must scale with total_coils.
+    #[test]
+    fn min_weight_inactive_override_adds_exact_dead_coils_to_total() {
+        let m = crate::test_support::music_wire();
+        let base = index_binding_request(vec![3.0]); // inactive_coils: None -> SquaredGround default 2.0
+        let sol0 = solve_min_weight(&m, &base, CurvatureCorrection::Bergstrasser).unwrap();
+        let mut bumped = base;
+        bumped.inactive_coils = Some(5.0); // +3.0 dead coils over the 2.0 default
+        let sol1 = solve_min_weight(&m, &bumped, CurvatureCorrection::Bergstrasser).unwrap();
+        // Geometry (d, D, Na) is unaffected by the inactive count.
+        assert_relative_eq!(
+            sol0.design.wire_dia.millimeters(),
+            sol1.design.wire_dia.millimeters(),
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            sol0.design.mean_dia.millimeters(),
+            sol1.design.mean_dia.millimeters(),
+            max_relative = 1e-12
+        );
+        assert_relative_eq!(
+            sol0.design.active_coils,
+            sol1.design.active_coils,
+            max_relative = 1e-12
+        );
+        // Total coils must grow by exactly the override delta (3.0).
+        assert_relative_eq!(
+            sol1.design.total_coils - sol0.design.total_coils,
+            3.0,
+            max_relative = 1e-9
+        );
+        // Mass is proportional to total_coils at fixed (d, D).
+        assert_relative_eq!(
+            sol1.mass_kg / sol0.mass_kg,
+            sol1.design.total_coils / sol0.design.total_coils,
+            max_relative = 1e-9
+        );
     }
 
     #[test]

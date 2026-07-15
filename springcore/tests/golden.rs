@@ -23,6 +23,7 @@ fn pipeline_rate_based_music_wire() {
             rate_n_per_m: 2000.0,
             free_length_mm: 60.0,
             loads_n: vec![10.0, 30.0],
+            inactive_coils: None,
         }),
     };
     let set = MaterialSet::load_default();
@@ -94,6 +95,7 @@ fn comprehensive_spring_design_compression() {
         wire_dia: Length::from_inches(0.250),
         mean_dia: Length::from_inches(1.69),
         active: 13.0,
+        inactive_coils: None,
         free_length: Length::from_inches(8.0),
         loads: vec![Force::from_pounds_force(356.0)], // P at 4 in deflection
     }
@@ -148,6 +150,7 @@ fn shigley_10_1_compression() {
         wire_dia: Length::from_inches(0.037),
         mean_dia: Length::from_inches(0.400), // Shigley's rounded D (7/16 − 0.037 = 0.4005 ≈ 0.400)
         active: 10.5,                         // Na = Nt − 2 (squared ends)
+        inactive_coils: None,
         free_length: Length::from_inches(2.06),
         loads: vec![Force::from_pounds_force(6.46)], // load at yield
     }

@@ -36,6 +36,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10, 25".into(),
+            inactive: String::new(),
         };
         crate::conical::form::parse_and_solve(
             &form,

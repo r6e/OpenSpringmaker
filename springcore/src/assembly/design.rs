@@ -29,6 +29,9 @@ pub struct AssemblyMember {
     pub active_coils: f64,
     pub free_length: Length,
     pub end_type: EndType,
+    /// Optional dead-coil override (Task 1's `EndType::resolve_inactive`); `None`
+    /// defers to the end-type's default (`end_type.end_coils()`).
+    pub inactive_coils: Option<f64>,
 }
 
 /// Assembly inputs: topology + 1..N members. Loads, fixity (one set of end
@@ -141,6 +144,7 @@ pub fn solve_assembly(
             m.wire_dia,
             m.mean_dia,
             m.active_coils,
+            m.end_type.resolve_inactive(m.inactive_coils),
             m.free_length,
             &[],
             correction,
@@ -179,6 +183,7 @@ pub fn solve_assembly(
             m.wire_dia,
             m.mean_dia,
             m.active_coils,
+            m.end_type.resolve_inactive(m.inactive_coils),
             m.free_length,
             &member_loads,
             correction,
@@ -418,6 +423,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         }
     }
 
@@ -462,6 +468,7 @@ mod tests {
             m.wire_dia,
             m.mean_dia,
             m.active_coils,
+            m.end_type.end_coils(),
             m.free_length,
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,
@@ -1099,6 +1106,7 @@ mod tests {
             active_coils: na,
             free_length: Length::from_meters(ls_m), // L0 == Ls: at-solid travel = 0
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         // One such member alone must solve Ok — this pins that the overflow is
         // produced solely by the SUM, not by any single-member non-finiteness.
@@ -1149,6 +1157,7 @@ mod tests {
             active_coils: na,
             free_length: Length::from_meters(free_m),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         // One such member alone must solve Ok — pins that the overflow is
         // produced solely by the SUM, not by any single-member non-finiteness.
@@ -1161,5 +1170,30 @@ mod tests {
             m,
             "assembly solve produced a non-finite result (inputs exceed the representable range)"
         );
+    }
+
+    // ── Task 5: per-member inactive-coil count ──────────────────────────────
+
+    /// A member's extra dead coils raise its solid length, which raises the nested
+    /// assembly's solid length (nested solid = max over member solid lengths,
+    /// `fold(NEG_INFINITY, f64::max)`) and shrinks travel.
+    ///
+    /// Non-vacuity: `baseline_member` and `soft_member` share the same wire_dia,
+    /// active_coils, and end_type — solid length (`end_type.solid_length`) depends
+    /// on neither of the fields that differ between them (mean_dia only), so both
+    /// tie at Ls = 24 mm by default and `d0.solid_length` is 24 mm regardless of
+    /// which tied member the max picks. Bumping member 0's (baseline's) inactive
+    /// coils to 4 raises ITS solid length alone to 28 mm (soft_member's stays at
+    /// 24 mm), so the max — and the aggregate — strictly increases: 24mm → 28mm.
+    #[test]
+    fn member_inactive_raises_nested_solid_length() {
+        let m0 = baseline_member(); // inactive_coils: None
+        let d0 = solve(Topology::Nested, vec![m0.clone(), soft_member()], &[30.0]).unwrap();
+        let m1 = AssemblyMember {
+            inactive_coils: Some(m0.end_type.end_coils() + 2.0),
+            ..baseline_member()
+        };
+        let d1 = solve(Topology::Nested, vec![m1, soft_member()], &[30.0]).unwrap();
+        assert!(d1.solid_length.meters() > d0.solid_length.meters());
     }
 }
