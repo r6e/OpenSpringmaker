@@ -159,13 +159,17 @@ pub fn solve_forward(
         inputs.small_mean_dia,
         inputs.active_coils,
     );
-    let total_coils = inputs.end_type.total_coils(inputs.active_coils);
+    let total_coils = inputs
+        .end_type
+        .total_coils(inputs.active_coils, inputs.end_type.end_coils());
     // Conservative non-telescoping solid stack (Shigley Table 10-1); when the
     // geometry telescopes the true solid height is lower — flagged, not modeled
     // (no cited telescoped-height formula in-house).
-    let solid_length = inputs
-        .end_type
-        .solid_length(inputs.wire_dia, inputs.active_coils);
+    let solid_length = inputs.end_type.solid_length(
+        inputs.wire_dia,
+        inputs.active_coils,
+        inputs.end_type.end_coils(),
+    );
     if l0 < solid_length.meters() {
         // Structured (R2 stateful-UI F3 sibling sweep): the conservative
         // non-telescoping solid length is this family's close-wound
@@ -179,6 +183,7 @@ pub fn solve_forward(
         inputs.wire_dia,
         inputs.active_coils,
         inputs.free_length,
+        inputs.end_type.end_coils(),
     );
     // Geometric nesting condition: per-coil mean-radius step ≥ wire diameter.
     let telescopes = (dl - ds) / (2.0 * inputs.active_coils) >= d;
@@ -393,6 +398,7 @@ mod tests {
             Length::from_millimeters(2.0),
             Length::from_millimeters(20.0),
             10.0,
+            EndType::SquaredGround.end_coils(),
             Length::from_millimeters(60.0),
             &[Force::from_newtons(10.0)],
             crate::CurvatureCorrection::Bergstrasser,

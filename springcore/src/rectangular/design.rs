@@ -254,11 +254,15 @@ pub fn solve_forward(
         beta,
         inputs.active_coils,
     );
-    let total_coils = inputs.end_type.total_coils(inputs.active_coils);
-    // Solid length stacks the AXIAL wire dimension (Shigley Table 10-1 form).
-    let solid_length = inputs
+    let total_coils = inputs
         .end_type
-        .solid_length(inputs.wire_axial, inputs.active_coils);
+        .total_coils(inputs.active_coils, inputs.end_type.end_coils());
+    // Solid length stacks the AXIAL wire dimension (Shigley Table 10-1 form).
+    let solid_length = inputs.end_type.solid_length(
+        inputs.wire_axial,
+        inputs.active_coils,
+        inputs.end_type.end_coils(),
+    );
     if l0 < solid_length.meters() {
         // Structured (R2 stateful-UI F3 sibling sweep): the axial-dimension
         // solid stack is this family's close-wound minimum; the GUI
@@ -272,6 +276,7 @@ pub fn solve_forward(
         inputs.wire_axial,
         inputs.active_coils,
         inputs.free_length,
+        inputs.end_type.end_coils(),
     );
 
     let load_points: Vec<LoadPoint> = loads

@@ -198,7 +198,9 @@ pub fn solve_min_weight(
         if !active.is_finite() || active < 1.0 {
             continue; // non-finite or fewer than one active coil is unphysical
         }
-        let solid = req.end_type.solid_length(d, active);
+        let solid = req
+            .end_type
+            .solid_length(d, active, req.end_type.end_coils());
         let travel = req.max_force.newtons() / req.required_rate.newtons_per_meter();
         let free_length =
             Length::from_meters(solid.meters() + travel * (1.0 + req.clash_allowance));
@@ -230,6 +232,7 @@ pub fn solve_min_weight(
             d,
             mean,
             active,
+            req.end_type.end_coils(),
             free_length,
             &[req.max_force],
             correction,
