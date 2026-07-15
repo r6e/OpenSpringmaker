@@ -435,6 +435,25 @@ mod tests {
         );
     }
 
+    /// Assert that bumping the inactive override one coil above the end-type default adds
+    /// exactly one coil to `total_coils` and one wire diameter to `solid_length`, while
+    /// `rate` and `natural_frequency` stay bit-identical (both depend only on active). The
+    /// solid delta is one wire diameter for both ground (`Ls = d·Nt`) and non-ground
+    /// (`Ls = d·(Nt+1)`) ends.
+    fn assert_inactive_override_pins(d0: &SpringDesign, d1: &SpringDesign, wire_dia: Length) {
+        assert_relative_eq!(d1.total_coils - d0.total_coils, 1.0, max_relative = 1e-9);
+        assert_relative_eq!(
+            d1.solid_length.meters() - d0.solid_length.meters(),
+            wire_dia.meters(),
+            max_relative = 1e-9
+        );
+        assert_eq!(d1.rate, d0.rate, "rate must be bit-identical");
+        assert_eq!(
+            d1.natural_frequency, d0.natural_frequency,
+            "natural_frequency must be bit-identical"
+        );
+    }
+
     /// A non-default inactive count adds coils to total and grows free/solid by d
     /// each, while rate is unchanged (rate depends only on active).
     #[test]
@@ -465,17 +484,7 @@ mod tests {
                 CurvatureCorrection::Bergstrasser,
             )
             .unwrap();
-        assert_relative_eq!(d1.total_coils - d0.total_coils, 1.0, max_relative = 1e-9);
-        assert_relative_eq!(
-            d1.solid_length.meters() - d0.solid_length.meters(),
-            0.002,
-            max_relative = 1e-9
-        );
-        assert_relative_eq!(
-            d1.rate.newtons_per_meter(),
-            d0.rate.newtons_per_meter(),
-            max_relative = 1e-12
-        );
+        assert_inactive_override_pins(&d0, &d1, Length::from_millimeters(2.0));
     }
 
     /// Permanent regression coverage: `TwoLoad`, `RateBased`, and `Dimensional` route
@@ -493,20 +502,6 @@ mod tests {
         let music_wire = crate::test_support::music_wire();
         let correction = CurvatureCorrection::Bergstrasser;
 
-        let assert_pins = |d0: &SpringDesign, d1: &SpringDesign| {
-            assert_relative_eq!(d1.total_coils - d0.total_coils, 1.0, max_relative = 1e-9);
-            assert_relative_eq!(
-                d1.solid_length.meters() - d0.solid_length.meters(),
-                wire_dia.meters(),
-                max_relative = 1e-9
-            );
-            assert_eq!(d1.rate, d0.rate, "rate must be bit-identical");
-            assert_eq!(
-                d1.natural_frequency, d0.natural_frequency,
-                "natural_frequency must be bit-identical"
-            );
-        };
-
         let two_load = |inactive_coils| TwoLoad {
             end_type,
             fixity: EndFixity::FixedFixed,
@@ -516,11 +511,12 @@ mod tests {
             point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
             inactive_coils,
         };
-        assert_pins(
+        assert_inactive_override_pins(
             &two_load(None).solve(&music_wire, correction).unwrap(),
             &two_load(Some(ne + 1.0))
                 .solve(&music_wire, correction)
                 .unwrap(),
+            wire_dia,
         );
 
         let rate_based = |inactive_coils| RateBased {
@@ -533,11 +529,12 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        assert_pins(
+        assert_inactive_override_pins(
             &rate_based(None).solve(&music_wire, correction).unwrap(),
             &rate_based(Some(ne + 1.0))
                 .solve(&music_wire, correction)
                 .unwrap(),
+            wire_dia,
         );
 
         let dimensional = |inactive_coils| Dimensional {
@@ -550,11 +547,12 @@ mod tests {
             free_length: Length::from_millimeters(60.0),
             loads: vec![Force::from_newtons(10.0)],
         };
-        assert_pins(
+        assert_inactive_override_pins(
             &dimensional(None).solve(&music_wire, correction).unwrap(),
             &dimensional(Some(ne + 1.0))
                 .solve(&music_wire, correction)
                 .unwrap(),
+            wire_dia,
         );
     }
 
