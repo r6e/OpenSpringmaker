@@ -1247,4 +1247,49 @@ mod tests {
         );
         assert!(matches!(err, Err(SpringError::InconsistentInputs(m)) if m.contains("inactive")));
     }
+
+    /// inactive == 0.0 must be ACCEPTED — pins the `>= 0.0` (not `> 0.0`) boundary.
+    /// SquaredGround, d=2mm, Na=10, inactive=0 (not the end-type default of 2):
+    /// Nt = Na + Ni = 10 + 0 = 10; Ls = d*Nt (ground) = 2*10 = 20 mm.
+    #[test]
+    fn solve_forward_accepts_zero_inactive() {
+        let m = crate::test_support::music_wire();
+        let design = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            0.0, // inactive = 0 → accepted, not the SquaredGround default of 2
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_relative_eq!(design.total_coils, 10.0, max_relative = 1e-12);
+        assert_relative_eq!(design.solid_length.millimeters(), 20.0, max_relative = 1e-9);
+    }
+
+    /// A non-finite inactive count must be rejected with the inactive-specific message.
+    #[test]
+    fn solve_forward_rejects_non_finite_inactive() {
+        let m = crate::test_support::music_wire();
+        let result = solve_forward(
+            &m,
+            EndType::SquaredGround,
+            EndFixity::FixedFixed,
+            Length::from_millimeters(2.0),
+            Length::from_millimeters(20.0),
+            10.0,
+            f64::INFINITY, // inactive = +Inf → rejected
+            Length::from_millimeters(60.0),
+            &[Force::from_newtons(10.0)],
+            CurvatureCorrection::Bergstrasser,
+        );
+        assert!(
+            matches!(&result, Err(SpringError::InconsistentInputs(m)) if m.contains("inactive")),
+            "non-finite inactive must be rejected with the inactive-specific message, got {result:?}"
+        );
+    }
 }
