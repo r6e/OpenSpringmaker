@@ -35,7 +35,10 @@ impl EndType {
         active + inactive
     }
 
-    /// Active coils from total coils: Na = Nt - Ne.
+    /// Active coils under the *default* inactive count: `Na = Nt - Ne`, where `Ne =
+    /// end_coils()`. NOTE: this is the end-type-default inverse and is NOT inactive-aware —
+    /// when a design specifies a non-default inactive count `Ni`, the true active count is
+    /// `total - Ni`, not `total - Ne`. Only valid at `Ni == Ne`. (Currently test-only.)
     pub fn active_coils(self, total: f64) -> f64 {
         total - self.end_coils()
     }
@@ -256,15 +259,10 @@ mod tests {
     }
 
     /// Backward-compat lock: at inactive = end_coils(), every geometry output equals
-    /// the pre-generalization value for all four end types. Fixture: d=2mm, Na=8, p=5mm.
+    /// the pre-generalization value for all four end types. Fixture: d=2mm, Na=8.
     #[test]
     fn inactive_equals_end_coils_reproduces_baseline() {
         let d = Length::from_millimeters(2.0);
-        // p is not directly used: the loop probes the free(pitch=d)==solid identity,
-        // not a pitch-5mm case (that combination is covered by the other three tests
-        // in this cluster). Kept only to anchor the "p=5mm" fixture note in the doc
-        // comment above.
-        let _p = Length::from_millimeters(5.0);
         let na = 8.0;
         for e in [
             EndType::Plain,
