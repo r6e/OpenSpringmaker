@@ -212,6 +212,11 @@ pub enum ConicalSpec {
         active: f64,
         free_length_mm: f64,
         loads_n: Vec<f64>,
+        // Optional field: serde maps a missing key to `None` for `Option` types (no
+        // `#[serde(default)]` needed), so a missing or misspelled `inactive_coils`
+        // deserializes to `None` — the end-type's Shigley Table 10-1 default — rather
+        // than erroring (same rule as compression's `ScenarioSpec::PowerUser`).
+        inactive_coils: Option<f64>,
     },
 }
 
@@ -2097,11 +2102,42 @@ loads_n = [10.0]
                 active: 10.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0, 25.0],
+                inactive_coils: None,
             }),
         };
         let toml = saved.to_toml().unwrap();
         let back = SavedDesign::from_toml(&toml).unwrap();
         assert_eq!(back, saved);
+    }
+
+    #[test]
+    fn conical_power_user_inactive_coils_round_trips_and_defaults_when_absent() {
+        // Present: Some(3.0) survives a save/load round trip.
+        let spec = ConicalSpec::PowerUser {
+            end_type: "squared_ground".to_string(),
+            wire_dia_mm: 2.0,
+            large_mean_dia_mm: 20.0,
+            small_mean_dia_mm: 12.0,
+            active: 10.0,
+            free_length_mm: 60.0,
+            loads_n: vec![10.0, 25.0],
+            inactive_coils: Some(3.0),
+        };
+        let toml = toml::to_string(&spec).unwrap();
+        let back: ConicalSpec = toml::from_str(&toml).unwrap();
+        assert_eq!(back, spec);
+        // Absent key → None (backward compatibility): a legacy body without the key.
+        let legacy = "type = \"PowerUser\"\nend_type = \"squared_ground\"\nwire_dia_mm = 2.0\n\
+                       large_mean_dia_mm = 20.0\nsmall_mean_dia_mm = 12.0\nactive = 10.0\n\
+                       free_length_mm = 60.0\nloads_n = [10.0, 25.0]\n";
+        let loaded: ConicalSpec = toml::from_str(legacy).unwrap();
+        assert!(matches!(
+            loaded,
+            ConicalSpec::PowerUser {
+                inactive_coils: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2151,6 +2187,7 @@ loads_n = [10.0]
                 active: 10.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0],
+                inactive_coils: None,
             }),
         };
         let err = saved

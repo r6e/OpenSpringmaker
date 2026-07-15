@@ -7,7 +7,9 @@ use springcore::{
     parse_end_type, ConicalSpec, CurvatureCorrection, MaterialStore, Result, UnitSystem,
 };
 
-use crate::form_helpers::{fmt_len, fmt_loads, length_mm, loads_n, positive_num};
+use crate::form_helpers::{
+    fmt_len, fmt_loads, length_mm, loads_n, optional_non_negative_num, positive_num,
+};
 
 /// A form input field (one per text input; the end-type picker is separate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +20,7 @@ pub enum Field {
     Active,
     FreeLength,
     Loads,
+    Inactive,
 }
 
 /// Conical form state. `end_type` holds the persisted key
@@ -32,6 +35,8 @@ pub struct ConFormState {
     pub free_length: String,
     /// Comma-separated loads (compression's idiom).
     pub loads: String,
+    /// Optional inactive-coil override; blank defers to the end-type's default.
+    pub inactive: String,
 }
 
 impl Default for ConFormState {
@@ -44,6 +49,7 @@ impl Default for ConFormState {
             active: String::new(),
             free_length: String::new(),
             loads: String::new(),
+            inactive: String::new(),
         }
     }
 }
@@ -95,6 +101,7 @@ pub fn parse_and_solve(
         active_coils: positive_num("active coils", &form.active)?,
         free_length: Length::from_millimeters(length_mm("free length", &form.free_length, us)?),
         end_type: parse_end_type(&form.end_type)?,
+        inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
     };
     let loads: Vec<Force> = loads_n(&form.loads, us)?
         .into_iter()
@@ -115,6 +122,7 @@ pub fn build_spec(form: &ConFormState, us: UnitSystem) -> Result<ConicalSpec> {
         active: positive_num("active coils", &form.active)?,
         free_length_mm: length_mm("free length", &form.free_length, us)?,
         loads_n: loads_n(&form.loads, us)?,
+        inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
     })
 }
 
@@ -129,6 +137,7 @@ pub fn populate_from_spec(form: &mut ConFormState, spec: &ConicalSpec, us: UnitS
             active,
             free_length_mm,
             loads_n,
+            inactive_coils,
         } => {
             form.end_type = end_type.clone();
             form.wire_dia = fmt_len(*wire_dia_mm, us);
@@ -137,6 +146,7 @@ pub fn populate_from_spec(form: &mut ConFormState, spec: &ConicalSpec, us: UnitS
             form.active = active.to_string();
             form.free_length = fmt_len(*free_length_mm, us);
             form.loads = fmt_loads(loads_n, us);
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
     }
 }
@@ -156,6 +166,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10, 25".into(),
+            inactive: String::new(),
         }
     }
 
@@ -183,6 +194,7 @@ mod tests {
             active_coils: 10.0,
             free_length: springcore::units::Length::from_millimeters(60.0),
             end_type: springcore::EndType::SquaredGround,
+            inactive_coils: None,
         };
         let direct = springcore::conical::solve_forward(
             material,
@@ -267,12 +279,25 @@ mod tests {
                 Field::Active => f.active = "1".into(),
                 Field::FreeLength => f.free_length = "1".into(),
                 Field::Loads => f.loads = "1".into(),
+                Field::Inactive => f.inactive = "1".into(),
             }
             assert!(!f.is_blank(), "{field:?} alone must trip is_blank");
         }
         // The end-type selector alone does NOT count.
         let f = ConFormState {
             end_type: "plain".into(),
+            ..ConFormState::default()
+        };
+        assert!(f.is_blank());
+    }
+
+    #[test]
+    fn inactive_alone_does_not_count_toward_is_blank() {
+        // The optional inactive-coil override, like the end-type selector,
+        // is not one of the required fields — filling it alone must not
+        // clear the blank state (compression's `Field::Inactive` pattern).
+        let f = ConFormState {
+            inactive: "3".into(),
             ..ConFormState::default()
         };
         assert!(f.is_blank());
@@ -305,6 +330,31 @@ mod tests {
                 "expected '{needle}' in: {err}"
             );
         }
+    }
+
+    #[test]
+    fn conical_inactive_round_trips_and_solves() {
+        let mut form = ConFormState {
+            inactive: "4".into(), // end_type squared_ground, active 10 (metric_form)
+            ..metric_form()
+        };
+        let spec = build_spec(&form, UnitSystem::Metric).unwrap();
+        assert!(
+            matches!(spec, ConicalSpec::PowerUser { inactive_coils: Some(v), .. } if (v - 4.0).abs() < 1e-9)
+        );
+        form.inactive.clear();
+        populate_from_spec(&mut form, &spec, UnitSystem::Metric);
+        assert_eq!(form.inactive, "4");
+        let materials = store();
+        let out = parse_and_solve(
+            &form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_relative_eq!(out.design.total_coils, 14.0, max_relative = 1e-9); // active 10 + inactive 4
     }
 
     #[test]

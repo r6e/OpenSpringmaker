@@ -1197,6 +1197,7 @@ impl App {
             CF::Active => f.active = value,
             CF::FreeLength => f.free_length = value,
             CF::Loads => f.loads = value,
+            CF::Inactive => f.inactive = value,
         }
     }
 
@@ -2300,6 +2301,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10".into(),
+            inactive: String::new(),
         };
         let con_out = con_parse_and_solve(
             &con_form,
@@ -2355,6 +2357,7 @@ mod tests {
             active: "10".into(),
             free_length: "60".into(),
             loads: "10".into(),
+            inactive: String::new(),
         };
         let con_out = con_parse_and_solve(
             &con_form,
@@ -2405,6 +2408,7 @@ mod tests {
                 active: 10.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0],
+                inactive_coils: None,
             }),
         });
         assert_eq!(app.family, springcore::Family::Conical);

@@ -23,6 +23,9 @@ pub struct ConicalInputs {
     pub active_coils: f64,
     pub free_length: Length,
     pub end_type: EndType,
+    /// User override for the inactive-coil count; `None` defers to the
+    /// end-type's Shigley Table 10-1 default (`EndType::resolve_inactive`).
+    pub inactive_coils: Option<f64>,
 }
 
 /// A solved conical design (linear-range model).
@@ -131,6 +134,12 @@ pub fn solve_forward(
             "active coils must be a positive finite number".into(),
         ));
     }
+    let inactive = inputs.end_type.resolve_inactive(inputs.inactive_coils);
+    if !(inactive.is_finite() && inactive >= 0.0) {
+        return Err(SpringError::InconsistentInputs(
+            "inactive coils must be a finite number ≥ 0".into(),
+        ));
+    }
     let l0 = inputs.free_length.meters();
     if !(l0.is_finite() && l0 > 0.0) {
         return Err(SpringError::InconsistentInputs(
@@ -159,17 +168,14 @@ pub fn solve_forward(
         inputs.small_mean_dia,
         inputs.active_coils,
     );
-    let total_coils = inputs
-        .end_type
-        .total_coils(inputs.active_coils, inputs.end_type.end_coils());
+    let total_coils = inputs.end_type.total_coils(inputs.active_coils, inactive);
     // Conservative non-telescoping solid stack (Shigley Table 10-1); when the
     // geometry telescopes the true solid height is lower — flagged, not modeled
     // (no cited telescoped-height formula in-house).
-    let solid_length = inputs.end_type.solid_length(
-        inputs.wire_dia,
-        inputs.active_coils,
-        inputs.end_type.end_coils(),
-    );
+    let solid_length =
+        inputs
+            .end_type
+            .solid_length(inputs.wire_dia, inputs.active_coils, inactive);
     if l0 < solid_length.meters() {
         // Structured (R2 stateful-UI F3 sibling sweep): the conservative
         // non-telescoping solid length is this family's close-wound
@@ -183,7 +189,7 @@ pub fn solve_forward(
         inputs.wire_dia,
         inputs.active_coils,
         inputs.free_length,
-        inputs.end_type.end_coils(),
+        inactive,
     );
     // Geometric nesting condition: per-coil mean-radius step ≥ wire diameter.
     let telescopes = (dl - ds) / (2.0 * inputs.active_coils) >= d;
@@ -360,6 +366,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         }
     }
 
@@ -682,6 +689,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(50.0), // < Ls = 120 mm
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let result = solve_inputs(&i);
         assert!(
@@ -720,6 +728,7 @@ mod tests {
             active_coils: 3.2e-308,
             free_length: Length::from_millimeters(4.0), // == 2d ⇒ pitch = 0
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let result = solve_forward(&m, &i, &[], crate::CurvatureCorrection::Bergstrasser);
         assert_eq!(
@@ -743,6 +752,7 @@ mod tests {
             active_coils: 1e-150,
             free_length: Length::from_meters(3e158),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let result = solve_forward(
             &m,
@@ -787,6 +797,7 @@ mod tests {
             active_coils: 6.0,
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let design = solve_forward(
             &m,
@@ -880,6 +891,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         // The `dl <= d` guard fires before the ordering guard at line 124.
         // With `dl < d` mutation: 2.0 < 2.0 is false → guard skipped → ordering fires.
@@ -919,6 +931,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(24.0), // == Ls = d(Na+2) = 24mm
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let result = solve_forward(
             &m,
@@ -972,6 +985,78 @@ mod tests {
         );
     }
 
+    // ── User-specifiable inactive coils (Task 4) ────────────────────────────
+
+    #[test]
+    fn inactive_grows_geometry_but_not_telescopes() {
+        // D_large=92mm, D_small=52mm, d=2mm, Na=10: (92-52)/(2*10) = 2mm >= d
+        // → telescopes == true (the exact boundary fixture `telescoping_flag_boundary`
+        // already trusts). Both variants must stay telescoping — proving the flag
+        // is genuinely axial-orthogonal to dead coils, not vacuously false==false.
+        let mut base = inputs(92.0, 52.0);
+        base.inactive_coils = None;
+        let mats = crate::test_support::music_wire();
+        let d0 = solve_forward(
+            &mats,
+            &base,
+            &[Force::from_newtons(20.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert!(d0.telescopes, "fixture must actually telescope");
+        let bumped = ConicalInputs {
+            inactive_coils: Some(4.0),
+            ..base.clone()
+        }; // +2 coils
+        let d1 = solve_forward(
+            &mats,
+            &bumped,
+            &[Force::from_newtons(20.0)],
+            crate::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_eq!(d1.telescopes, d0.telescopes); // telescoping is axial-orthogonal to dead coils
+        assert_relative_eq!(d1.total_coils - d0.total_coils, 2.0, max_relative = 1e-9);
+        assert_relative_eq!(
+            d1.solid_length.meters() - d0.solid_length.meters(),
+            0.004,
+            max_relative = 1e-9
+        ); // 2 * d(2mm)
+        assert_relative_eq!(
+            d1.rate.newtons_per_meter(),
+            d0.rate.newtons_per_meter(),
+            max_relative = 1e-12
+        );
+    }
+
+    #[test]
+    fn conical_rejects_negative_inactive() {
+        let bad = ConicalInputs {
+            inactive_coils: Some(-1.0),
+            ..inputs(30.0, 18.0)
+        };
+        assert!(matches!(
+            solve_forward(
+                &crate::test_support::music_wire(),
+                &bad,
+                &[Force::from_newtons(20.0)],
+                crate::CurvatureCorrection::Bergstrasser
+            ),
+            Err(SpringError::InconsistentInputs(m)) if m.contains("inactive")
+        ));
+    }
+
+    /// Zero inactive coils is legal (pins the `>= 0.0` boundary, not `> 0.0`) —
+    /// mirrors Task 1's identical compression guard test.
+    #[test]
+    fn conical_accepts_zero_inactive() {
+        let ok = ConicalInputs {
+            inactive_coils: Some(0.0),
+            ..inputs(30.0, 18.0)
+        };
+        assert!(solve_inputs(&ok).is_ok(), "Some(0.0) inactive must be accepted");
+    }
+
     #[test]
     fn empty_loads_with_overflow_diameters_trip_the_output_guard() {
         // rate denominator overflows → rate = 0.0 (finite); with no load points the
@@ -985,6 +1070,7 @@ mod tests {
             active_coils: 10.0,
             free_length: Length::from_millimeters(60.0),
             end_type: EndType::SquaredGround,
+            inactive_coils: None,
         };
         let result = solve_forward(&m, &i, &[], crate::CurvatureCorrection::Bergstrasser);
         assert_eq!(
