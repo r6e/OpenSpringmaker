@@ -39,7 +39,10 @@
 - `src/conical/{form.rs, view_model.rs, view.rs}`, `src/app.rs` — conical field. (Task 4)
 - `src/assembly/{form.rs, view.rs}`, `src/app.rs` — per-member field. (Task 5)
 
-**Task dependency order:** 1 → 2 → 3; 4 and 5 depend only on Task 1 (independent spec fields) but execute after 3. Each task ends green and independently reviewable.
+**Demo data (repo root):**
+- `examples/compression_music_wire.toml`, `examples/conical_chrome_silicon.toml` — carry a non-default `inactive_coils` to showcase dead coils. (Task 6)
+
+**Task dependency order:** 1 → 2 → 3; 4 and 5 depend only on Task 1 (independent spec fields) but execute after 3; 6 runs last (needs the compression + conical spec fields from Tasks 2 and 4). Each task ends green and independently reviewable.
 
 ---
 
@@ -843,6 +846,46 @@ AssemblyMember + AssemblyMemberSpec gain inactive_coils: Option<f64>; each membe
 solve resolves it (the design::solve_forward guard already covers assembly). Extra
 dead coils raise per-member solid length, flowing into the aggregate free/solid and
 travel-limit math. Per-member GUI input with the end-type default hint.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+---
+
+## Task 6: Demo example files — showcase dead coils
+
+Update one or two existing demo files to carry a non-default `inactive_coils`, so the live showcase visibly demonstrates extra dead coils (tight-wound end coils beyond the end-type default). Extension and torsion example files are out of scope (close-wound; no `inactive_coils` field) and MUST be left unchanged. Follow the established demo-file discipline: generate from `SavedDesign` structs, verify through the real load+solve path, remove the throwaway generator (files persist).
+
+**Files:**
+- Modify: `examples/compression_music_wire.toml` (Compression PowerUser — bump `inactive_coils` above the end-type default)
+- Modify: `examples/conical_chrome_silicon.toml` (Conical PowerUser — same)
+- (Throwaway, deleted after use) a `#[cfg(test)]` generator/verifier module in `springmaker` (a bin crate — no lib — so the generator must be an in-crate test, per the demo-file convention)
+
+**Interfaces:**
+- Consumes: `ScenarioSpec::PowerUser.inactive_coils` (Task 2), `ConicalSpec::PowerUser.inactive_coils` (Task 4); `springcore::{SavedDesign, DesignSpec, ...}`; the GUI load path `populate_from_spec` → `parse_and_solve`.
+
+- [ ] **Step 1: Read the two current example files** (`examples/compression_music_wire.toml`, `examples/conical_chrome_silicon.toml`) to capture their exact current fields (material, unit_system, end_type, wire/mean dia, active, free_length, loads). Record the end type of each so you know its default inactive count (`end_coils()`): Plain 0 / PlainGround 1 / Squared|SquaredGround 2.
+
+- [ ] **Step 2: Choose the dead-coil counts.** For each file, set `inactive_coils` to `end_type default + 2` (two extra dead coils — clearly visible in the render without dominating the spring). Confirm arithmetically that `free_length` still exceeds the new solid length: new solid = `d·(active + inactive)` (ground) or `d·(active + inactive + 1)` (non-ground); each extra dead coil adds one `d`. If headroom is tight, use `+1` instead. The verifier in Step 4 is the real check.
+
+- [ ] **Step 3: Regenerate the files from `SavedDesign` structs.** Add a throwaway `#[cfg(test)]` module (e.g. in `springmaker/src/`) that constructs the two `SavedDesign` values with the chosen `inactive_coils: Some(...)` and calls `.save(path)` for each — do NOT hand-edit the TOML tags (the internally-tagged-enum traps: double `family`/`type`, ordering). Reuse the exact other field values read in Step 1 so only `inactive_coils` changes. Run it: `cargo test -p springmaker <generator_test_name> -- --ignored` (mark it `#[ignore]` so it only runs on demand).
+
+- [ ] **Step 4: Verify via the real load+solve path — zero Warning-severity status.** In the same throwaway module, for each regenerated file: load it (`SavedDesign::load` or the app's load path), `populate_from_spec(&mut form, &spec, us)`, then `parse_and_solve(...)`, and assert the resulting status has NO `Severity::Warning` messages (compression → `FormOutcome.status`; conical → `springcore::conical::evaluate_status`). Assert `total_coils == active + inactive` for each. Run it and confirm PASS. (This is the same verification PR #71 used.)
+
+- [ ] **Step 5: Remove the throwaway generator/verifier module.** Delete the `#[cfg(test)]` generator module; the two regenerated `examples/*.toml` files persist. Confirm the workspace still builds/tests: `cargo test --workspace`.
+
+- [ ] **Step 6: Confirm the untouched files.** Verify `git diff --stat` shows ONLY `examples/compression_music_wire.toml` and `examples/conical_chrome_silicon.toml` changed under `examples/` (extension/torsion/assembly example files unchanged), plus the deleted generator.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add examples/compression_music_wire.toml examples/conical_chrome_silicon.toml
+git commit -m "chore(examples): showcase dead coils in compression + conical demos
+
+Set a non-default inactive_coils (end-type default + extra dead coils) on the
+compression and conical demo springs, regenerated from SavedDesign structs and
+verified warning-free through the real load+solve path. Extension/torsion demos
+unchanged (close-wound; out of scope).
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
