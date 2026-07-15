@@ -205,7 +205,9 @@ pub(crate) fn optional_non_negative_num(field: &str, value: &str) -> Result<Opti
     }
     let v = num(field, value)?; // finite check
     if v < 0.0 {
-        return Err(SpringError::InconsistentInputs(format!("{field} must be ≥ 0")));
+        return Err(SpringError::InconsistentInputs(format!(
+            "{field} must be ≥ 0"
+        )));
     }
     Ok(Some(v))
 }
@@ -366,10 +368,22 @@ mod tests {
 
     #[test]
     fn optional_non_negative_num_parses_blank_and_values() {
-        assert_eq!(optional_non_negative_num("inactive coils", "   ").unwrap(), None);
-        assert_eq!(optional_non_negative_num("inactive coils", "2").unwrap(), Some(2.0));
-        assert_eq!(optional_non_negative_num("inactive coils", "1.5").unwrap(), Some(1.5));
-        assert_eq!(optional_non_negative_num("inactive coils", "0").unwrap(), Some(0.0));
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "   ").unwrap(),
+            None
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "2").unwrap(),
+            Some(2.0)
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "1.5").unwrap(),
+            Some(1.5)
+        );
+        assert_eq!(
+            optional_non_negative_num("inactive coils", "0").unwrap(),
+            Some(0.0)
+        );
         assert!(optional_non_negative_num("inactive coils", "-1").is_err());
         assert!(optional_non_negative_num("inactive coils", "abc").is_err());
     }

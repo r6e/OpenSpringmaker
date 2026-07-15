@@ -172,10 +172,9 @@ pub fn solve_forward(
     // Conservative non-telescoping solid stack (Shigley Table 10-1); when the
     // geometry telescopes the true solid height is lower — flagged, not modeled
     // (no cited telescoped-height formula in-house).
-    let solid_length =
-        inputs
-            .end_type
-            .solid_length(inputs.wire_dia, inputs.active_coils, inactive);
+    let solid_length = inputs
+        .end_type
+        .solid_length(inputs.wire_dia, inputs.active_coils, inactive);
     if l0 < solid_length.meters() {
         // Structured (R2 stateful-UI F3 sibling sweep): the conservative
         // non-telescoping solid length is this family's close-wound
@@ -1054,7 +1053,10 @@ mod tests {
             inactive_coils: Some(0.0),
             ..inputs(30.0, 18.0)
         };
-        assert!(solve_inputs(&ok).is_ok(), "Some(0.0) inactive must be accepted");
+        assert!(
+            solve_inputs(&ok).is_ok(),
+            "Some(0.0) inactive must be accepted"
+        );
     }
 
     #[test]

@@ -1188,12 +1188,7 @@ mod tests {
     #[test]
     fn member_inactive_raises_nested_solid_length() {
         let m0 = baseline_member(); // inactive_coils: None
-        let d0 = solve(
-            Topology::Nested,
-            vec![m0.clone(), soft_member()],
-            &[30.0],
-        )
-        .unwrap();
+        let d0 = solve(Topology::Nested, vec![m0.clone(), soft_member()], &[30.0]).unwrap();
         let m1 = AssemblyMember {
             inactive_coils: Some(m0.end_type.end_coils() + 2.0),
             ..baseline_member()
