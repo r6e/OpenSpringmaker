@@ -258,6 +258,14 @@ pub fn inputs_view(app: &App) -> InputsView {
     let force = unit_force_label(us);
     let rate = unit_rate_label(us);
 
+    // The end-type default hint (Shigley Table 10-1 inactive-coil count) surfaced
+    // in the label — the `text_input` placeholder is hard-coded and not
+    // presenter-reachable (ADR 0008), so the default lives here instead.
+    let inactive_label = match springcore::parse_end_type(&f.end_type) {
+        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
+        Err(_) => "Inactive coils (optional)".to_string(),
+    };
+
     if f.scenario == ScenarioKind::MinWeight {
         return InputsView {
             primary: vec![
@@ -274,6 +282,7 @@ pub fn inputs_view(app: &App) -> InputsView {
                     Field::CandidateDiameters,
                 ),
                 FieldDescriptor::new("Clash allowance (fraction)", Field::ClashAllowance),
+                FieldDescriptor::new(inactive_label.clone(), Field::Inactive),
             ],
             fatigue: Vec::new(),
         };
@@ -333,6 +342,7 @@ pub fn inputs_view(app: &App) -> InputsView {
         }
         ScenarioKind::MinWeight => unreachable!("MinWeight handled by the early return above"),
     }
+    primary.push(FieldDescriptor::new(inactive_label, Field::Inactive));
 
     let fatigue = vec![
         FieldDescriptor::new(format!("Min cycle force ({force})"), Field::FatigueMin),
@@ -697,6 +707,7 @@ mod tests {
                 Field::MaxOuterDia,
                 Field::CandidateDiameters,
                 Field::ClashAllowance,
+                Field::Inactive,
             ]
         );
     }
@@ -712,12 +723,32 @@ mod tests {
                 Field::Rate,
                 Field::FreeLength,
                 Field::Loads,
+                Field::Inactive,
             ]
         );
         assert_eq!(
             fields(&v.fatigue),
             vec![Field::FatigueMin, Field::FatigueMax]
         );
+    }
+
+    #[test]
+    fn inputs_view_includes_inactive_with_end_type_default_hint() {
+        // rate_based_metric() is already end_type "squared_ground" (default inactive = 2);
+        // override the scenario to PowerUser to match the brief's fixture intent.
+        let form = FormState {
+            scenario: ScenarioKind::PowerUser,
+            ..rate_based_metric()
+        };
+        let app = app_with(form);
+        let inputs = inputs_view(&app);
+        let fd = inputs
+            .primary
+            .iter()
+            .find(|f| matches!(f.field, Field::Inactive))
+            .expect("inactive descriptor present");
+        assert!(fd.label.contains("Inactive coils"));
+        assert!(fd.label.contains("default 2"), "label was {:?}", fd.label);
     }
 
     #[test]

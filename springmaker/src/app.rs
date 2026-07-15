@@ -1116,6 +1116,7 @@ impl App {
             Field::FreeLength => f.free_length = value,
             Field::Rate => f.rate = value,
             Field::Loads => f.loads = value,
+            Field::Inactive => f.inactive = value,
             Field::Force1 => f.force1 = value,
             Field::Length1 => f.length1 = value,
             Field::Force2 => f.force2 = value,

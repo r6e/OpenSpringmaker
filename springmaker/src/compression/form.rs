@@ -2,7 +2,7 @@
 
 use crate::form_helpers::{
     fmt_force, fmt_len, fmt_loads, fmt_rate, length_mm, loads_n, non_negative_force_n, num,
-    positive_force_n, positive_num, rate_npm,
+    optional_non_negative_num, positive_force_n, positive_num, rate_npm,
 };
 use springcore::units::Force;
 use springcore::UnitSystem;
@@ -32,6 +32,7 @@ pub enum Field {
     FreeLength,
     Rate,
     Loads,
+    Inactive,
     Force1,
     Length1,
     Force2,
@@ -92,6 +93,7 @@ pub struct FormState {
     pub free_length: String,
     pub rate: String,
     pub loads: String,
+    pub inactive: String,
     pub force1: String,
     pub length1: String,
     pub force2: String,
@@ -120,6 +122,7 @@ impl Default for FormState {
             free_length: String::new(),
             rate: String::new(),
             loads: String::new(),
+            inactive: String::new(),
             force1: String::new(),
             length1: String::new(),
             force2: String::new(),
@@ -219,6 +222,7 @@ pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
             active: positive_num("active coils", &form.active)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             loads_n: loads_n(&form.loads, us)?,
+            inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
         },
         ScenarioKind::TwoLoad => ScenarioSpec::TwoLoad {
             end_type: form.end_type.clone(),
@@ -229,6 +233,7 @@ pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
             length1_mm: length_mm("length 1", &form.length1, us)?,
             force2_n: non_negative_force_n("force 2", &form.force2, us)?,
             length2_mm: length_mm("length 2", &form.length2, us)?,
+            inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
         },
         ScenarioKind::RateBased => ScenarioSpec::RateBased {
             end_type: form.end_type.clone(),
@@ -238,6 +243,7 @@ pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
             rate_n_per_m: rate_npm("rate", &form.rate, us)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             loads_n: loads_n(&form.loads, us)?,
+            inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
         },
         ScenarioKind::Dimensional => ScenarioSpec::Dimensional {
             end_type: form.end_type.clone(),
@@ -247,6 +253,7 @@ pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
             active: positive_num("active coils", &form.active)?,
             free_length_mm: length_mm("free length", &form.free_length, us)?,
             loads_n: loads_n(&form.loads, us)?,
+            inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
         },
         ScenarioKind::MinWeight => {
             let diameters_mm: Vec<f64> = form
@@ -276,6 +283,7 @@ pub fn build_spec(form: &FormState, us: UnitSystem) -> Result<ScenarioSpec> {
                 max_outer_dia_mm,
                 candidate_diameters_mm: diameters_mm,
                 clash_allowance: num("clash allowance", &form.clash_allowance)?,
+                inactive_coils: optional_non_negative_num("inactive coils", &form.inactive)?,
             }
         }
     })
@@ -296,6 +304,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             active,
             free_length_mm,
             loads_n,
+            inactive_coils,
         } => {
             form.scenario = ScenarioKind::PowerUser;
             form.end_type = end_type.clone();
@@ -305,6 +314,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             form.active = format!("{active}");
             form.free_length = fmt_len(*free_length_mm, us);
             form.loads = fmt_loads(loads_n, us);
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
         ScenarioSpec::TwoLoad {
             end_type,
@@ -315,6 +325,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             length1_mm,
             force2_n,
             length2_mm,
+            inactive_coils,
         } => {
             form.scenario = ScenarioKind::TwoLoad;
             form.end_type = end_type.clone();
@@ -325,6 +336,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             form.length1 = fmt_len(*length1_mm, us);
             form.force2 = fmt_force(*force2_n, us);
             form.length2 = fmt_len(*length2_mm, us);
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
         ScenarioSpec::RateBased {
             end_type,
@@ -334,6 +346,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             rate_n_per_m,
             free_length_mm,
             loads_n,
+            inactive_coils,
         } => {
             form.scenario = ScenarioKind::RateBased;
             form.end_type = end_type.clone();
@@ -343,6 +356,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             form.rate = fmt_rate(*rate_n_per_m, us);
             form.free_length = fmt_len(*free_length_mm, us);
             form.loads = fmt_loads(loads_n, us);
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
         ScenarioSpec::Dimensional {
             end_type,
@@ -352,6 +366,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             active,
             free_length_mm,
             loads_n,
+            inactive_coils,
         } => {
             form.scenario = ScenarioKind::Dimensional;
             form.end_type = end_type.clone();
@@ -361,6 +376,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             form.active = format!("{active}");
             form.free_length = fmt_len(*free_length_mm, us);
             form.loads = fmt_loads(loads_n, us);
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
         ScenarioSpec::MinWeight {
             end_type,
@@ -372,6 +388,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
             max_outer_dia_mm,
             candidate_diameters_mm,
             clash_allowance,
+            inactive_coils,
         } => {
             form.scenario = ScenarioKind::MinWeight;
             form.end_type = end_type.clone();
@@ -389,6 +406,7 @@ pub fn populate_from_spec(form: &mut FormState, spec: &ScenarioSpec, us: UnitSys
                 .collect::<Vec<_>>()
                 .join(", ");
             form.clash_allowance = format!("{clash_allowance}");
+            form.inactive = inactive_coils.map(|v| format!("{v}")).unwrap_or_default();
         }
     }
 }
@@ -493,6 +511,23 @@ mod tests {
             loads: "10, 30".into(),
             fatigue_min: "10".into(),
             fatigue_max: "30".into(),
+            ..Default::default()
+        }
+    }
+
+    /// A valid PowerUser form (SquaredGround end type, so the end-type default
+    /// inactive-coil count is 2; active = 10 for a round total_coils == 12 at
+    /// the default).
+    fn power_user_squared_ground_form() -> FormState {
+        FormState {
+            scenario: ScenarioKind::PowerUser,
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            wire_dia: "2.0".into(),
+            mean_dia: "20.0".into(),
+            active: "10".into(),
+            free_length: "60.0".into(),
+            loads: "10, 30".into(),
             ..Default::default()
         }
     }
@@ -888,6 +923,41 @@ mod tests {
 
         let spec2 = build_spec(&form2, us).unwrap();
         assert_eq!(spec1, spec2);
+    }
+
+    #[test]
+    fn inactive_field_round_trips_through_spec() {
+        let mut form = FormState {
+            scenario: ScenarioKind::PowerUser,
+            inactive: "3".into(),
+            ..power_user_squared_ground_form()
+        };
+        let spec = build_spec(&form, UnitSystem::Metric).unwrap();
+        assert!(
+            matches!(spec, ScenarioSpec::PowerUser { inactive_coils: Some(v), .. } if (v - 3.0).abs() < 1e-9)
+        );
+        form.inactive.clear();
+        populate_from_spec(&mut form, &spec, UnitSystem::Metric);
+        assert_eq!(form.inactive, "3"); // Some(3.0) → "3"
+    }
+
+    #[test]
+    fn inactive_override_shows_in_total_coils() {
+        let materials = MaterialStore::new(MaterialSet::load_default());
+        let form = FormState {
+            scenario: ScenarioKind::PowerUser,
+            inactive: "4".into(),
+            ..power_user_squared_ground_form() // active=10, SquaredGround default 2
+        };
+        let out = parse_and_solve(
+            &form,
+            "Music Wire",
+            UnitSystem::Metric,
+            &materials,
+            springcore::CurvatureCorrection::Bergstrasser,
+        )
+        .unwrap();
+        assert_relative_eq!(out.design.total_coils, 14.0, max_relative = 1e-9); // active 10 + inactive 4
     }
 
     fn min_weight_metric() -> FormState {
