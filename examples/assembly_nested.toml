@@ -1,0 +1,29 @@
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Assembly"
+type = "PowerUser"
+topology = "nested"
+fixity = "fixed_fixed"
+loads_n = [
+    60.0,
+    120.0,
+    190.0,
+]
+
+[[design.members]]
+material_name = "Music Wire"
+end_type = "squared_ground"
+wire_dia_mm = 3.5
+mean_dia_mm = 40.0
+active = 7.0
+free_length_mm = 70.0
+
+[[design.members]]
+material_name = "Stainless 302"
+end_type = "squared_ground"
+wire_dia_mm = 2.5
+mean_dia_mm = 26.0
+active = 8.0
+free_length_mm = 70.0

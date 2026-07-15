@@ -1,0 +1,29 @@
+material = "Music Wire"
+unit_system = "Metric"
+
+[design]
+family = "Assembly"
+type = "PowerUser"
+topology = "series"
+fixity = "fixed_fixed"
+loads_n = [
+    40.0,
+    80.0,
+    110.0,
+]
+
+[[design.members]]
+material_name = "Music Wire"
+end_type = "squared_ground"
+wire_dia_mm = 3.5
+mean_dia_mm = 30.0
+active = 6.0
+free_length_mm = 55.0
+
+[[design.members]]
+material_name = "Oil-Tempered Wire"
+end_type = "squared_ground"
+wire_dia_mm = 3.0
+mean_dia_mm = 24.0
+active = 9.0
+free_length_mm = 70.0
