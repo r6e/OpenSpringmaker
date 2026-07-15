@@ -478,6 +478,86 @@ mod tests {
         );
     }
 
+    /// Permanent regression coverage: `TwoLoad`, `RateBased`, and `Dimensional` route
+    /// `inactive_coils` through the same `solve_forward` call as `PowerUser` (see
+    /// `power_user_honors_inactive_override`) — this pins that bumping the inactive
+    /// override one coil above the end-type default adds exactly one coil to
+    /// `total_coils`, one wire diameter to `solid_length`, and leaves `rate` and
+    /// `natural_frequency` bit-identical for all three, not just PowerUser.
+    #[test]
+    fn other_scenarios_honor_inactive_override() {
+        let end_type = EndType::Squared; // non-ground; ne = 2.0
+        let ne = end_type.end_coils();
+        let wire_dia = Length::from_millimeters(2.0);
+        let mean_dia = Length::from_millimeters(20.0);
+        let music_wire = crate::test_support::music_wire();
+        let correction = CurvatureCorrection::Bergstrasser;
+
+        let assert_pins = |d0: &SpringDesign, d1: &SpringDesign| {
+            assert_relative_eq!(d1.total_coils - d0.total_coils, 1.0, max_relative = 1e-9);
+            assert_relative_eq!(
+                d1.solid_length.meters() - d0.solid_length.meters(),
+                wire_dia.meters(),
+                max_relative = 1e-9
+            );
+            assert_eq!(d1.rate, d0.rate, "rate must be bit-identical");
+            assert_eq!(
+                d1.natural_frequency, d0.natural_frequency,
+                "natural_frequency must be bit-identical"
+            );
+        };
+
+        let two_load = |inactive_coils| TwoLoad {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            mean_dia,
+            point1: (Force::from_newtons(10.0), Length::from_millimeters(55.0)),
+            point2: (Force::from_newtons(20.0), Length::from_millimeters(50.0)),
+            inactive_coils,
+        };
+        assert_pins(
+            &two_load(None).solve(&music_wire, correction).unwrap(),
+            &two_load(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+        );
+
+        let rate_based = |inactive_coils| RateBased {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            mean_dia,
+            rate: SpringRate::from_newtons_per_meter(2000.0),
+            inactive_coils,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert_pins(
+            &rate_based(None).solve(&music_wire, correction).unwrap(),
+            &rate_based(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+        );
+
+        let dimensional = |inactive_coils| Dimensional {
+            end_type,
+            fixity: EndFixity::FixedFixed,
+            wire_dia,
+            outer_dia: Length::from_millimeters(22.0),
+            active: 10.0,
+            inactive_coils,
+            free_length: Length::from_millimeters(60.0),
+            loads: vec![Force::from_newtons(10.0)],
+        };
+        assert_pins(
+            &dimensional(None).solve(&music_wire, correction).unwrap(),
+            &dimensional(Some(ne + 1.0))
+                .solve(&music_wire, correction)
+                .unwrap(),
+        );
+    }
+
     /// Enough extra dead coils push solid length above the user's fixed free length,
     /// tripping the existing FreeLengthBelowMinimum guard (no new guard needed).
     #[test]
