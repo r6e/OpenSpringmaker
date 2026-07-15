@@ -8,7 +8,7 @@ use springcore::{
     CurvatureCorrection, MaterialStore, Result, SpringError, UnitSystem,
 };
 
-use crate::form_helpers::{length_mm, loads_n, positive_num};
+use crate::form_helpers::{length_mm, loads_n, optional_non_negative_num, positive_num};
 
 /// One member's editable text field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub enum MemberField {
     MeanDia,
     Active,
     FreeLength,
+    Inactive,
 }
 
 /// One member's form inputs (all strings; material/end-type via pickers).
@@ -28,6 +29,8 @@ pub struct AsmMemberForm {
     pub mean_dia: String,
     pub active: String,
     pub free_length: String,
+    /// Optional inactive-coil override; blank defers to the end-type's default.
+    pub inactive: String,
 }
 
 impl AsmMemberForm {
@@ -40,6 +43,7 @@ impl AsmMemberForm {
             mean_dia: String::new(),
             active: String::new(),
             free_length: String::new(),
+            inactive: String::new(),
         }
     }
 
@@ -117,6 +121,7 @@ pub fn parse_and_solve(
                     us,
                 )?),
                 end_type: parse_end_type(&m.end_type)?,
+                inactive_coils: optional_non_negative_num("inactive coils", &m.inactive)?,
             })
         })?);
     }
@@ -148,6 +153,7 @@ pub fn build_spec(form: &AsmFormState, us: UnitSystem) -> Result<AssemblySpec> {
                     mean_dia_mm: length_mm("mean diameter", &m.mean_dia, us)?,
                     active: positive_num("active coils", &m.active)?,
                     free_length_mm: length_mm("free length", &m.free_length, us)?,
+                    inactive_coils: optional_non_negative_num("inactive coils", &m.inactive)?,
                 })
             })
         })
@@ -185,6 +191,7 @@ pub fn populate_from_spec(
             mean_dia: crate::form_helpers::fmt_len(m.mean_dia_mm, us),
             active: m.active.to_string(),
             free_length: crate::form_helpers::fmt_len(m.free_length_mm, us),
+            inactive: m.inactive_coils.map(|v| format!("{v}")).unwrap_or_default(),
         })
         .collect();
     // Uphold the min-one-member floor. Persistence deliberately parses
@@ -392,6 +399,19 @@ mod tests {
             err.to_string().starts_with("member 2:"),
             "Display must start 'member 2:', got: {err}"
         );
+    }
+
+    #[test]
+    fn member_inactive_round_trips() {
+        let mut form = two_member_form();
+        form.members[0].inactive = "3".into();
+        let spec = build_spec(&form, UnitSystem::Metric).unwrap();
+        let AssemblySpec::PowerUser { members, .. } = &spec;
+        assert!(matches!(members[0].inactive_coils, Some(v) if (v - 3.0).abs() < 1e-9));
+        // Readback
+        let mut form2 = AsmFormState::with_default_material("Music Wire");
+        populate_from_spec(&mut form2, &spec, UnitSystem::Metric, "Music Wire");
+        assert_eq!(form2.members[0].inactive, "3");
     }
 
     #[test]

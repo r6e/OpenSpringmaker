@@ -778,6 +778,7 @@ impl App {
                         F::MeanDia => m.mean_dia = v,
                         F::Active => m.active = v,
                         F::FreeLength => m.free_length = v,
+                        F::Inactive => m.inactive = v,
                     }
                     true
                 } else {
@@ -2436,6 +2437,7 @@ mod tests {
                     mean_dia_mm: 20.0,
                     active: 10.0,
                     free_length_mm: 60.0,
+                    inactive_coils: None,
                 }],
             }),
         });
@@ -2758,6 +2760,7 @@ mod tests {
                 mean_dia: "20".into(),
                 active: "10".into(),
                 free_length: "60".into(),
+                inactive: String::new(),
             }],
         };
         let asm_out = asm_parse_and_solve(

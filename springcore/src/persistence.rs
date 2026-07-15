@@ -239,9 +239,9 @@ pub enum RectangularSpec {
     },
 }
 
-/// One member in a persisted assembly. All fields are required — no
-/// `#[serde(default)]` — so a misspelled key surfaces as "missing field"
-/// rather than silently defaulting.
+/// One member in a persisted assembly. All fields but `inactive_coils` are
+/// required — no `#[serde(default)]` — so a misspelled key surfaces as
+/// "missing field" rather than silently defaulting.
 ///
 /// **Schema evolution rule**: any future additive field on this struct must be
 /// `Option<T>` (a missing key in the TOML deserializes to `None` without
@@ -255,6 +255,12 @@ pub struct AssemblyMemberSpec {
     pub mean_dia_mm: f64,
     pub active: f64,
     pub free_length_mm: f64,
+    // Optional field: serde maps a missing key to `None` for `Option` types (no
+    // `#[serde(default)]` needed), so a missing or misspelled `inactive_coils`
+    // deserializes to `None` — the end-type's default — rather than erroring
+    // (same rule as `ConicalSpec::PowerUser::inactive_coils`). Kept LAST so
+    // every legacy member table (which predates this field) parses unchanged.
+    pub inactive_coils: Option<f64>,
 }
 
 /// Assembly scenario inputs.  `type`-tagged for forward-compat additive growth.
@@ -2236,6 +2242,7 @@ free_length_mm = 60.0
             mean_dia_mm: 20.0,
             active: 10.0,
             free_length_mm: 60.0,
+            inactive_coils: None,
         }
     }
 
@@ -2277,6 +2284,31 @@ free_length_mm = 60.0
         let toml3 = saved3.to_toml().unwrap();
         let back3 = SavedDesign::from_toml(&toml3).unwrap();
         assert_eq!(back3, saved3);
+    }
+
+    #[test]
+    fn member_inactive_coils_round_trips_and_defaults_when_absent() {
+        // Present: Some(3.0) survives a save/load round trip.
+        let with_inactive = AssemblyMemberSpec {
+            inactive_coils: Some(3.0),
+            ..member_spec()
+        };
+        let toml = toml::to_string(&with_inactive).unwrap();
+        let back: AssemblyMemberSpec = toml::from_str(&toml).unwrap();
+        assert_eq!(back, with_inactive);
+        // Absent key → None (backward compatibility): a legacy member table
+        // (pre-Task-5 files) without the key.
+        let legacy = "material_name = \"Music Wire\"\nend_type = \"squared_ground\"\n\
+                       wire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\n\
+                       free_length_mm = 60.0\n";
+        let loaded: AssemblyMemberSpec = toml::from_str(legacy).unwrap();
+        assert_eq!(
+            loaded,
+            AssemblyMemberSpec {
+                inactive_coils: None,
+                ..member_spec()
+            }
+        );
     }
 
     #[test]
@@ -2409,6 +2441,7 @@ members = []
                     mean_dia_mm: 20.0,
                     active: 10.0,
                     free_length_mm: 60.0,
+                    inactive_coils: None,
                 }],
             }),
         };

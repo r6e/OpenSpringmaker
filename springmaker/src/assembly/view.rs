@@ -340,6 +340,7 @@ pub(crate) fn asm_member_field_id(index: usize, field: MemberField) -> String {
         MeanDia => "mean-dia",
         Active => "active",
         FreeLength => "free-length",
+        Inactive => "inactive",
     };
     format!("asm-member-{index}-{leaf}")
 }
@@ -362,6 +363,12 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
     }
 
     let selected_end = find_by_key(END_TYPES, &m.end_type).copied();
+    // The end-type default hint (Shigley Table 10-1 inactive-coil count) surfaced
+    // directly in the label — same pattern as conical's `Field::Inactive`.
+    let inactive_label = match springcore::parse_end_type(&m.end_type) {
+        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
+        Err(_) => "Inactive coils (optional)".to_string(),
+    };
 
     column![
         header,
@@ -400,6 +407,13 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
             &m.free_length,
             asm_member_field_id(index, F::FreeLength),
             move |v| Message::AsmField(index, F::FreeLength, v)
+        ),
+        labeled_input(
+            pal,
+            &inactive_label,
+            &m.inactive,
+            asm_member_field_id(index, F::Inactive),
+            move |v| Message::AsmField(index, F::Inactive, v)
         ),
     ]
     .spacing(SP_ROW)
