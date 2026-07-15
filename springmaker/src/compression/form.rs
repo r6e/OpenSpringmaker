@@ -595,6 +595,18 @@ mod tests {
     }
 
     #[test]
+    fn inactive_alone_does_not_count_toward_is_blank() {
+        // The optional inactive-coil override, like the end-type selector, is not
+        // one of PowerUser's required fields — filling it alone must not clear
+        // the blank state (mirrors conical's `inactive_alone_does_not_count_toward_is_blank`).
+        let f = FormState {
+            inactive: "3".into(),
+            ..FormState::default()
+        };
+        assert!(f.is_blank());
+    }
+
+    #[test]
     fn solves_rate_based_metric() {
         let set = default_store();
         let out = parse_and_solve(

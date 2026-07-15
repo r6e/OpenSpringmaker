@@ -348,6 +348,19 @@ mod tests {
         assert_eq!(out.members[1].material_name, "Stainless 302");
     }
 
+    #[test]
+    fn inactive_alone_does_not_count_toward_is_blank() {
+        // The optional inactive-coil override, like the end-type selector, is not
+        // one of the member's required fields — filling it alone must not clear
+        // the member's blank state (mirrors conical's
+        // `inactive_alone_does_not_count_toward_is_blank`).
+        let m = AsmMemberForm {
+            inactive: "3".into(),
+            ..AsmMemberForm::blank("Music Wire")
+        };
+        assert!(m.is_blank());
+    }
+
     /// A blank `wire_dia` on member index 1 is a GUI-layer parse failure
     /// (before `solve_assembly`) — it must be attributed as `Member { index: 1 }`,
     /// not emitted as a bare `InconsistentInputs`.
