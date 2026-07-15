@@ -32,6 +32,11 @@ pub enum ScenarioSpec {
         active: f64,
         free_length_mm: f64,
         loads_n: Vec<f64>,
+        // Optional field: serde maps a missing key to `None` for `Option` types (no
+        // `#[serde(default)]` needed), so a missing or misspelled `inactive_coils`
+        // deserializes to `None` — the end-type's Shigley Table 10-1 default — rather
+        // than erroring (same rule as `max_outer_dia_mm` below).
+        inactive_coils: Option<f64>,
     },
     TwoLoad {
         end_type: String,
@@ -42,6 +47,7 @@ pub enum ScenarioSpec {
         length1_mm: f64,
         force2_n: f64,
         length2_mm: f64,
+        inactive_coils: Option<f64>,
     },
     RateBased {
         end_type: String,
@@ -51,6 +57,7 @@ pub enum ScenarioSpec {
         rate_n_per_m: f64,
         free_length_mm: f64,
         loads_n: Vec<f64>,
+        inactive_coils: Option<f64>,
     },
     Dimensional {
         end_type: String,
@@ -60,6 +67,7 @@ pub enum ScenarioSpec {
         active: f64,
         free_length_mm: f64,
         loads_n: Vec<f64>,
+        inactive_coils: Option<f64>,
     },
     MinWeight {
         end_type: String,
@@ -74,6 +82,7 @@ pub enum ScenarioSpec {
         max_outer_dia_mm: Option<f64>,
         candidate_diameters_mm: Vec<f64>,
         clash_allowance: f64,
+        inactive_coils: Option<f64>,
     },
 }
 
@@ -405,6 +414,7 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
             max_outer_dia_mm,
             candidate_diameters_mm,
             clash_allowance,
+            inactive_coils,
         } => {
             // required_rate must be positive and finite; a rate of 0 or ∞ makes
             // active_coils_for_rate diverge (Na → ∞) which the optimizer cannot handle.
@@ -475,6 +485,15 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
                     )));
                 }
             }
+            // inactive_coils, when supplied, must be finite and non-negative (a dead-coil
+            // count, not a diameter — zero is a legal override, unlike max_outer_dia_mm).
+            if let Some(ni) = inactive_coils {
+                if !(ni.is_finite() && *ni >= 0.0) {
+                    return Err(SpringError::InconsistentInputs(
+                        "inactive_coils must be a finite number ≥ 0".into(),
+                    ));
+                }
+            }
             Ok(MinWeightRequest {
                 end_type: parse_end_type(end_type)?,
                 fixity: parse_fixity(fixity)?,
@@ -487,6 +506,7 @@ pub fn min_weight_request_from_spec(spec: &ScenarioSpec) -> Result<MinWeightRequ
                     .map(|&d| Length::from_millimeters(d))
                     .collect(),
                 clash_allowance: *clash_allowance,
+                inactive_coils: *inactive_coils,
             })
         }
         _ => Err(SpringError::InconsistentInputs(
@@ -580,12 +600,14 @@ impl SavedDesign {
                     active,
                     free_length_mm,
                     loads_n,
+                    inactive_coils,
                 } => PowerUser {
                     end_type: parse_end_type(end_type)?,
                     fixity: parse_fixity(fixity)?,
                     wire_dia: Length::from_millimeters(*wire_dia_mm),
                     mean_dia: Length::from_millimeters(*mean_dia_mm),
                     active: *active,
+                    inactive_coils: *inactive_coils,
                     free_length: Length::from_millimeters(*free_length_mm),
                     loads: forces(loads_n),
                 }
@@ -599,6 +621,7 @@ impl SavedDesign {
                     length1_mm,
                     force2_n,
                     length2_mm,
+                    inactive_coils,
                 } => TwoLoad {
                     end_type: parse_end_type(end_type)?,
                     fixity: parse_fixity(fixity)?,
@@ -612,6 +635,7 @@ impl SavedDesign {
                         Force::from_newtons(*force2_n),
                         Length::from_millimeters(*length2_mm),
                     ),
+                    inactive_coils: *inactive_coils,
                 }
                 .solve(material, correction),
                 ScenarioSpec::RateBased {
@@ -622,12 +646,14 @@ impl SavedDesign {
                     rate_n_per_m,
                     free_length_mm,
                     loads_n,
+                    inactive_coils,
                 } => RateBased {
                     end_type: parse_end_type(end_type)?,
                     fixity: parse_fixity(fixity)?,
                     wire_dia: Length::from_millimeters(*wire_dia_mm),
                     mean_dia: Length::from_millimeters(*mean_dia_mm),
                     rate: SpringRate::from_newtons_per_meter(*rate_n_per_m),
+                    inactive_coils: *inactive_coils,
                     free_length: Length::from_millimeters(*free_length_mm),
                     loads: forces(loads_n),
                 }
@@ -640,12 +666,14 @@ impl SavedDesign {
                     active,
                     free_length_mm,
                     loads_n,
+                    inactive_coils,
                 } => Dimensional {
                     end_type: parse_end_type(end_type)?,
                     fixity: parse_fixity(fixity)?,
                     wire_dia: Length::from_millimeters(*wire_dia_mm),
                     outer_dia: Length::from_millimeters(*outer_dia_mm),
                     active: *active,
+                    inactive_coils: *inactive_coils,
                     free_length: Length::from_millimeters(*free_length_mm),
                     loads: forces(loads_n),
                 }
@@ -711,6 +739,7 @@ mod tests {
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![1.5, 2.0, 2.5, 3.0],
             clash_allowance: 0.15,
+            inactive_coils: None,
         }
     }
 
@@ -749,6 +778,7 @@ mod tests {
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![2.0],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let err = min_weight_request_from_spec(&spec).unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
@@ -766,6 +796,7 @@ mod tests {
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![2.0],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let err = min_weight_request_from_spec(&spec).unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
@@ -806,6 +837,7 @@ mod tests {
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![2.0],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         let err = min_weight_request_from_spec(&spec).unwrap_err();
         assert!(matches!(err, SpringError::InconsistentInputs(_)));
@@ -844,6 +876,7 @@ mod tests {
             max_outer_dia_mm: None,
             candidate_diameters_mm: vec![2.0],
             clash_allowance: 0.15,
+            inactive_coils: None,
         };
         assert!(
             min_weight_request_from_spec(&spec).is_ok(),
@@ -866,6 +899,7 @@ mod tests {
                 max_outer_dia_mm: None,
                 candidate_diameters_mm: vec![1.5, 2.0, 2.5, 3.0],
                 clash_allowance: 0.15,
+                inactive_coils: None,
             }),
         };
         let parsed = SavedDesign::from_toml(&s.to_toml().unwrap()).unwrap();
@@ -891,6 +925,7 @@ mod tests {
                 rate_n_per_m: 2000.0,
                 free_length_mm: 60.0,
                 loads_n: vec![10.0],
+                inactive_coils: None,
             }),
         }
     }
@@ -901,6 +936,34 @@ mod tests {
         let text = original.to_toml().unwrap();
         let parsed = SavedDesign::from_toml(&text).unwrap();
         assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn power_user_inactive_coils_round_trips_and_defaults_when_absent() {
+        // Present: Some(3.0) survives a save/load round trip.
+        let spec = ScenarioSpec::PowerUser {
+            end_type: "squared_ground".into(),
+            fixity: "fixed_fixed".into(),
+            wire_dia_mm: 2.0,
+            mean_dia_mm: 20.0,
+            active: 10.0,
+            free_length_mm: 60.0,
+            loads_n: vec![10.0, 30.0],
+            inactive_coils: Some(3.0),
+        };
+        let toml = toml::to_string(&spec).unwrap();
+        let back: ScenarioSpec = toml::from_str(&toml).unwrap();
+        assert_eq!(back, spec);
+        // Absent key → None (backward compatibility): a legacy body without the key.
+        let legacy = "type = \"PowerUser\"\nend_type = \"squared_ground\"\nfixity = \"fixed_fixed\"\nwire_dia_mm = 2.0\nmean_dia_mm = 20.0\nactive = 10.0\nfree_length_mm = 60.0\nloads_n = [10.0, 30.0]\n";
+        let loaded: ScenarioSpec = toml::from_str(legacy).unwrap();
+        assert!(matches!(
+            loaded,
+            ScenarioSpec::PowerUser {
+                inactive_coils: None,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1724,6 +1787,7 @@ moments_nmm = [1000.0]
             max_outer_dia_mm,
             candidate_diameters_mm,
             clash_allowance,
+            inactive_coils: None,
         }
     }
 
@@ -1924,6 +1988,77 @@ moments_nmm = [1000.0]
         assert!(
             msg.contains("max_outer_dia_mm must be a positive finite number"),
             "expected max_outer_dia_mm message, got: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // inactive_coils validation (mirrors max_outer_dia_mm above, but unlike an
+    // outer diameter, zero dead coils is a legal override — Plain end type's
+    // own default — so the lower bound is `>= 0.0`, not `> 0.0`).
+    // -----------------------------------------------------------------------
+
+    fn mw_spec_with_inactive(inactive_coils: Option<f64>) -> ScenarioSpec {
+        let mut spec = mw_spec(50.0, 0.15, vec![2.0], None);
+        if let ScenarioSpec::MinWeight {
+            inactive_coils: ni, ..
+        } = &mut spec
+        {
+            *ni = inactive_coils;
+        }
+        spec
+    }
+
+    // Some(positive) is accepted.
+    #[test]
+    fn inactive_coils_some_positive_is_accepted() {
+        let spec = mw_spec_with_inactive(Some(3.0));
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "Some(3.0) inactive_coils must be accepted"
+        );
+    }
+
+    // Pins `>= 0.0` (not `> 0.0`, unlike max_outer_dia_mm): Some(0.0) must be accepted.
+    #[test]
+    fn inactive_coils_zero_is_accepted() {
+        let spec = mw_spec_with_inactive(Some(0.0));
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "Some(0.0) inactive_coils must be accepted (zero dead coils is legal)"
+        );
+    }
+
+    // Pins `>= 0.0`: Some(negative) must be rejected.
+    #[test]
+    fn inactive_coils_negative_is_rejected() {
+        let spec = mw_spec_with_inactive(Some(-1.0));
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("inactive_coils must be a finite number"),
+            "expected inactive_coils message, got: {msg}"
+        );
+    }
+
+    // Pins `is_finite()`: Some(inf) must be rejected.
+    #[test]
+    fn inactive_coils_inf_is_rejected() {
+        let spec = mw_spec_with_inactive(Some(f64::INFINITY));
+        let err = min_weight_request_from_spec(&spec).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("inactive_coils must be a finite number"),
+            "expected inactive_coils message, got: {msg}"
+        );
+    }
+
+    // None (the default) must be accepted, resolving to the end type's default later.
+    #[test]
+    fn inactive_coils_none_is_accepted() {
+        let spec = mw_spec_with_inactive(None);
+        assert!(
+            min_weight_request_from_spec(&spec).is_ok(),
+            "None inactive_coils must be accepted"
         );
     }
 
