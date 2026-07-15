@@ -6,8 +6,9 @@
 use crate::app::App;
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_stress_label,
-    FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    inactive_coils_label, overstress_emphasis, resolved_material, unit_force_label,
+    unit_length_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable,
+    ResultRow, StatusLine,
 };
 use springcore::Material;
 
@@ -161,12 +162,7 @@ fn con_load_table(
 pub fn con_inputs_view(app: &App) -> Vec<FieldDescriptor<Field>> {
     let len = unit_length_label(app.unit_system);
     let force = unit_force_label(app.unit_system);
-    // The end-type default hint (Shigley Table 10-1 inactive-coil count) surfaced
-    // directly in the label — same pattern as compression's `Field::Inactive`.
-    let inactive_label = match springcore::parse_end_type(&app.conical.end_type) {
-        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
-        Err(_) => "Inactive coils (optional)".to_string(),
-    };
+    let inactive_label = inactive_coils_label(&app.conical.end_type);
     vec![
         FieldDescriptor::new(format!("Wire diameter ({len})"), Field::WireDia),
         FieldDescriptor::new(format!("Large mean diameter ({len})"), Field::LargeMeanDia),

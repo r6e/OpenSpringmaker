@@ -11,8 +11,9 @@ use crate::app::App;
 use crate::compression::form::{FatigueStatus, Field, FormOutcome, ScenarioKind};
 use crate::presenter::{
     append_status_messages, display_force, display_len, display_stress, fmt_row_value,
-    overstress_emphasis, resolved_material, unit_force_label, unit_length_label, unit_rate_label,
-    unit_stress_label, FieldDescriptor, GoverningRate, LoadRow, LoadTable, ResultRow, StatusLine,
+    inactive_coils_label, overstress_emphasis, resolved_material, unit_force_label,
+    unit_length_label, unit_rate_label, unit_stress_label, FieldDescriptor, GoverningRate, LoadRow,
+    LoadTable, ResultRow, StatusLine,
 };
 use springcore::{BindingConstraint, Material, SpringDesign, UnitSystem};
 
@@ -258,13 +259,7 @@ pub fn inputs_view(app: &App) -> InputsView {
     let force = unit_force_label(us);
     let rate = unit_rate_label(us);
 
-    // The end-type default hint (Shigley Table 10-1 inactive-coil count) surfaced
-    // in the label — the `text_input` placeholder is hard-coded and not
-    // presenter-reachable (ADR 0008), so the default lives here instead.
-    let inactive_label = match springcore::parse_end_type(&f.end_type) {
-        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
-        Err(_) => "Inactive coils (optional)".to_string(),
-    };
+    let inactive_label = inactive_coils_label(&f.end_type);
 
     if f.scenario == ScenarioKind::MinWeight {
         return InputsView {

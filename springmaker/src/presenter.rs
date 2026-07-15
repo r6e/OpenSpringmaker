@@ -150,6 +150,17 @@ pub(crate) fn unit_length_label(us: UnitSystem) -> &'static str {
     }
 }
 
+/// Label for the optional inactive-coil override input, with the end-type default
+/// (Shigley Table 10-1 count) surfaced inline. The `text_input` placeholder is
+/// hard-coded and not presenter-reachable (ADR 0008), so the default hint lives in
+/// the label instead. Falls back to a bare label when the end type is unparseable.
+pub(crate) fn inactive_coils_label(end_type: &str) -> String {
+    match springcore::parse_end_type(end_type) {
+        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
+        Err(_) => "Inactive coils (optional)".to_string(),
+    }
+}
+
 /// Force unit label for the active unit system.
 pub(crate) fn unit_force_label(us: UnitSystem) -> &'static str {
     match us {
@@ -343,6 +354,27 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use springcore::{Angle, AngularRate, Force, Length, Moment, SpringRate, Stress, UnitSystem};
+
+    #[test]
+    fn inactive_coils_label_shows_end_type_default() {
+        assert_eq!(
+            inactive_coils_label("plain"),
+            "Inactive coils (default 0, optional)"
+        );
+        assert_eq!(
+            inactive_coils_label("plain_ground"),
+            "Inactive coils (default 1, optional)"
+        );
+        assert_eq!(
+            inactive_coils_label("squared"),
+            "Inactive coils (default 2, optional)"
+        );
+        assert_eq!(
+            inactive_coils_label("squared_ground"),
+            "Inactive coils (default 2, optional)"
+        );
+        assert_eq!(inactive_coils_label("bogus"), "Inactive coils (optional)");
+    }
 
     // ── Unit conversions (the surface of the prior 1000× magnitude bug) ──
 

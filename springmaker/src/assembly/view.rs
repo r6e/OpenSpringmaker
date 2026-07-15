@@ -363,12 +363,7 @@ fn member_card<'a>(app: &'a App, index: usize, m: &'a AsmMemberForm) -> Element<
     }
 
     let selected_end = find_by_key(END_TYPES, &m.end_type).copied();
-    // The end-type default hint (Shigley Table 10-1 inactive-coil count) surfaced
-    // directly in the label — same pattern as conical's `Field::Inactive`.
-    let inactive_label = match springcore::parse_end_type(&m.end_type) {
-        Ok(e) => format!("Inactive coils (default {:.0}, optional)", e.end_coils()),
-        Err(_) => "Inactive coils (optional)".to_string(),
-    };
+    let inactive_label = crate::presenter::inactive_coils_label(&m.end_type);
 
     column![
         header,
