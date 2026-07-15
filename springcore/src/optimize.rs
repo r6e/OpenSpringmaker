@@ -219,15 +219,22 @@ pub fn solve_min_weight(
         ) {
             continue;
         }
-        // `?` is safe here: every solve_forward error mode is already pre-filtered by the
-        // guards above — wire is finite-positive (candidate validation), mean ≥ c_min·d > d
+        // `?` is safe here: wire is finite-positive (candidate validation), mean ≥ c_min·d > d
         // (c_min ≥ floor > 1), active ≥ 1, free_length = solid + positive travel > solid, and
         // d is in the material range (best_mean_dia's min_tensile_strength(d) already
-        // succeeded). So this never aborts a valid solve. (Unlike the extension optimizer,
-        // which uses skip-on-Err because its fixed-hook C2 ≤ 1 case is a live per-candidate
-        // failure; compression has no such per-candidate error mode, so adding a skip branch
-        // here would be unreachable dead code. If a future per-candidate error mode is added,
-        // switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
+        // succeeded) — so none of THOSE guards can trip inside solve_forward. `inactive`,
+        // however, is NOT pre-filtered above: it is validated downstream inside
+        // solve_forward itself (finite, ≥ 0), reached via this `?`. A bad `inactive`
+        // (e.g. a negative or non-finite override surviving a persisted-spec load) is
+        // therefore not caught here — it correctly propagates as solve_forward's
+        // InconsistentInputs error rather than being silently accepted. Do not add a
+        // redundant `inactive` guard here: deleting it would still yield the same
+        // InconsistentInputs from solve_forward's `?`, making it an un-killable mutation
+        // survivor. (Unlike the extension optimizer, which uses skip-on-Err because its
+        // fixed-hook C2 ≤ 1 case is a live per-candidate failure; compression has no such
+        // per-candidate error mode among the guards above, so adding a skip branch for
+        // those would be unreachable dead code. If a future per-candidate error mode is
+        // added among them, switch this to a skip-on-Err `let Ok(_) = … else { continue }`.)
         let design = solve_forward(
             material,
             req.end_type,
