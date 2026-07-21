@@ -39,4 +39,4 @@ iced_test = "0.14"
 # 27.0, which itself depends on naga 27.0.3 per this workspace's Cargo.lock)
 # so the SAME naga this crate's shader will actually run through does the
 # checking — not a foreign, potentially-more-lenient/stricter parser.
-naga = { version = "27.0", features = ["wgsl-in"] }
+naga = { version = "30.0", features = ["wgsl-in"] }
